@@ -1,44 +1,101 @@
-// Tela de conexão (QR code) e faixa de status da conexão.
-import { h, clear, fill } from '../util.js';
+// Tela de conexão (QR code ou código pelo número) e faixa de status.
+import { h, fill, errToast } from '../util.js';
 import { state, on, api } from '../store.js';
 import { statusLabel } from './settings.js';
+
+let mode = 'qr'; // 'qr' | 'phone'
+let phoneValue = '';
 
 export function mountConnect(overlay, banner) {
   const render = () => {
     const s = state.status;
-    const needsQr = ['qr', 'logged_out', 'starting', 'idle'].includes(s.state) && !(s.state === 'idle' && state.chats.size);
-    overlay.classList.toggle('hidden', !needsQr);
-    if (needsQr) renderOverlay(overlay, s);
+    // enquanto o celular não confirmou a conexão, a tela de conexão fica aberta
+    const needsLogin = s.state !== 'open' && !s.registered && s.state !== 'replaced';
+    overlay.classList.toggle('hidden', !needsLogin);
+    if (needsLogin) renderOverlay(overlay, s);
     renderBanner(banner, s);
   };
   on('status', render);
   on('history', () => renderBanner(banner, state.status));
+  overlay._rerender = render;
   render();
 }
 
 function renderOverlay(el, s) {
-  const qr = s.state === 'qr' && s.qr
-    ? h('img', { class: 'qr', src: s.qr, alt: 'QR code' })
-    : h('div', { class: 'qr qr-loading' }, h('div', { class: 'spinner' }), h('div', { class: 'muted small' }, 'Gerando QR code…'));
+  // não redesenha enquanto a pessoa digita o número
+  if (el.contains(document.activeElement) && document.activeElement.tagName === 'INPUT') {
+    el.querySelector('.connect-error')?.replaceWith(errorBox(s));
+    return;
+  }
+  const rerender = () => el._rerender?.() ?? renderOverlay(el, state.status);
+  const tabs = h('div', { class: 'tabs connect-tabs' },
+    h('button', { class: `tab ${mode === 'qr' ? 'active' : ''}`, onclick: () => { mode = 'qr'; renderOverlay(el, state.status); } }, 'Ler QR code'),
+    h('button', { class: `tab ${mode === 'phone' ? 'active' : ''}`, onclick: () => { mode = 'phone'; renderOverlay(el, state.status); } }, 'Conectar com número de telefone'));
+
+  const waiting = h('div', { class: 'qr qr-loading' }, h('div', { class: 'spinner' }),
+    h('div', { class: 'muted small' }, 'Conectando ao WhatsApp…'));
+
+  let right;
+  let steps;
+  if (mode === 'qr') {
+    right = h('div', { class: 'connect-qr' },
+      s.state === 'qr' && s.qr ? h('img', { class: 'qr', src: s.qr, alt: 'QR code' }) : waiting,
+      s.state === 'qr' ? h('div', { class: 'muted small' }, 'O código se renova sozinho a cada poucos segundos.') : null);
+    steps = h('ol', null,
+      h('li', null, 'Abra o ', h('b', null, 'WhatsApp'), ' no celular.'),
+      h('li', null, 'Android: toque nos ', h('b', null, '3 pontinhos ⋮'), ' (canto de cima). iPhone: toque em ', h('b', null, 'Configurações'), '.'),
+      h('li', null, 'Toque em ', h('b', null, 'Dispositivos conectados'), ' e depois em ', h('b', null, 'Conectar dispositivo'), '.'),
+      h('li', null, 'Aponte a câmera do celular para o código ao lado.'));
+  } else {
+    const input = h('input', {
+      class: 'input', placeholder: 'Seu número com DDD, ex.: 11 98765-4321', value: phoneValue,
+      oninput: (e) => { phoneValue = e.target.value; },
+      onkeydown: (e) => { if (e.key === 'Enter') ask(); },
+    });
+    const btn = h('button', { class: 'btn btn-primary', disabled: s.state !== 'qr', onclick: () => ask() }, 'Gerar código');
+    async function ask() {
+      btn.disabled = true;
+      try { await api('wa:pairingCode', phoneValue); } catch (e) { errToast(e); btn.disabled = false; }
+      document.activeElement?.blur();
+      rerender();
+    }
+    right = h('div', { class: 'connect-qr' },
+      s.pairingCode
+        ? h('div', { class: 'pairing' }, h('div', { class: 'muted small' }, 'Digite este código no celular:'), h('div', { class: 'pairing-code' }, s.pairingCode))
+        : h('div', { class: 'pairing form' },
+          h('label', { class: 'field' }, h('span', null, 'Número do WhatsApp que vai conectar'), input),
+          btn,
+          s.state !== 'qr' ? h('div', { class: 'muted small' }, 'Aguarde a conexão com o WhatsApp…') : null));
+    steps = h('ol', null,
+      h('li', null, 'Digite ao lado o número do WhatsApp e clique em ', h('b', null, 'Gerar código'), '.'),
+      h('li', null, 'No celular: ', h('b', null, '⋮ / Configurações → Dispositivos conectados → Conectar dispositivo'), '.'),
+      h('li', null, 'Na tela da câmera, toque em ', h('b', null, 'Conectar com número de telefone'), ' (embaixo).'),
+      h('li', null, 'Digite o código de 8 letras que aparecer aqui.'));
+  }
+
   fill(el, h('div', { class: 'connect-card' },
     h('div', { class: 'connect-text' },
       h('h1', null, 'Conecte seu WhatsApp'),
-      s.error ? h('div', { class: 'alert' }, s.error) : null,
-      h('ol', null,
-        h('li', null, 'Abra o ', h('b', null, 'WhatsApp'), ' no seu celular.'),
-        h('li', null, 'Toque em ', h('b', null, 'Mais opções ⋮'), ' (Android) ou ', h('b', null, 'Configurações ⚙'), ' (iPhone).'),
-        h('li', null, 'Toque em ', h('b', null, 'Aparelhos conectados'), ' e depois em ', h('b', null, 'Conectar aparelho'), '.'),
-        h('li', null, 'Aponte o celular para esta tela para ler o código.')),
+      tabs,
+      errorBox(s),
+      steps,
       h('p', { class: 'muted small' }, '🔒 Você só precisa fazer isso uma vez. A sessão fica salva neste computador e as conversas ficam armazenadas aqui mesmo.'),
-      state.demo ? h('p', { class: 'alert info' }, 'Modo demonstração: o QR code é fictício e a conexão acontece sozinha em alguns segundos.') : null),
-    h('div', { class: 'connect-qr' }, qr, s.state === 'qr' ? h('div', { class: 'muted small' }, 'O código se renova sozinho a cada poucos segundos.') : null)));
+      h('div', { class: 'row wrap' },
+        h('button', { class: 'btn', onclick: () => { api('wa:reset').catch(errToast); } }, '⟳ Gerar novo código'),
+        h('button', { class: 'btn', onclick: () => api('app:openLogs').catch(errToast) }, '📄 Abrir registros de erro')),
+      state.demo ? h('p', { class: 'alert info' }, 'Modo demonstração: o código é fictício e a conexão acontece sozinha.') : null),
+    right));
+}
+
+function errorBox(s) {
+  return s.error ? h('div', { class: 'alert connect-error' }, s.error) : h('div', { class: 'connect-error' });
 }
 
 function renderBanner(el, s) {
   const h_ = state.history;
   const syncing = s.state === 'open' && h_ && h_.progress != null && h_.progress < 100;
   let content = null;
-  if (['connecting', 'reconnecting'].includes(s.state)) {
+  if (s.registered && ['connecting', 'reconnecting'].includes(s.state)) {
     content = h('div', { class: 'banner warn' }, h('span', { class: 'spinner small' }), statusLabel(s.state),
       s.error ? h('span', { class: 'muted small' }, ` (${s.error})`) : null,
       s.state === 'reconnecting' ? h('button', { class: 'btn btn-sm', onclick: () => api('wa:reconnect') }, 'Tentar agora') : null);
@@ -48,7 +105,6 @@ function renderBanner(el, s) {
   } else if (syncing) {
     content = h('div', { class: 'banner info' }, h('span', { class: 'spinner small' }), `Sincronizando histórico de conversas… ${Math.round(h_.progress)}%`);
   }
-  clear(el);
-  if (content) el.append(content);
+  fill(el, content);
   el.classList.toggle('hidden', !content);
 }

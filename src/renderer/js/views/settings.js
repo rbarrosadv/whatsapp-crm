@@ -39,6 +39,7 @@ function render() {
         h('p', { class: 'muted small' }, 'A sessão fica salva neste computador: você não precisa ler o QR code de novo ao abrir o app. Para trocar de número, desconecte aqui.'),
         h('div', { class: 'row' },
           !connected ? h('button', { class: 'btn', onclick: () => api('wa:reconnect').catch(errToast) }, '⟳ Tentar reconectar') : null,
+          !st.registered ? h('button', { class: 'btn btn-primary', onclick: () => api('wa:reset').catch(errToast) }, '📱 Mostrar QR code') : null,
           h('button', {
             class: 'btn btn-danger',
             onclick: async () => {

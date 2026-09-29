@@ -501,3 +501,11 @@ textarea.input { resize: vertical; }
   .crm-panel:not(.hidden) { position: absolute; right: 0; top: 0; bottom: 0; z-index: 40; box-shadow: var(--shadow); }
   .rail-label { display: none; }
 }
+
+.connect-tabs { margin-bottom: 14px; }
+.connect-error:empty { display: none; }
+.pairing { width: 280px; display: flex; flex-direction: column; gap: 10px; }
+.pairing-code {
+  font-size: 34px; font-weight: 700; letter-spacing: 4px; text-align: center; padding: 18px 10px; border-radius: 12px;
+  background: var(--panel-2); font-family: Consolas, monospace; user-select: text;
+}

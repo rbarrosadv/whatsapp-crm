@@ -25,6 +25,14 @@ import QRCode from 'qrcode';
 import * as db from './db.js';
 import { parseMessage, rawToMessage, tsOf } from './parse.js';
 
+// Perfis de "aparelho" usados na conexão; se um falhar antes de ler o QR,
+// tenta o próximo.
+const BROWSERS = [
+  () => Browsers.windows('Desktop'),
+  () => Browsers.macOS('Desktop'),
+  () => Browsers.ubuntu('Chrome'),
+];
+
 const MIME_EXT = {
   'image/jpeg': 'jpg', 'image/png': 'png', 'image/webp': 'webp', 'image/gif': 'gif',
   'video/mp4': 'mp4', 'video/3gpp': '3gp', 'audio/ogg': 'ogg', 'audio/mpeg': 'mp3', 'audio/mp4': 'm4a',
@@ -61,6 +69,7 @@ export class WhatsAppService extends EventEmitter {
     this.stopped = false;
     this.pnCache = new Map();
     this.historyProgress = null;
+    this.failedPairing = 0;
   }
 
   // ----------------------------------------------------------- conexão
@@ -72,26 +81,50 @@ export class WhatsAppService extends EventEmitter {
 
   getStatus() { return this.state; }
 
+  /** true só quando o celular já confirmou a conexão (não basta existir o arquivo). */
   hasSession() {
-    return fs.existsSync(path.join(this.authDir, 'creds.json'));
+    try {
+      const creds = JSON.parse(fs.readFileSync(path.join(this.authDir, 'creds.json'), 'utf-8'));
+      return !!(creds.me?.id && creds.account);
+    } catch {
+      return false;
+    }
   }
 
   async start() {
     this.stopped = false;
     clearTimeout(this.reconnectTimer);
-    this.setStatus({ state: this.hasSession() ? 'connecting' : 'starting', qr: null, error: null });
+    const registered = this.hasSession();
+    // sessão incompleta (QR nunca lido): começa do zero pra gerar QR novo
+    if (!registered) this.clearAuth();
+    this.setStatus({ state: registered ? 'connecting' : 'starting', registered, qr: null, pairingCode: null, error: registered ? null : this.state.error });
 
     const { state, saveCreds } = await useMultiFileAuthState(this.authDir);
     let version;
     try {
-      ({ version } = await fetchLatestBaileysVersion());
+      ({ version } = await fetchLatestBaileysVersion({ signal: AbortSignal.timeout(6000) }));
     } catch { /* usa a versão embutida */ }
+    this.logger.warn({ version, registered, attempt: this.failedPairing }, 'iniciando conexão');
+
+    // se em 40 s não vier nem QR nem conexão, avisa e tenta de novo do zero
+    clearTimeout(this.watchdog);
+    this.watchdog = setTimeout(() => {
+      if (this.stopped || ['qr', 'open'].includes(this.state.state)) return;
+      this.logger.warn('sem resposta do WhatsApp em 40 s');
+      if (!this.hasSession()) this.failedPairing++;
+      this.setStatus({
+        error: 'O WhatsApp não respondeu. Verifique a internet e se o antivírus/firewall não está bloqueando o app. Tentando de novo…',
+      });
+      try { this.sock?.end(new Error('timeout')); } catch { /* ignore */ }
+      this.sock = null;
+      this.scheduleReconnect(3000);
+    }, 40000);
 
     const sock = makeWASocket({
       version,
       auth: { creds: state.creds, keys: makeCacheableSignalKeyStore(state.keys, this.logger) },
       logger: this.logger,
-      browser: Browsers.windows('Desktop'),
+      browser: BROWSERS[this.failedPairing % BROWSERS.length](),
       syncFullHistory: true,
       markOnlineOnConnect: false,
       generateHighQualityLinkPreview: false,
@@ -132,18 +165,23 @@ export class WhatsAppService extends EventEmitter {
     const { connection, lastDisconnect, qr } = u;
     if (qr) {
       const dataUrl = await QRCode.toDataURL(qr, { margin: 1, width: 320 });
-      this.setStatus({ state: 'qr', qr: dataUrl });
+      this.setStatus({ state: 'qr', qr: dataUrl, error: null });
     }
     if (connection === 'connecting' && !qr && this.state.state !== 'qr') {
       this.setStatus({ state: 'connecting' });
     }
     if (connection === 'open') {
+      clearTimeout(this.watchdog);
+      this.logger.warn('conectado');
       this.retry = 0;
+      this.failedPairing = 0;
       const me = sock.user ? { jid: jidNormalizedUser(sock.user.id), name: sock.user.name || sock.user.verifiedName } : null;
-      this.setStatus({ state: 'open', qr: null, me, error: null });
+      this.setStatus({ state: 'open', registered: true, qr: null, pairingCode: null, me, error: null });
     }
     if (connection === 'close') {
       const code = lastDisconnect?.error?.output?.statusCode;
+      clearTimeout(this.watchdog);
+      this.logger.warn({ code, err: lastDisconnect?.error?.message }, 'conexão fechada');
       this.sock = null;
       if (this.stopped) return;
       if (code === DisconnectReason.loggedOut) {
@@ -154,11 +192,24 @@ export class WhatsAppService extends EventEmitter {
       } else if (code === DisconnectReason.connectionReplaced) {
         this.setStatus({ state: 'replaced', error: 'O WhatsApp foi aberto em outro lugar com esta mesma sessão.' });
       } else if (code === DisconnectReason.restartRequired) {
+        // normal logo depois de ler o QR: reinicia já com a sessão nova
         this.scheduleReconnect(0);
+      } else if (!this.hasSession()) {
+        // ainda não conectou nenhuma vez: descarta a tentativa e gera QR novo
+        this.failedPairing++;
+        this.clearAuth();
+        const delay = Math.min(15000, 1500 * this.failedPairing);
+        this.setStatus({
+          state: 'starting',
+          qr: null,
+          pairingCode: null,
+          error: `Não foi possível falar com o WhatsApp (${describeError(lastDisconnect?.error, code)}). Tentando de novo…`,
+        });
+        this.scheduleReconnect(delay);
       } else {
         this.retry++;
         const delay = Math.min(30000, 1000 * 2 ** Math.min(this.retry, 5));
-        this.setStatus({ state: 'reconnecting', error: lastDisconnect?.error?.message || null, retryIn: delay });
+        this.setStatus({ state: 'reconnecting', error: describeError(lastDisconnect?.error, code), retryIn: delay });
         this.scheduleReconnect(delay);
       }
     }
@@ -176,6 +227,31 @@ export class WhatsAppService extends EventEmitter {
     try { fs.rmSync(this.authDir, { recursive: true, force: true }); } catch { /* ignore */ }
   }
 
+  /** Descarta a tentativa atual e começa de novo (gera um QR novo se ainda não conectou). */
+  async reset() {
+    this.stopped = true;
+    clearTimeout(this.watchdog);
+    clearTimeout(this.reconnectTimer);
+    try { this.sock?.end(undefined); } catch { /* ignore */ }
+    this.sock = null;
+    this.retry = 0;
+    this.setStatus({ error: null });
+    await this.start();
+  }
+
+  /** Alternativa ao QR: gera um código de 8 letras para digitar no celular. */
+  async requestPairingCode(phone) {
+    let digits = String(phone || '').replace(/\D/g, '');
+    if (digits.length >= 10 && digits.length <= 11) digits = `55${digits}`;
+    if (digits.length < 12) throw new Error('Digite o número com DDD (ex.: 11 98765-4321).');
+    if (this.hasSession()) throw new Error('Este computador já está conectado.');
+    if (!this.sock || this.state.state !== 'qr') throw new Error('Aguarde o QR code aparecer e tente de novo.');
+    const code = await this.sock.requestPairingCode(digits);
+    const pretty = `${code.slice(0, 4)}-${code.slice(4)}`;
+    this.setStatus({ pairingCode: pretty, pairingPhone: digits });
+    return pretty;
+  }
+
   async logout() {
     this.stopped = true;
     clearTimeout(this.reconnectTimer);
@@ -190,6 +266,7 @@ export class WhatsAppService extends EventEmitter {
 
   async stop() {
     this.stopped = true;
+    clearTimeout(this.watchdog);
     clearTimeout(this.reconnectTimer);
     try { this.sock?.end(undefined); } catch { /* ignore */ }
     this.sock = null;
@@ -650,6 +727,20 @@ export class WhatsAppService extends EventEmitter {
     if (!r?.exists) return null;
     return jidNormalizedUser(r.jid);
   }
+}
+
+function describeError(err, code) {
+  const msg = err?.message || 'erro desconhecido';
+  const hints = {
+    401: 'sessão encerrada pelo celular',
+    403: 'acesso negado pelo WhatsApp',
+    405: 'o WhatsApp recusou a conexão',
+    408: 'sem resposta — verifique a internet',
+    428: 'conexão fechada',
+    500: 'sessão corrompida',
+    503: 'WhatsApp indisponível no momento',
+  };
+  return [hints[code], code ? `código ${code}` : null, hints[code] ? null : msg].filter(Boolean).join(', ');
 }
 
 function safeName(s) {

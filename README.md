@@ -50,8 +50,10 @@ no seu computador**. Ao abrir de novo, ele entra direto, sem pedir login.
      instale a versão LTS e clique em `Instalar.bat` de novo.
    - No final ele cria o atalho **WhatsApp CRM** na Área de Trabalho e já
      abre o app.
-3. No celular: WhatsApp → **Aparelhos conectados → Conectar aparelho** →
-   leia o QR code da tela.
+3. No celular: WhatsApp → **⋮ (Android) ou Configurações (iPhone) →
+   Dispositivos conectados → Conectar dispositivo** → leia o QR code da
+   tela. Se preferir, use a aba **Conectar com número de telefone**: o app
+   mostra um código de 8 letras para digitar no celular.
 4. Pronto. Na primeira conexão o histórico de conversas é sincronizado (a
    faixa azul no topo mostra o progresso).
 
@@ -79,6 +81,12 @@ Tudo fica no seu computador, em `%APPDATA%\WhatsAppCRM`:
 - Nunca envie a pasta `auth` pra ninguém: ela dá acesso ao seu WhatsApp.
 
 ## Se algo não funcionar
+
+- **O QR code não aparece (fica "Conectando ao WhatsApp…")**: o app não
+  está conseguindo falar com os servidores do WhatsApp. Confira a internet
+  e se o antivírus/firewall não está bloqueando o "Electron" (libere o
+  app). Clique em *Gerar novo código* para tentar de novo e, se continuar,
+  clique em *Abrir registros de erro* e mande o arquivo `whatsapp.log`.
 
 - **Fica em "Conectando…" / "tentando reconectar"**: confira a internet.
   O app tenta de novo sozinho; tem também o botão *Tentar agora*.

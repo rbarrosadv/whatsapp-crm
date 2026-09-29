@@ -26,11 +26,11 @@ fs.mkdirSync(OUT, { recursive: true });
 const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'crm-e2e-'));
 const errors = [];
 
-async function launch() {
+async function launch(extraEnv = {}, dir = dataDir) {
   const app = await electron.launch({
     executablePath: require(path.join(ROOT, 'node_modules', 'electron')),
     args: [ROOT, '--demo', '--no-sandbox'],
-    env: { ...process.env, CRM_DATA_DIR: dataDir, CRM_DEMO_QR_MS: '1500' },
+    env: { ...process.env, CRM_DATA_DIR: dir, CRM_DEMO_QR_MS: '1500', ...extraEnv },
   });
   const page = await app.firstWindow();
   page.on('pageerror', (e) => errors.push(`pageerror: ${e.message}`));
@@ -194,6 +194,29 @@ try {
   process.exit(1);
 }
 await app.close();
+
+// 10) conexão pelo número de telefone (código de pareamento)
+const dir2 = fs.mkdtempSync(path.join(os.tmpdir(), 'crm-e2e-pair-'));
+({ app, page } = await launch({ CRM_DEMO_QR_MS: '0' }, dir2));
+try {
+  await page.waitForSelector('.connect-overlay:not(.hidden) img.qr', { timeout: 15000 });
+  await page.click('.connect-tabs .tab:has-text("número")');
+  await page.fill('.connect-overlay input', '11 98765-4321');
+  await page.click('.connect-overlay button:has-text("Gerar código")');
+  await page.waitForSelector('.pairing-code:has-text("DEMO-1234")');
+  await shot(page, '13-pairing');
+  check(true, 'mostra código de pareamento pelo número');
+  await page.waitForSelector('.connect-overlay.hidden', { state: 'attached', timeout: 10000 });
+  await page.waitForSelector('.chat-row');
+  check(true, 'conecta após digitar o código no celular');
+} catch (e) {
+  await shot(page, 'zz-failure-pair').catch(() => {});
+  await app.close();
+  console.error(e);
+  process.exit(1);
+}
+await app.close();
+fs.rmSync(dir2, { recursive: true, force: true });
 
 const relevant = errors.filter((e) => !/Autofill|DevTools|favicon/i.test(e));
 if (relevant.length) {

@@ -83,6 +83,11 @@ Interface (`src/renderer`, JS puro em módulos ES, sem build):
 - **Mensagem crua** (`messages.raw`, BufferJSON) só é guardada para mídia,
   enquetes e mensagens enviadas por nós (necessário para baixar mídia e
   para o `getMessage` de reenvio); texto recebido não guarda raw.
+- **Sessão registrada** = `creds.json` com `me.id` e `account` (só existe
+  depois que o celular confirma). Sem isso, `start()` apaga `auth/` e a
+  tela de conexão fica aberta (QR ou código pelo número via
+  `requestPairingCode`). Falhas antes do registro trocam o perfil de
+  navegador (`BROWSERS`) e um watchdog de 40 s reinicia se não vier QR.
 - Mídia pequena (foto, figurinha, áudio) é baixada automaticamente quando
   chega; o resto sob demanda (botão Baixar), com `reuploadRequest` pra
   mídia expirada.

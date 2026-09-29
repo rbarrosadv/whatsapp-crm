@@ -235,6 +235,9 @@ const api = {
   'wa:logout': () => wa.logout(),
   'wa:reconnect': () => { wa.retry = 0; return wa.start(); },
   'wa:status': () => wa.getStatus(),
+  'wa:reset': () => wa.reset(),
+  'wa:pairingCode': (phone) => wa.requestPairingCode(phone),
+  'app:openLogs': () => shell.openPath(path.join(DATA_DIR, 'logs')),
   'wa:checkNumber': (phone) => wa.checkNumber(phone),
 
   // conversas

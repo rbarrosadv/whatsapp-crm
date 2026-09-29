@@ -47,23 +47,41 @@ function textMsg(remoteJid, fromMe, text, tsSec, pushName) {
 }
 
 export class DemoWhatsAppService extends WhatsAppService {
+  hasSession() {
+    return fs.existsSync(path.join(this.authDir, 'creds.json'));
+  }
+
+  async requestPairingCode(phone) {
+    if (this.state.state !== 'qr') throw new Error('Aguarde o QR code aparecer e tente de novo.');
+    clearTimeout(this.qrTimer);
+    this.setStatus({ pairingCode: 'DEMO-1234', pairingPhone: String(phone).replace(/\D/g, '') });
+    this.qrTimer = setTimeout(() => this.connected(true), 2500);
+    return 'DEMO-1234';
+  }
+
+  async reset() {
+    clearTimeout(this.qrTimer);
+    await this.start();
+  }
+
   async start() {
     this.stopped = false;
     if (this.hasSession()) {
-      this.setStatus({ state: 'connecting', qr: null });
+      this.setStatus({ state: 'connecting', registered: true, qr: null });
       setTimeout(() => this.connected(false), 600);
       return;
     }
     const qr = await QRCode.toDataURL('demo-whatsapp-crm', { margin: 1, width: 320 });
-    this.setStatus({ state: 'qr', qr });
+    this.setStatus({ state: 'qr', qr, registered: false, pairingCode: null });
     // no modo demo, "escaneia" sozinho depois de alguns segundos
-    this.qrTimer = setTimeout(() => this.connected(true), Number(process.env.CRM_DEMO_QR_MS || 4000));
+    const ms = Number(process.env.CRM_DEMO_QR_MS ?? 4000);
+    if (ms > 0) this.qrTimer = setTimeout(() => this.connected(true), ms);
   }
 
   async connected(firstTime) {
     fs.mkdirSync(this.authDir, { recursive: true });
     fs.writeFileSync(path.join(this.authDir, 'creds.json'), '{"demo":true}');
-    this.setStatus({ state: 'open', qr: null, me: { jid: ME, name: 'Minha Empresa (demo)' } });
+    this.setStatus({ state: 'open', registered: true, qr: null, pairingCode: null, me: { jid: ME, name: 'Minha Empresa (demo)' } });
     if (firstTime) await this.seed();
   }
 
