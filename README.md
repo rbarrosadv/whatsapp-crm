@@ -1,2 +1,106 @@
-# whatsapp-crm
-app de crm para whatsapp
+# WhatsApp CRM (v4)
+
+CRM de desktop para Windows com o **WhatsApp integrado de verdade**: você
+lê o QR code **uma única vez**, o app fica conectado como um "aparelho
+conectado" (igual ao WhatsApp Web) e **todas as conversas ficam guardadas
+no seu computador**. Ao abrir de novo, ele entra direto, sem pedir login.
+
+> ⚠️ Usa uma conexão **não oficial** com o WhatsApp (biblioteca
+> [Baileys](https://github.com/WhiskeySockets/Baileys)). É o mesmo
+> protocolo do WhatsApp Web, mas não é um produto da Meta. Use com bom
+> senso: nada de disparo em massa ou spam, pra não arriscar bloqueio do
+> número.
+
+## O que ele faz
+
+- **Conversas** — lista igual à do WhatsApp, com busca (inclusive dentro
+  das mensagens), filtros (não lidas, sem etapa, com tarefa, grupos, por
+  etapa do funil ou por etiqueta) e envio de:
+  - texto (com *negrito*, _itálico_, ~riscado~), resposta a uma mensagem,
+    reações e "apagar para todos";
+  - fotos, vídeos e documentos (botão 📎, arrastar e soltar na conversa ou
+    colar com Ctrl+V);
+  - **áudio gravado no microfone** (🎤), que chega como mensagem de voz;
+  - **respostas rápidas**: digite `/` + o atalho (ex.: `/ola`). Use
+    `{nome}` no texto pra colocar o primeiro nome do contato.
+- **Ficha do contato (CRM)** ao lado da conversa: nome, empresa, e-mail,
+  valor do negócio, etapa do funil, etiquetas, **notas**, **tarefas com
+  lembrete** (aviso do Windows na hora marcada) e histórico de
+  movimentações.
+- **Funil (Kanban)** — colunas por etapa, **arrastar e soltar** os cartões,
+  total em R$ por coluna, tempo em cada etapa. Vários funis (ex.:
+  Atendimento, Pós-venda, Pessoal), todos editáveis.
+- **Contatos** — tabela com filtros e **exportação para planilha** (CSV,
+  abre no Excel).
+- **Tarefas** — tudo que está atrasado, pra hoje e próximo.
+- **Painel** — números do atendimento e do funil.
+- Avisos de novas mensagens, contador de não lidas, continua rodando perto
+  do relógio ao fechar a janela (opcional), abrir junto com o Windows
+  (opcional), tema claro/escuro, backup com um clique.
+- **Importa o Kanban antigo** (v3): categorias, colunas, notas e prazos.
+
+## Instalação — só clicar
+
+1. Extraia esta pasta num lugar fixo, **fora do OneDrive** (ex.:
+   `C:\whatsapp-crm`).
+2. Dê **duplo-clique em `Instalar.bat`**.
+   - Se o Windows avisar "o editor não foi verificado", clique em **Mais
+     informações → Executar assim mesmo**.
+   - Se faltar o Node.js, ele avisa e manda pra https://nodejs.org —
+     instale a versão LTS e clique em `Instalar.bat` de novo.
+   - No final ele cria o atalho **WhatsApp CRM** na Área de Trabalho e já
+     abre o app.
+3. No celular: WhatsApp → **Aparelhos conectados → Conectar aparelho** →
+   leia o QR code da tela.
+4. Pronto. Na primeira conexão o histórico de conversas é sincronizado (a
+   faixa azul no topo mostra o progresso).
+
+Da próxima vez, abra pelo atalho **WhatsApp CRM** (ou
+`Iniciar WhatsApp CRM.bat`). Não pede QR code de novo.
+
+Quer conhecer antes de conectar seu número? Abra `Demonstracao.bat`:
+ele simula uma conta com conversas de exemplo (dados separados dos reais).
+
+## Onde ficam os dados
+
+Tudo fica no seu computador, em `%APPDATA%\WhatsAppCRM`:
+
+| Arquivo / pasta | O que é |
+| --- | --- |
+| `crm.sqlite` | conversas, mensagens, contatos e todo o CRM |
+| `auth\` | a sessão do WhatsApp (é o que evita pedir QR code de novo) |
+| `media\` | fotos, áudios e documentos baixados/enviados |
+| `logs\` | registro de erros da conexão |
+
+- **Backup**: Configurações → *Fazer backup do CRM* (gera uma cópia do
+  banco).
+- **Trocar de número**: Configurações → *Desconectar WhatsApp*. As
+  conversas antigas continuam guardadas.
+- Nunca envie a pasta `auth` pra ninguém: ela dá acesso ao seu WhatsApp.
+
+## Se algo não funcionar
+
+- **Fica em "Conectando…" / "tentando reconectar"**: confira a internet.
+  O app tenta de novo sozinho; tem também o botão *Tentar agora*.
+- **Pediu QR code de novo**: acontece se você remover o aparelho pelo
+  celular (Aparelhos conectados) ou se ficar muitos dias sem abrir o app
+  — é regra do WhatsApp. É só ler de novo; as conversas salvas continuam.
+- **Foto/áudio antigo não abre**: clique em *Baixar*. Mídias muito antigas
+  podem já ter sido apagadas dos servidores do WhatsApp.
+- **Mensagens antigas faltando numa conversa**: role até o topo e clique
+  em *Buscar mensagens mais antigas no celular* (o celular precisa estar
+  com internet).
+- **Outro erro**: aperte **F12**, veja a aba *Console* e mande o texto em
+  vermelho, junto com o arquivo `%APPDATA%\WhatsAppCRM\logs\whatsapp.log`.
+
+## Para desenvolvedores
+
+```
+npm install
+npm start          # app normal
+npm run demo       # modo demonstração (conta simulada, dados em WhatsAppCRM-Demo)
+npm test           # testes do núcleo (banco + processamento das mensagens)
+npm i --no-save playwright-core && npm run test:e2e   # testa a interface no modo demo
+```
+
+Detalhes da arquitetura em [`CLAUDE.md`](CLAUDE.md).

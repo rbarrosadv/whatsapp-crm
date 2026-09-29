@@ -1,0 +1,204 @@
+// Teste de ponta a ponta no modo demonstração (sem WhatsApp real).
+// Uso: npm i --no-save playwright-core && npm run test:e2e
+// Salva capturas de tela em test-results/.
+import { createRequire } from 'node:module';
+import { execSync } from 'node:child_process';
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
+
+const require = createRequire(import.meta.url);
+function loadPlaywright() {
+  for (const name of ['playwright-core', 'playwright']) {
+    try { return require(name); } catch { /* tenta o próximo */ }
+    try {
+      const globalRoot = execSync('npm root -g').toString().trim();
+      return require(path.join(globalRoot, name));
+    } catch { /* tenta o próximo */ }
+  }
+  throw new Error('Instale o playwright-core: npm i --no-save playwright-core');
+}
+const { _electron: electron } = loadPlaywright();
+
+const ROOT = path.resolve(path.dirname(new URL(import.meta.url).pathname), '..');
+const OUT = path.join(ROOT, 'test-results');
+fs.mkdirSync(OUT, { recursive: true });
+const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'crm-e2e-'));
+const errors = [];
+
+async function launch() {
+  const app = await electron.launch({
+    executablePath: require(path.join(ROOT, 'node_modules', 'electron')),
+    args: [ROOT, '--demo', '--no-sandbox'],
+    env: { ...process.env, CRM_DATA_DIR: dataDir, CRM_DEMO_QR_MS: '1500' },
+  });
+  const page = await app.firstWindow();
+  page.on('pageerror', (e) => errors.push(`pageerror: ${e.message}`));
+  page.on('console', (m) => { if (m.type() === 'error') errors.push(`console: ${m.text()}`); });
+  await page.setViewportSize({ width: 1400, height: 860 }).catch(() => {});
+  return { app, page };
+}
+
+const shot = (page, name) => page.screenshot({ path: path.join(OUT, `${name}.png`) });
+function check(cond, msg) { if (!cond) throw new Error(`FALHOU: ${msg}`); console.log(`✔ ${msg}`); }
+
+let { app, page } = await launch();
+try {
+  // 1) primeira vez: QR code
+  await page.waitForSelector('.connect-overlay:not(.hidden) img.qr', { timeout: 15000 });
+  await shot(page, '01-qr');
+  check(true, 'mostra o QR code na primeira vez');
+
+  // 2) conecta e sincroniza conversas
+  await page.waitForSelector('.connect-overlay.hidden', { state: 'attached', timeout: 15000 });
+  await page.waitForSelector('.chat-row', { timeout: 15000 });
+  const rows = await page.locator('.chat-row').count();
+  check(rows >= 5, `lista de conversas sincronizada (${rows})`);
+  await shot(page, '02-inbox');
+
+  // 3) abre a conversa e envia mensagem
+  await page.locator('.chat-row', { hasText: 'Mariana Souza' }).click();
+  await page.waitForSelector('.msg');
+  check(await page.locator('.msg').count() >= 4, 'mensagens carregadas do banco');
+  await page.fill('.composer-input', 'Temos sim! No anual sai 10% mais barato 😉');
+  await page.keyboard.press('Enter');
+  await page.waitForSelector('.msg.out:has-text("10% mais barato")');
+  await page.waitForSelector('.msg.out:last-child .tick-read', { timeout: 5000 });
+  check(true, 'mensagem enviada e confirmada como lida');
+  await page.waitForSelector('.msg.in:has-text("Perfeito, obrigado")', { timeout: 6000 });
+  check(true, 'resposta recebida aparece na conversa');
+
+  // resposta rápida com "/"
+  await page.fill('.composer-input', '/ola');
+  await page.waitForSelector('.quick-suggest:not(.hidden) .quick-item');
+  await page.keyboard.press('Enter');
+  const val = await page.inputValue('.composer-input');
+  check(val.startsWith('Olá!'), 'resposta rápida inserida pelo atalho /ola');
+  await page.fill('.composer-input', '');
+
+  // 4) etapa do funil pelo cabeçalho
+  await page.click('.chat-head .stage-btn');
+  await page.locator('.popup-item', { hasText: 'Proposta enviada' }).click();
+  await page.waitForSelector('.chat-head .stage-btn:has-text("Proposta enviada")');
+  check(true, 'conversa movida para a etapa "Proposta enviada"');
+
+  // etiqueta, campo, nota
+  await page.locator('.crm-panel .tag-chip.toggle', { hasText: 'Lead quente' }).click();
+  await page.waitForSelector('.crm-panel .tag-chip.toggle.on:has-text("Lead quente")');
+  check(true, 'etiqueta aplicada');
+  const valueInput = page.locator('.crm-field:has-text("Valor") input');
+  await valueInput.fill('2388');
+  await valueInput.press('Tab');
+  await page.fill('.crm-panel textarea', 'Quer plano anual, decidir até sexta.');
+  await page.click('.crm-panel button:has-text("Salvar nota")');
+  await page.waitForSelector('.note-text:has-text("plano anual")');
+  check(true, 'nota salva');
+
+  // tarefa
+  await page.click('.crm-panel button:has-text("Nova")');
+  await page.fill('.modal input.input >> nth=0', 'Ligar para fechar o plano anual');
+  await page.click('.modal .chip:has-text("Em 1 hora")');
+  await page.click('.modal button:has-text("Salvar")');
+  await page.waitForSelector('.crm-panel .task-title:has-text("fechar o plano")');
+  check(true, 'tarefa criada');
+  await shot(page, '03-chat-crm');
+
+  // 5) mensagem recebida em outra conversa: não lida + reordenação
+  await page.evaluate(() => window.api.call('demo:incoming', '5521991234567', 'Fechado! Pode mandar o contrato.', 'Carlos Pereira'));
+  await page.waitForSelector('.chat-row.unread:has-text("Pode mandar o contrato") .badge');
+  const first = await page.locator('.chat-row').first().innerText();
+  check(first.includes('Carlos Pereira'), 'nova mensagem sobe a conversa e marca como não lida');
+
+  // 6) funil (kanban) com arrastar e soltar
+  await page.click('.rail-btn[title="Funil"]');
+  await page.waitForSelector('.col');
+  await shot(page, '04-board');
+  const card = page.locator('.card', { hasText: 'Mariana Souza' });
+  check(await card.count() === 1, 'cartão aparece no funil');
+  const target = page.locator('.col', { hasText: 'Negociação' });
+  await card.dragTo(target);
+  await page.waitForSelector('.col:has-text("Negociação") .card:has-text("Mariana Souza")', { timeout: 5000 });
+  check(true, 'cartão arrastado para "Negociação"');
+  check((await page.locator('.col:has-text("Negociação") .col-total').innerText()).includes('2.388'), 'total da coluna soma o valor');
+
+  // adicionar conversa ao funil pelo seletor
+  await page.click('.col:has-text("Novo contato") .col-add');
+  await page.locator('.modal .picker-item', { hasText: 'Ana Beatriz' }).click();
+  await page.waitForSelector('.col:has-text("Novo contato") .card:has-text("Ana Beatriz")');
+  check(true, 'conversa adicionada ao funil');
+  await shot(page, '05-board-after');
+
+  // 7) outras telas
+  await page.click('.rail-btn[title="Contatos"]');
+  await page.waitForSelector('.table tbody tr');
+  await shot(page, '06-contacts');
+  check(await page.locator('.table tbody tr').count() >= 5, 'tabela de contatos');
+  await page.click('.rail-btn[title="Tarefas"]');
+  await page.waitForSelector('.task-group .task');
+  await shot(page, '07-tasks');
+  check(true, 'tela de tarefas');
+  await page.click('.rail-btn[title="Painel"]');
+  await page.waitForSelector('.stat');
+  await shot(page, '08-dashboard');
+  await page.click('.rail-btn[title="Configurações"]');
+  await page.waitForSelector('.settings-grid');
+  await shot(page, '09-settings');
+  check(true, 'painel e configurações');
+
+  // tema claro
+  await page.selectOption('.settings-grid select', 'light');
+  await page.click('.rail-btn[title="Conversas"]');
+  await page.locator('.chat-row', { hasText: 'Mariana Souza' }).click();
+  await page.waitForSelector('.msg');
+  await shot(page, '10-light');
+  await page.click('.rail-btn[title="Configurações"]');
+  await page.selectOption('.settings-grid select', 'dark');
+  await page.click('.rail-btn[title="Conversas"]');
+  await page.waitForTimeout(300);
+  await shot(page, '12-dark');
+
+  // 8) nova conversa por número
+  await page.click('.rail-btn[title="Conversas"]');
+  await page.click('.chatlist-head button[title^="Nova conversa"]');
+  await page.fill('.modal input >> nth=0', '(11) 91234-5678');
+  await page.fill('.modal input >> nth=1', 'Paulo Novo');
+  await page.click('.modal button:has-text("Abrir conversa")');
+  await page.waitForSelector('.chat-head-name:has-text("Paulo Novo")');
+  check(true, 'nova conversa aberta pelo número');
+} catch (e) {
+  await shot(page, 'zz-failure').catch(() => {});
+  await app.close();
+  console.error(e);
+  console.error(errors.join('\n'));
+  process.exit(1);
+}
+await app.close();
+
+// 9) reabre: deve entrar direto (sessão salva), com tudo guardado
+({ app, page } = await launch());
+try {
+  await page.waitForSelector('.chat-row', { timeout: 15000 });
+  const overlayVisible = await page.locator('.connect-overlay:not(.hidden)').count();
+  check(overlayVisible === 0, 'ao reabrir, entra direto sem pedir QR code');
+  await page.locator('.chat-row', { hasText: 'Mariana Souza' }).click();
+  await page.waitForSelector('.msg.out:has-text("10% mais barato")');
+  check(true, 'mensagens continuam armazenadas após reabrir');
+  await page.waitForSelector('.chat-head .stage-btn:has-text("Negociação")');
+  check(true, 'etapa do funil continua salva');
+  await shot(page, '11-reopen');
+} catch (e) {
+  await shot(page, 'zz-failure-reopen').catch(() => {});
+  await app.close();
+  console.error(e);
+  console.error(errors.join('\n'));
+  process.exit(1);
+}
+await app.close();
+
+const relevant = errors.filter((e) => !/Autofill|DevTools|favicon/i.test(e));
+if (relevant.length) {
+  console.error('Erros no console:\n' + relevant.join('\n'));
+  process.exit(1);
+}
+fs.rmSync(dataDir, { recursive: true, force: true });
+console.log('\nTodos os testes passaram. Capturas em test-results/');
