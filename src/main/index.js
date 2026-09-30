@@ -11,6 +11,7 @@ import { WhatsAppService } from './whatsapp.js';
 import { DemoWhatsAppService } from './demo.js';
 import { webmToOgg } from './ogg.js';
 import { importLegacy, legacyStateFile } from './legacy.js';
+import { diagnoseConnection } from './diag.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const ROOT = path.join(__dirname, '..', '..');
@@ -236,6 +237,11 @@ const api = {
   'wa:reconnect': () => wa.reconnectNow(),
   'wa:status': () => wa.getStatus(),
   'wa:reset': () => wa.reset(),
+  'wa:diagnose': async () => {
+    const r = await diagnoseConnection();
+    wa.logger.warn({ diagnostico: r }, 'teste de conexão');
+    return r;
+  },
   'wa:pairingCode': (phone) => wa.requestPairingCode(phone),
   'app:openLogs': () => shell.openPath(path.join(DATA_DIR, 'logs')),
   'wa:checkNumber': (phone) => wa.checkNumber(phone),

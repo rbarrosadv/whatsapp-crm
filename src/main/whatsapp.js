@@ -101,9 +101,13 @@ export class WhatsAppService extends EventEmitter {
 
     const { state, saveCreds } = await useMultiFileAuthState(this.authDir);
     let version;
-    try {
-      ({ version } = await fetchLatestBaileysVersion({ signal: AbortSignal.timeout(6000) }));
-    } catch { /* usa a versão embutida */ }
+    // depois de várias quedas imediatas, alterna para a versão embutida no Baileys
+    if (!this.useBundledVersion) {
+      try {
+        ({ version } = await fetchLatestBaileysVersion({ signal: AbortSignal.timeout(6000) }));
+      } catch { /* usa a versão embutida */ }
+    }
+    this.startedAt = Date.now();
     this.logger.warn({ version, registered, attempt: this.failedPairing }, 'iniciando conexão');
 
     // se em 40 s não vier nem QR nem conexão, avisa e tenta de novo do zero
@@ -174,6 +178,7 @@ export class WhatsAppService extends EventEmitter {
       clearTimeout(this.watchdog);
       this.logger.warn('conectado');
       this.retry = 0;
+      this.fastFails = 0;
       this.failedPairing = 0;
       const me = sock.user ? { jid: jidNormalizedUser(sock.user.id), name: sock.user.name || sock.user.verifiedName } : null;
       this.setStatus({ state: 'open', registered: true, qr: null, pairingCode: null, me, error: null });
@@ -208,9 +213,16 @@ export class WhatsAppService extends EventEmitter {
         this.scheduleReconnect(delay);
       } else {
         this.retry++;
+        // queda logo após abrir (< 5 s), várias vezes seguidas: algo no caminho
+        // derruba a conexão; avisa com uma dica e alterna a versão usada
+        if (Date.now() - (this.startedAt || 0) < 5000) this.fastFails = (this.fastFails || 0) + 1;
+        else this.fastFails = 0;
+        if (this.fastFails && this.fastFails % 4 === 0) this.useBundledVersion = !this.useBundledVersion;
         // quedas rápidas (428/408) são comuns: tenta logo, depois vai espaçando
         const delay = [500, 2000, 5000, 10000, 20000][this.retry - 1] ?? 30000;
-        this.setStatus({ state: 'reconnecting', error: describeError(lastDisconnect?.error, code), retryIn: delay });
+        const blocked = this.fastFails >= 3
+          ? ' — a conexão cai logo ao abrir; use “Testar conexão” em Configurações' : '';
+        this.setStatus({ state: 'reconnecting', error: describeError(lastDisconnect?.error, code) + blocked, retryIn: delay });
         this.scheduleReconnect(delay);
       }
     }
@@ -743,6 +755,8 @@ export class WhatsAppService extends EventEmitter {
 
 function describeError(err, code) {
   const msg = err?.message || 'erro desconhecido';
+  if (/ENOTFOUND|EAI_AGAIN/i.test(msg)) return 'sem internet ou o endereço do WhatsApp está bloqueado (DNS)';
+  if (/ECONNREFUSED|ECONNRESET|ETIMEDOUT/i.test(msg)) return 'conexão recusada — verifique firewall/antivírus ou VPN';
   const hints = {
     401: 'sessão encerrada pelo celular',
     403: 'acesso negado pelo WhatsApp',

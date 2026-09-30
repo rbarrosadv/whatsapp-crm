@@ -143,6 +143,11 @@ try {
   await page.click('.rail-btn[title="Configurações"]');
   await page.waitForSelector('.settings-grid');
   await shot(page, '09-settings');
+  await page.click('.settings-grid button:has-text("Testar conexão")');
+  await page.waitForSelector('.modal .diag-step', { timeout: 40000 });
+  await shot(page, '09b-diagnostico');
+  await page.click('.modal button:has-text("Fechar")');
+  check(true, 'teste de conexão mostra o resultado passo a passo');
   check(true, 'painel e configurações');
 
   // tema claro

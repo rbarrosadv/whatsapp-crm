@@ -1,7 +1,7 @@
 // Tela de conexão (QR code ou código pelo número) e faixa de status.
 import { h, fill, errToast } from '../util.js';
 import { state, on, api } from '../store.js';
-import { statusLabel } from './settings.js';
+import { statusLabel, runDiagnosis } from './settings.js';
 
 let mode = 'qr'; // 'qr' | 'phone'
 let phoneValue = '';
@@ -82,6 +82,7 @@ function renderOverlay(el, s) {
       h('p', { class: 'muted small' }, '🔒 Você só precisa fazer isso uma vez. A sessão fica salva neste computador e as conversas ficam armazenadas aqui mesmo.'),
       h('div', { class: 'row wrap' },
         h('button', { class: 'btn', onclick: () => { api('wa:reset').catch(errToast); } }, '⟳ Gerar novo código'),
+        h('button', { class: 'btn', onclick: runDiagnosis }, '🩺 Testar conexão'),
         h('button', { class: 'btn', onclick: () => api('app:openLogs').catch(errToast) }, '📄 Abrir registros de erro')),
       state.demo ? h('p', { class: 'alert info' }, 'Modo demonstração: o código é fictício e a conexão acontece sozinha.') : null),
     right));
@@ -111,7 +112,8 @@ function renderBanner(el, s) {
   if (offline && waited >= BANNER_DELAY) {
     content = h('div', { class: 'banner warn' }, h('span', { class: 'spinner small' }), statusLabel(s.state),
       s.error ? h('span', { class: 'muted small' }, ` (${s.error})`) : null,
-      s.state === 'reconnecting' ? h('button', { class: 'btn btn-sm', onclick: () => api('wa:reconnect') }, 'Tentar agora') : null);
+      s.state === 'reconnecting' ? h('button', { class: 'btn btn-sm', onclick: () => api('wa:reconnect') }, 'Tentar agora') : null,
+      h('button', { class: 'btn btn-sm', onclick: runDiagnosis }, '🩺 Testar conexão'));
   } else if (s.state === 'replaced') {
     content = h('div', { class: 'banner warn' }, '⚠ ', s.error || statusLabel(s.state),
       h('button', { class: 'btn btn-sm', onclick: () => api('wa:reconnect') }, 'Usar aqui'));

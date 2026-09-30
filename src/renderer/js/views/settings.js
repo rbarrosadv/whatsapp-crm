@@ -40,6 +40,7 @@ function render() {
         h('div', { class: 'row' },
           !connected ? h('button', { class: 'btn', onclick: () => api('wa:reconnect').catch(errToast) }, '⟳ Tentar reconectar') : null,
           !st.registered ? h('button', { class: 'btn btn-primary', onclick: () => api('wa:reset').catch(errToast) }, '📱 Mostrar QR code') : null,
+          h('button', { class: 'btn', onclick: runDiagnosis }, '🩺 Testar conexão'),
           h('button', {
             class: 'btn btn-danger',
             onclick: async () => {
@@ -116,6 +117,22 @@ function render() {
         h('p', { class: 'muted small' }, `Versão ${state.version || ''}${state.demo ? ' — modo demonstração' : ''}`)),
     ),
   );
+}
+
+export async function runDiagnosis() {
+  const body = h('div', { class: 'diag' }, h('div', { class: 'row' }, h('span', { class: 'spinner small' }), 'Testando a conexão com o WhatsApp…'));
+  modal({ title: 'Teste de conexão', body, actions: [{ label: 'Fechar', primary: true }] });
+  try {
+    const r = await api('wa:diagnose');
+    fill(body,
+      ...r.steps.map((s) => h('div', { class: `diag-step ${s.ok ? 'ok' : 'bad'}` },
+        h('b', null, s.ok ? '✔ ' : '✖ ', s.label), h('div', { class: 'muted small' }, s.detail))),
+      r.ok ? h('p', { class: 'alert info' }, 'Tudo certo com a rede. Se ainda cair, clique em “Tentar reconectar”.')
+        : h('p', { class: 'alert' }, r.hint || 'Algo está bloqueando a conexão com o WhatsApp.'),
+      h('p', { class: 'muted small' }, 'O resultado também foi gravado no registro de erros (whatsapp.log).'));
+  } catch (e) {
+    fill(body, h('p', { class: 'alert' }, e.message));
+  }
 }
 
 export function statusLabel(s) {
