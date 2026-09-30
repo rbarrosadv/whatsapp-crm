@@ -1,9 +1,12 @@
 // Lista de conversas (coluna da esquerda da caixa de entrada).
-import { h, fill, fmtListTime, normalize, debounce, modal, errToast, toast, popupMenu } from '../util.js';
-import { state, on, api, sortedChats, openChat, stageById } from '../store.js';
-import { avatarEl, ticks, stagePill, tagDots, stageMenu } from '../components.js';
+import { h, fill, fmtListTime, fmtDuration, normalize, debounce, modal, errToast, toast, popupMenu } from '../util.js';
+import {
+  state, on, api, sortedChats, openChat, stageById, typeById, chatMatchesRules, isAwaiting, setSetting,
+} from '../store.js';
+import { avatarEl, ticks, stagePill, tagDots, stageMenu, typeMenu } from '../components.js';
+import { filterEditor } from './settings.js';
 
-const filters = { q: '', mode: 'all', stage: '', tag: '', archived: false };
+const filters = { q: '', filterId: null, stage: '', tag: '', archived: false };
 let searchHits = [];
 
 export function mountChatList(root) {
@@ -28,15 +31,28 @@ export function mountChatList(root) {
 
   root.append(header, listEl);
 
+  function activeFilter() {
+    return state.filters.find((f) => f.id === filters.filterId) || state.filters[0] || { rules: {} };
+  }
+
   function renderFilters() {
-    const unreadCount = [...state.chats.values()].filter((c) => c.unread > 0 && !c.archived).length;
-    fill(chipsEl, 
-      chip('all', 'Todas'),
-      chip('unread', `Não lidas${unreadCount ? ` (${unreadCount})` : ''}`),
-      chip('nostage', 'Sem etapa'),
-      chip('tasks', 'Com tarefa'),
-      chip('groups', 'Grupos'),
-    );
+    if (filters.filterId == null) filters.filterId = state.settings.lastFilter ?? state.filters[0]?.id ?? null;
+    const all = [...state.chats.values()].filter((c) => !c.archived);
+    fill(chipsEl,
+      ...state.filters.map((f) => {
+        const unread = all.filter((c) => c.unread > 0 && chatMatchesRules(c, f.rules)).length;
+        return h('button', {
+          class: `chip ${activeFilter().id === f.id ? 'active' : ''}`,
+          title: unread ? `${unread} conversa(s) não lida(s) neste filtro` : f.name,
+          onclick: () => { filters.filterId = f.id; setSetting('lastFilter', f.id).catch(() => {}); render(); },
+          oncontextmenu: (e) => {
+            e.preventDefault();
+            popupMenu(null, [{ icon: '✎', label: 'Editar filtro', onClick: () => filterEditor(f) },
+              { icon: '＋', label: 'Novo filtro', onClick: () => filterEditor() }], { x: e.clientX, y: e.clientY });
+          },
+        }, f.icon ? `${f.icon} ` : '', f.name, unread ? h('span', { class: 'chip-count' }, unread) : null);
+      }),
+      h('button', { class: 'chip chip-edit', title: 'Criar ou editar filtros', onclick: () => filterEditor() }, '＋'));
     const stageSel = h('select', { class: 'input select-sm', onchange: (e) => { filters.stage = e.target.value; render(); } },
       h('option', { value: '' }, 'Etapa: todas'),
       state.pipelines.map((p) => h('optgroup', { label: `${p.icon || ''} ${p.name}` },
@@ -53,19 +69,10 @@ export function mountChatList(root) {
     fill(selectsEl, stageSel, tagSel, archBtn);
   }
 
-  function chip(mode, label) {
-    return h('button', {
-      class: `chip ${filters.mode === mode ? 'active' : ''}`,
-      onclick: () => { filters.mode = mode; render(); },
-    }, label);
-  }
-
   function matches(c) {
     if (!!c.archived !== filters.archived && !filters.q) return false;
-    if (filters.mode === 'unread' && !(c.unread > 0)) return false;
-    if (filters.mode === 'nostage' && (c.stage_id || c.is_group)) return false;
-    if (filters.mode === 'tasks' && !(c.open_tasks > 0)) return false;
-    if (filters.mode === 'groups' && !c.is_group) return false;
+    // a pesquisa procura em todas as conversas, ignorando o filtro escolhido
+    if (!filters.q && !chatMatchesRules(c, activeFilter().rules)) return false;
     if (filters.stage) {
       if (filters.stage.startsWith('p:')) { if (c.pipeline_id !== filters.stage.slice(2)) return false; }
       else if (c.stage_id !== filters.stage) return false;
@@ -121,12 +128,16 @@ export function mountChatList(root) {
     avatarEl(c, 46),
     h('div', { class: 'chat-main' },
       h('div', { class: 'chat-top' },
-        h('span', { class: 'chat-name' }, c.pinned ? '📌 ' : '', c.display_name),
+        h('span', { class: 'chat-name' }, c.pinned ? '📌 ' : '',
+          typeById(c.type_id) ? h('span', { class: 'type-icon', title: typeById(c.type_id).name }, typeById(c.type_id).icon, ' ') : null,
+          c.display_name),
         h('span', { class: 'chat-time' }, fmtListTime(c.last_ts))),
       h('div', { class: 'chat-bottom' },
         h('span', { class: 'chat-preview' }, c.last_from_me ? ticks(c.last_status) : null, ' ', c.last_preview || ''),
         c.unread > 0 ? h('span', { class: 'badge' }, c.unread > 99 ? '99+' : String(c.unread)) : null),
-      (st || c.tag_ids.length || c.open_tasks) ? h('div', { class: 'chat-meta' },
+      (st || c.tag_ids.length || c.open_tasks || waitingMs(c)) ? h('div', { class: 'chat-meta' },
+        waitingMs(c) ? h('span', { class: `waiting ${waitingMs(c) > 24 * 3600e3 ? 'late' : ''}`, title: 'Aguardando sua resposta' },
+          `⏳ ${fmtDuration(waitingMs(c))}`) : null,
         st ? stagePill(c.stage_id, { small: true }) : null,
         tagDots(c.tag_ids, { max: 2 }),
         c.open_tasks ? h('span', { class: `task-flag ${c.next_due && c.next_due < Date.now() ? 'late' : ''}` }, `⏰ ${c.open_tasks}`) : null) : null));
@@ -135,6 +146,7 @@ export function mountChatList(root) {
 
   function rowMenu(c, e) {
     popupMenu(null, [
+      { icon: '🏷', label: 'Classificar contato…', onClick: () => typeMenu(null, c, { x: e.clientX, y: e.clientY }) },
       { icon: '📊', label: 'Mover para etapa…', onClick: () => stageMenu(null, c, { x: e.clientX, y: e.clientY }) },
       c.unread > 0
         ? { icon: '✔', label: 'Marcar como lida', onClick: () => api('chats:markRead', c.jid) }
@@ -144,11 +156,24 @@ export function mountChatList(root) {
 
   on('chats', debounce(render, 60));
   on('config', render);
+  on('open-filter', (kind) => {
+    const f = state.filters.find((x) => (kind === 'awaiting' ? x.rules.awaiting : false));
+    if (f) { filters.filterId = f.id; filters.q = ''; searchInput.value = ''; render(); }
+  });
+  // atualiza o tempo de espera de vez em quando
+  setInterval(() => { if (state.view === 'inbox') render(); }, 60000);
   on('active', () => {
     listEl.querySelectorAll('.chat-row.active').forEach((r) => r.classList.remove('active'));
     listEl.querySelector(`.chat-row[data-jid="${CSS.escape(state.activeJid || '')}"]`)?.classList.add('active');
   });
   render();
+}
+
+/** Há quanto tempo o contato espera resposta (só conta a partir de 1 h). */
+function waitingMs(c) {
+  if (!isAwaiting(c)) return 0;
+  const ms = Date.now() - c.last_ts;
+  return ms >= 3600e3 ? ms : 0;
 }
 
 function highlight(text, q) {

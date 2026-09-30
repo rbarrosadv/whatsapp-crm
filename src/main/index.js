@@ -23,8 +23,11 @@ const LEGACY_STATE_FILE = legacyStateFile(app.getPath('appData'));
 const DATA_DIR = process.env.CRM_DATA_DIR
   || path.join(app.getPath('appData'), DEMO ? 'WhatsAppCRM-Demo' : 'WhatsAppCRM');
 app.setPath('userData', DATA_DIR);
-// No Windows, sem instalador, as notificações precisam do caminho do executável como id.
-app.setAppUserModelId(app.isPackaged ? 'com.whatsappcrm.desktop' : process.execPath);
+// Identidade do app no Windows: é ela que faz as notificações aparecerem
+// como "WhatsApp CRM" (com ícone) e ficarem na Central de Notificações.
+// Precisa de um atalho no Menu Iniciar com o mesmo id (ensureStartMenuShortcut).
+const AUMID = 'com.whatsappcrm.desktop';
+app.setAppUserModelId(AUMID);
 
 if (!app.requestSingleInstanceLock()) {
   app.quit();
@@ -136,11 +139,50 @@ function createTray() {
   tray.on('click', showWindow);
 }
 
+// Guarda as notificações abertas: se forem descartadas da memória, o clique
+// nelas deixa de funcionar no Windows.
+const liveNotifications = new Set();
+
 function notify(title, body, onClick) {
   if (!Notification.isSupported()) return;
-  const n = new Notification({ title, body, icon: fs.existsSync(ICON) ? ICON : undefined, silent: false });
-  if (onClick) n.on('click', onClick);
+  const n = new Notification({
+    title, body, icon: fs.existsSync(ICON) ? ICON : undefined, silent: false, timeoutType: 'default',
+  });
+  liveNotifications.add(n);
+  const drop = () => liveNotifications.delete(n);
+  n.on('click', () => { drop(); (onClick || showWindow)(); });
+  n.on('close', drop);
+  n.on('failed', (_e, err) => { drop(); console.error('notificação falhou:', err); });
   n.show();
+  // evita acumular para sempre
+  setTimeout(drop, 24 * 3600 * 1000);
+}
+
+/**
+ * Cria/atualiza o atalho "WhatsApp CRM" no Menu Iniciar com a identidade do
+ * app (AppUserModelID). Sem ele o Windows não mostra as notificações direito.
+ */
+function ensureStartMenuShortcut() {
+  if (process.platform !== 'win32' || DEMO) return;
+  try {
+    const lnk = path.join(app.getPath('appData'), 'Microsoft', 'Windows', 'Start Menu', 'Programs', 'WhatsApp CRM.lnk');
+    const options = {
+      target: process.execPath,
+      args: app.isPackaged ? '' : `"${ROOT}"`,
+      cwd: ROOT,
+      icon: path.join(ROOT, 'assets', 'icon.ico'),
+      iconIndex: 0,
+      description: 'WhatsApp CRM',
+      appUserModelId: AUMID,
+    };
+    let current = null;
+    try { current = shell.readShortcutLink(lnk); } catch { /* não existe */ }
+    const same = current && current.target === options.target && current.args === options.args
+      && current.appUserModelId === AUMID;
+    if (!same) shell.writeShortcutLink(lnk, current ? 'replace' : 'create', options);
+  } catch (e) {
+    console.error('não foi possível criar o atalho do Menu Iniciar:', e);
+  }
 }
 
 function updateUnreadBadge() {
@@ -174,12 +216,29 @@ function maybeNotifyMessage(chatJid, msg) {
   const chat = db.getChat(chatJid);
   if (!chat) return;
   if (chat.muted_until && (chat.muted_until === -1 || chat.muted_until > Date.now())) return;
+  // tipos de contato com aviso desligado (ex.: Pessoal em horário de trabalho)
+  if (chat.type_id && db.get('SELECT notify FROM contact_types WHERE id = ?', chat.type_id)?.notify === 0) return;
   const focusedHere = win && win.isFocused() && wa.activeChat === chatJid;
   if (focusedHere) return;
   if (win && !win.isFocused()) win.flashFrame(true);
   const who = chat.is_group ? `${chat.display_name} — ${msg.sender_name || 'alguém'}` : chat.display_name;
   const body = settings.notificationPreview === false ? 'Nova mensagem' : db.previewOf(msg).slice(0, 180);
   notify(who, body, () => { showWindow(); send('ui:open-chat', chatJid); });
+}
+
+// avisa quando conversas de trabalho estão há muito tempo sem resposta
+function checkForgotten() {
+  const hours = Number(settings.forgottenHours ?? 24);
+  if (!hours || settings.notifications === false) return;
+  const list = db.forgottenChats(hours * 3600 * 1000);
+  if (!list.length) return;
+  db.markChatsAlerted(list.map((c) => c.jid));
+  const names = list.slice(0, 3).map((c) => db.getChat(c.jid)?.display_name).filter(Boolean);
+  const more = list.length > 3 ? ` e mais ${list.length - 3}` : '';
+  notify(`⏳ ${list.length} conversa(s) aguardando sua resposta há mais de ${hours} h`, `${names.join(', ')}${more}`, () => {
+    showWindow();
+    if (list.length === 1) send('ui:open-chat', list[0].jid); else send('ui:open-filter', 'awaiting');
+  });
 }
 
 function startReminders() {
@@ -194,6 +253,7 @@ function startReminders() {
         });
         send('tasks:changed', null);
       }
+      checkForgotten();
     } catch (e) { console.error(e); }
   };
   setInterval(check, 30000);
@@ -227,6 +287,8 @@ const api = {
     pipelines: db.listPipelines(),
     tags: db.listTags(),
     quickReplies: db.listQuickReplies(),
+    contactTypes: db.listContactTypes(),
+    filters: db.listChatFilters(),
     settings: publicSettings(),
     dataDir: DATA_DIR,
     legacyAvailable: !DEMO && fs.existsSync(LEGACY_STATE_FILE),
@@ -329,6 +391,13 @@ const api = {
   // CRM
   'crm:setStage': (jid, stageId) => { db.setStage(jid, stageId); wa.markChanged(jid); },
   'crm:update': (jid, fields) => { db.updateCrmFields(jid, fields); wa.markChanged(jid); },
+  'crm:setType': (jid, typeId) => { db.setContactType(jid, typeId); wa.markChanged(jid); },
+  'types:save': (t) => { const id = db.saveContactType(t); broadcastConfig(); return id; },
+  'types:delete': (id) => { db.deleteContactType(id); broadcastConfig(); refreshAllChats(); },
+  'types:reorder': (ids) => { db.reorderContactTypes(ids); broadcastConfig(); },
+  'filters:save': (f) => { const id = db.saveChatFilter(f); broadcastConfig(); return id; },
+  'filters:delete': (id) => { db.deleteChatFilter(id); broadcastConfig(); },
+  'filters:reorder': (ids) => { db.reorderChatFilters(ids); broadcastConfig(); },
   'crm:setTags': (jid, tagIds) => { db.setChatTags(jid, tagIds); wa.markChanged(jid); },
   'crm:activity': (jid) => db.listActivity(jid),
   'notes:list': (jid) => db.listNotes(jid),
@@ -359,7 +428,7 @@ const api = {
   // configurações
   'settings:set': (key, value) => {
     const allowed = ['notifications', 'notificationPreview', 'minimizeToTray', 'sendReadReceipts', 'openAtLogin',
-      'theme', 'lastView', 'lastPipeline', 'enterToSend'];
+      'theme', 'lastView', 'lastPipeline', 'enterToSend', 'forgottenHours', 'lastFilter'];
     if (!allowed.includes(key)) throw new Error('configuração desconhecida');
     settings[key] = value;
     db.setSetting(key, value);
@@ -393,6 +462,13 @@ const api = {
     refreshAllChats();
     return res;
   },
+  'app:testNotification': () => {
+    if (!Notification.isSupported()) throw new Error('Este Windows não permite notificações para o app.');
+    notify('WhatsApp CRM — teste', 'Se você está vendo isto, as notificações estão funcionando. 👍');
+  },
+  'app:openNotificationSettings': () => {
+    if (process.platform === 'win32') shell.openExternal('ms-settings:notifications');
+  },
   'app:openDataDir': () => shell.openPath(DATA_DIR),
   'app:openExternal': (url) => { if (/^https?:/i.test(url)) shell.openExternal(url); },
 };
@@ -406,6 +482,7 @@ function stripRaw(m) { if (m) delete m.raw; return m; }
 function broadcastConfig() {
   send('config:changed', {
     pipelines: db.listPipelines(), tags: db.listTags(), quickReplies: db.listQuickReplies(),
+    contactTypes: db.listContactTypes(), filters: db.listChatFilters(),
   });
 }
 
@@ -500,6 +577,7 @@ app.whenReady().then(async () => {
     setTimeout(() => wa.reconnectNow().catch((e) => console.error(e)), 1500);
   });
 
+  ensureStartMenuShortcut();
   createWindow();
   createTray();
   updateUnreadBadge();

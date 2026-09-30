@@ -1,6 +1,6 @@
 // Pedacinhos de interface reaproveitados em várias telas.
-import { h, initials, colorFor, popupMenu } from './util.js';
-import { state, avatarFor, stageById, tagById, api } from './store.js';
+import { h, initials, colorFor, popupMenu, errToast } from './util.js';
+import { state, avatarFor, stageById, tagById, typeById, api } from './store.js';
 
 export function avatarEl(chat, size = 44) {
   const el = h('div', {
@@ -73,4 +73,32 @@ export function emptyState(icon, title, text, action) {
     h('h3', null, title),
     text ? h('p', null, text) : null,
     action || null);
+}
+
+export function typePill(typeId) {
+  const t = typeById(typeId);
+  if (!t) return null;
+  return h('span', { class: 'stage-pill small', style: { '--c': t.color || '#94a3b8' } }, `${t.icon || ''} ${t.name}`);
+}
+
+/** Menu para classificar o contato (Pessoal, Cliente, Empresa…). */
+export function typeMenu(anchor, chat, opts = {}) {
+  return popupMenu(anchor, [
+    ...state.contactTypes.map((t) => ({
+      icon: t.icon, label: t.name, active: chat.type_id === t.id,
+      onClick: () => api('crm:setType', chat.jid, t.id).catch(errToast),
+    })),
+    ...(chat.type_id ? ['-', { label: 'Remover classificação', onClick: () => api('crm:setType', chat.jid, null).catch(errToast) }] : []),
+  ], opts);
+}
+
+/** Faixa "Quem é este contato?" para conversas ainda não classificadas. */
+export function classifyBar(chat) {
+  if (chat.type_id && typeById(chat.type_id)) return null;
+  return h('div', { class: 'classify-bar' },
+    h('span', null, chat.is_group ? 'Classificar este grupo:' : 'Quem é este contato?'),
+    ...state.contactTypes.map((t) => h('button', {
+      class: 'btn btn-sm', style: { borderColor: t.color },
+      onclick: () => api('crm:setType', chat.jid, t.id).catch(errToast),
+    }, `${t.icon || ''} ${t.name}`)));
 }

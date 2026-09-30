@@ -3,8 +3,8 @@ import {
   h, clear, fill, fmtTime, fmtDay, fmtSize, fmtSeconds, formatWhatsApp, formatPhone, phoneOf, colorFor,
   toast, errToast, modal, confirmDialog, popupMenu, EMOJIS, QUICK_REACTIONS,
 } from '../util.js';
-import { state, on, emit, api, stageById, openChat } from '../store.js';
-import { avatarEl, ticks, stageMenu, emptyState } from '../components.js';
+import { state, on, emit, api, stageById, openChat, typeById } from '../store.js';
+import { avatarEl, ticks, stageMenu, emptyState, typeMenu, classifyBar } from '../components.js';
 import { newChatDialog } from './chatlist.js';
 
 export function mediaUrl(rel) {
@@ -47,13 +47,14 @@ async function open(jid) {
   replyTo = null;
   current = { jid, messages: [], els: new Map(), loadingOlder: false, noMoreLocal: false };
   const headerEl = h('div', { class: 'chat-head' });
+  const classifyEl = h('div');
   const msgsEl = h('div', { class: 'messages', onscroll: onScroll });
   const newBtn = h('button', { class: 'new-msgs-btn hidden', onclick: () => scrollToBottom(true) }, '↓ Novas mensagens');
   const composerEl = h('div', { class: 'composer' });
-  const pane = h('div', { class: 'chat-pane' }, headerEl, h('div', { class: 'messages-wrap' }, msgsEl, newBtn), composerEl);
+  const pane = h('div', { class: 'chat-pane' }, headerEl, classifyEl, h('div', { class: 'messages-wrap' }, msgsEl, newBtn), composerEl);
   setupDrop(pane);
   fill(root, pane);
-  Object.assign(current, { headerEl, msgsEl, composerEl, newBtn });
+  Object.assign(current, { headerEl, classifyEl, msgsEl, composerEl, newBtn });
   renderHeader();
   renderComposer();
   const msgs = await api('messages:list', jid, { limit: 80 });
@@ -73,16 +74,25 @@ function renderHeader() {
   const sub = chat.is_group ? 'Grupo' : (phone ? formatPhone(phone) : '');
   const st = chat.stage_id ? stageById(chat.stage_id) : null;
   const stageBtn = h('button', {
-    class: `stage-btn ${st ? '' : 'empty'}`,
+    class: `stage-btn ${st ? '' : 'unset'}`,
     style: st ? { '--c': st.color } : null,
     title: 'Mudar etapa do funil',
     onclick: (e) => stageMenu(e.currentTarget, chat),
   }, st ? `${st.pipeline.icon || ''} ${st.name}` : '＋ Adicionar ao funil', ' ▾');
+  const t = typeById(chat.type_id);
+  const typeBtn = h('button', {
+    class: `stage-btn ${t ? '' : 'unset'}`,
+    style: t ? { '--c': t.color } : null,
+    title: 'Tipo de contato',
+    onclick: (e) => typeMenu(e.currentTarget, chat),
+  }, t ? `${t.icon || ''} ${t.name}` : '❓ Classificar', ' ▾');
+  fill(current.classifyEl, classifyBar(chat));
   fill(current.headerEl, 
     avatarEl(chat, 40),
     h('div', { class: 'chat-head-info', onclick: () => root._togglePanel?.(true) },
       h('div', { class: 'chat-head-name' }, chat.display_name),
       h('div', { class: 'chat-head-sub' }, sub, chat.company ? ` · ${chat.company}` : '')),
+    typeBtn,
     stageBtn,
     h('button', { class: 'icon-btn', title: 'Marcar como não lida', onclick: () => api('chats:markUnread', chat.jid) }, '●'),
     h('button', { class: 'icon-btn', title: 'Ficha do contato (CRM)', onclick: () => root._togglePanel?.() }, '☰'),

@@ -76,8 +76,40 @@ try {
   check(val.startsWith('Olá!'), 'resposta rápida inserida pelo atalho /ola');
   await page.fill('.composer-input', '');
 
+  // 3b) classificação: faixa "Quem é este contato?" e filtros
+  await page.waitForSelector('.classify-bar');
+  await page.click('.classify-bar button:has-text("Cliente")');
+  await page.waitForSelector('.chat-head .stage-btn:has-text("Cliente")');
+  check(await page.locator('.classify-bar').count() === 0, 'contato classificado como Cliente pela faixa');
+  await page.locator('.chat-row', { hasText: 'João (Fornecedor)' }).click();
+  await page.click('.classify-bar button:has-text("Pessoal")');
+  await page.waitForSelector('.chat-head .stage-btn:has-text("Pessoal")');
+  await page.click('.chips .chip:has-text("Trabalho")');
+  await page.waitForTimeout(200);
+  check(await page.locator('.chat-row:has-text("João (Fornecedor)")').count() === 0, 'filtro Trabalho esconde conversa pessoal');
+  check(await page.locator('.chat-row:has-text("Mariana Souza")').count() === 1, 'filtro Trabalho mostra cliente');
+  check(await page.locator('.chat-row:has-text("Ana Beatriz")').count() === 1, 'filtro Trabalho mostra não classificados');
+  await page.click('.chips .chip:has-text("Para classificar")');
+  await page.waitForTimeout(200);
+  check(await page.locator('.chat-row:has-text("Mariana Souza")').count() === 0, 'Para classificar não mostra classificados');
+  await page.click('.chips .chip:has-text("Aguardando resposta")');
+  await page.waitForTimeout(200);
+  check(await page.locator('.chat-row:has-text("Carlos Pereira") .waiting').count() === 1, 'Aguardando resposta mostra há quanto tempo');
+  await shot(page, '03a-filtros');
+  // novo filtro personalizado
+  await page.click('.chips .chip-edit');
+  await page.fill('.modal .field.grow input', 'Clientes');
+  await page.locator('.modal label.check', { hasText: 'Cliente' }).first().locator('input').check();
+  await page.click('.modal button:has-text("Salvar")');
+  await page.click('.chips .chip:has-text("Clientes")');
+  await page.waitForTimeout(200);
+  check(await page.locator('.chat-row').count() === 1, 'filtro criado pelo usuário funciona');
+  await page.click('.chips .chip:has-text("Tudo")');
+  await page.locator('.chat-row', { hasText: 'Mariana Souza' }).click();
+  await page.waitForSelector('.chat-head .stage-btn:has-text("Cliente")');
+
   // 4) etapa do funil pelo cabeçalho
-  await page.click('.chat-head .stage-btn');
+  await page.click('.chat-head .stage-btn:has-text("Adicionar ao funil")');
   await page.locator('.popup-item', { hasText: 'Proposta enviada' }).click();
   await page.waitForSelector('.chat-head .stage-btn:has-text("Proposta enviada")');
   check(true, 'conversa movida para a etapa "Proposta enviada"');
@@ -190,6 +222,8 @@ try {
   check(true, 'mensagens continuam armazenadas após reabrir');
   await page.waitForSelector('.chat-head .stage-btn:has-text("Negociação")');
   check(true, 'etapa do funil continua salva');
+  await page.waitForSelector('.chat-head .stage-btn:has-text("Cliente")');
+  check(true, 'classificação continua salva');
   await shot(page, '11-reopen');
 } catch (e) {
   await shot(page, 'zz-failure-reopen').catch(() => {});

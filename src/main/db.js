@@ -8,7 +8,7 @@ import fs from 'node:fs';
 
 let db;
 
-const SCHEMA_VERSION = 1;
+const SCHEMA_VERSION = 2;
 
 const DEFAULT_PIPELINES = [
   {
@@ -30,6 +30,24 @@ const DEFAULT_PIPELINES = [
       ['resolvido', 'Resolvido', '#22c55e'],
     ],
   },
+];
+
+// Tipos de contato (editáveis). `personal` = não conta como trabalho
+// (fica fora de "Aguardando resposta" e dos avisos de conversa esquecida).
+const DEFAULT_CONTACT_TYPES = [
+  ['pessoal', 'Pessoal', '👤', '#a855f7', 1],
+  ['cliente', 'Cliente', '⚖️', '#22c55e', 0],
+  ['empresa', 'Empresa', '🏢', '#3b82f6', 0],
+];
+
+// Filtros da lista de conversas (editáveis). Regras em JSON — ver chatMatchesRules no renderer.
+const DEFAULT_FILTERS = [
+  ['Tudo', '💬', {}],
+  ['Trabalho', '💼', { types: ['cliente', 'empresa'], unclassified: 'include', groups: 'exclude' }],
+  ['Pessoal', '👤', { types: ['pessoal'], unclassified: 'include' }],
+  ['Para classificar', '❓', { unclassified: 'only', groups: 'exclude' }],
+  ['Aguardando resposta', '⏳', { awaiting: true, work: true, groups: 'exclude' }],
+  ['Não lidas', '🔵', { unread: true }],
 ];
 
 const DEFAULT_TAGS = [
@@ -183,9 +201,43 @@ function migrate() {
     );
   `);
 
+  // versão 2: tipos de contato e filtros editáveis
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS contact_types (
+      id TEXT PRIMARY KEY, name TEXT NOT NULL, icon TEXT, color TEXT,
+      personal INTEGER NOT NULL DEFAULT 0, notify INTEGER NOT NULL DEFAULT 1, position INTEGER NOT NULL DEFAULT 0
+    );
+    CREATE TABLE IF NOT EXISTS chat_filters (
+      id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT NOT NULL, icon TEXT, rules TEXT NOT NULL DEFAULT '{}',
+      position INTEGER NOT NULL DEFAULT 0
+    );
+  `);
+  addColumn('crm', 'type_id', 'TEXT');
+  addColumn('chats', 'alerted_ts', 'INTEGER');
+
   const version = Number(get('SELECT value FROM meta WHERE key = ?', 'schema')?.value || 0);
   if (version < 1) seedDefaults();
+  if (version < 2) seedV2();
   run('INSERT OR REPLACE INTO meta (key, value) VALUES (?, ?)', 'schema', String(SCHEMA_VERSION));
+}
+
+function addColumn(table, col, type) {
+  const cols = db.prepare(`PRAGMA table_info(${table})`).all().map((c) => c.name);
+  if (!cols.includes(col)) db.exec(`ALTER TABLE ${table} ADD COLUMN ${col} ${type}`);
+}
+
+function seedV2() {
+  tx(() => {
+    DEFAULT_CONTACT_TYPES.forEach(([id, name, icon, color, personal], i) => {
+      run('INSERT OR IGNORE INTO contact_types (id, name, icon, color, personal, position) VALUES (?, ?, ?, ?, ?, ?)',
+        id, name, icon, color, personal, i);
+    });
+    if (!get('SELECT COUNT(*) AS n FROM chat_filters')?.n) {
+      DEFAULT_FILTERS.forEach(([name, icon, rules], i) => {
+        run('INSERT INTO chat_filters (name, icon, rules, position) VALUES (?, ?, ?, ?)', name, icon, JSON.stringify(rules), i);
+      });
+    }
+  });
 }
 
 function seedDefaults() {
@@ -353,7 +405,7 @@ export function previewOf(m) {
 export function listChats() {
   return all(`
     SELECT c.*, ct.name AS contact_name, ct.notify, ct.verified_name, ct.phone,
-      crm.custom_name, crm.email, crm.company, crm.value, crm.pipeline_id, crm.stage_id, crm.stage_changed_at,
+      crm.custom_name, crm.email, crm.company, crm.value, crm.pipeline_id, crm.stage_id, crm.stage_changed_at, crm.type_id,
       (SELECT group_concat(tag_id) FROM chat_tags t WHERE t.jid = c.jid) AS tag_ids,
       (SELECT COUNT(*) FROM tasks k WHERE k.jid = c.jid AND k.done = 0) AS open_tasks,
       (SELECT MIN(due_at) FROM tasks k WHERE k.jid = c.jid AND k.done = 0 AND k.due_at IS NOT NULL) AS next_due
@@ -368,7 +420,7 @@ export function listChats() {
 export function getChat(jid) {
   const row = get(`
     SELECT c.*, ct.name AS contact_name, ct.notify, ct.verified_name, ct.phone,
-      crm.custom_name, crm.email, crm.company, crm.value, crm.pipeline_id, crm.stage_id, crm.stage_changed_at,
+      crm.custom_name, crm.email, crm.company, crm.value, crm.pipeline_id, crm.stage_id, crm.stage_changed_at, crm.type_id,
       (SELECT group_concat(tag_id) FROM chat_tags t WHERE t.jid = c.jid) AS tag_ids,
       (SELECT COUNT(*) FROM tasks k WHERE k.jid = c.jid AND k.done = 0) AS open_tasks,
       (SELECT MIN(due_at) FROM tasks k WHERE k.jid = c.jid AND k.done = 0 AND k.due_at IS NOT NULL) AS next_due
@@ -596,6 +648,70 @@ export function updateCrmFields(jid, fields) {
       run(`UPDATE crm SET ${f} = ?, updated_at = ? WHERE jid = ?`, v, now(), jid);
     }
   });
+}
+
+export function setContactType(jid, typeId) {
+  tx(() => {
+    ensureCrm(jid);
+    const t = typeId ? get('SELECT name FROM contact_types WHERE id = ?', typeId) : null;
+    if (typeId && !t) throw new Error('Tipo de contato não encontrado');
+    run('UPDATE crm SET type_id = ?, updated_at = ? WHERE jid = ?', typeId || null, now(), jid);
+    logActivity(jid, 'type', t ? `Classificado como ${t.name}` : 'Classificação removida');
+  });
+}
+
+// tipos de contato
+export function listContactTypes() { return all('SELECT * FROM contact_types ORDER BY position, rowid'); }
+export function saveContactType({ id, name, icon, color, personal, notify }) {
+  const tid = id || uniqueId('tipo');
+  const pos = get('SELECT COUNT(*) AS n FROM contact_types')?.n || 0;
+  run(`INSERT INTO contact_types (id, name, icon, color, personal, notify, position) VALUES (?, ?, ?, ?, ?, ?, ?)
+       ON CONFLICT(id) DO UPDATE SET name = excluded.name, icon = excluded.icon, color = excluded.color,
+         personal = excluded.personal, notify = excluded.notify`,
+  tid, name, icon || '🏷', color || '#94a3b8', personal ? 1 : 0, notify === false ? 0 : 1, pos);
+  return tid;
+}
+export function deleteContactType(id) {
+  tx(() => {
+    run('UPDATE crm SET type_id = NULL WHERE type_id = ?', id);
+    run('DELETE FROM contact_types WHERE id = ?', id);
+  });
+}
+export function reorderContactTypes(ids) {
+  tx(() => ids.forEach((id, i) => run('UPDATE contact_types SET position = ? WHERE id = ?', i, id)));
+}
+
+// filtros da lista de conversas
+export function listChatFilters() {
+  return all('SELECT * FROM chat_filters ORDER BY position, id').map((f) => ({ ...f, rules: safeJson(f.rules) }));
+}
+export function saveChatFilter({ id, name, icon, rules }) {
+  if (id) {
+    run('UPDATE chat_filters SET name = ?, icon = ?, rules = ? WHERE id = ?', name, icon || '', JSON.stringify(rules || {}), id);
+    return id;
+  }
+  const pos = get('SELECT COUNT(*) AS n FROM chat_filters')?.n || 0;
+  return Number(run('INSERT INTO chat_filters (name, icon, rules, position) VALUES (?, ?, ?, ?)',
+    name, icon || '', JSON.stringify(rules || {}), pos).lastInsertRowid);
+}
+export function deleteChatFilter(id) { run('DELETE FROM chat_filters WHERE id = ?', id); }
+export function reorderChatFilters(ids) {
+  tx(() => ids.forEach((id, i) => run('UPDATE chat_filters SET position = ? WHERE id = ?', i, id)));
+}
+function safeJson(s) { try { return JSON.parse(s || '{}'); } catch { return {}; } }
+
+/** Conversas de trabalho esperando resposta há mais de `ms` e ainda não avisadas. */
+export function forgottenChats(ms) {
+  return all(`SELECT c.jid, c.last_ts FROM chats c
+              LEFT JOIN crm ON crm.jid = c.jid
+              LEFT JOIN contact_types t ON t.id = crm.type_id
+              WHERE c.is_group = 0 AND c.last_from_me = 0 AND c.last_ts > 0 AND c.last_ts < ?
+                AND c.last_ts > ? AND COALESCE(t.personal, 0) = 0
+                AND (c.alerted_ts IS NULL OR c.alerted_ts < c.last_ts)`,
+  now() - ms, now() - 30 * 24 * 3600 * 1000);
+}
+export function markChatsAlerted(jids) {
+  tx(() => jids.forEach((j) => run('UPDATE chats SET alerted_ts = ? WHERE jid = ?', now(), j)));
 }
 
 export function logActivity(jid, kind, detail) {

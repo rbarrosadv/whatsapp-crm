@@ -209,7 +209,9 @@ textarea.input { resize: vertical; }
   border: 1px solid color-mix(in srgb, var(--c, var(--muted)) 55%, transparent); background: color-mix(in srgb, var(--c, transparent) 16%, transparent);
   color: var(--text); padding: 6px 12px; border-radius: 16px; cursor: pointer; white-space: nowrap; font-size: 13px;
 }
-.stage-btn.empty { border-style: dashed; color: var(--muted); --c: var(--muted); background: transparent; }
+.stage-btn.unset { border-style: dashed; color: var(--muted); --c: var(--muted); background: transparent; }
+.chat-head .stage-btn { flex: none; max-width: 220px; overflow: hidden; text-overflow: ellipsis; }
+.chat-head-info { min-width: 120px; }
 .stage-btn.wide { width: 100%; text-align: left; border-radius: 8px; }
 .messages-wrap { flex: 1; min-height: 0; position: relative; }
 .messages { position: absolute; inset: 0; overflow-y: auto; padding: 12px 6% 18px; display: flex; flex-direction: column; gap: 2px; }
@@ -514,3 +516,15 @@ textarea.input { resize: vertical; }
 .diag-step { padding: 8px 10px; border-radius: 8px; background: var(--panel-2); border-left: 4px solid var(--muted); }
 .diag-step.ok { border-left-color: #22c55e; }
 .diag-step.bad { border-left-color: var(--danger); }
+
+/* tipos de contato e filtros */
+.chip-count { margin-left: 6px; background: var(--accent-2); color: #111b21; border-radius: 9px; padding: 0 6px; font-size: 11px; font-weight: 600; }
+.chip-edit { font-weight: 600; }
+.type-icon { font-size: 13px; }
+.waiting { font-size: 11.5px; color: var(--warn); }
+.waiting.late { color: var(--danger); font-weight: 600; }
+.classify-bar {
+  display: flex; align-items: center; gap: 8px; flex-wrap: wrap; padding: 8px 16px; font-size: 13px;
+  background: color-mix(in srgb, var(--warn) 12%, var(--panel-2)); border-left: 1px solid var(--border);
+}
+.classify-bar > span { color: var(--muted); margin-right: 4px; }

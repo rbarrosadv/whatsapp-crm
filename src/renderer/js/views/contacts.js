@@ -1,10 +1,10 @@
 // Lista de contatos em tabela, com filtros e exportação para planilha (CSV).
 import { h, clear, fill, fmtMoney, fmtListTime, formatPhone, phoneOf, normalize, debounce, toast, errToast } from '../util.js';
-import { state, on, api, openChat, stageById, tagById } from '../store.js';
-import { avatarEl, stagePill, tagDots } from '../components.js';
+import { state, on, api, openChat, stageById, tagById, typeById } from '../store.js';
+import { avatarEl, stagePill, tagDots, typePill } from '../components.js';
 
 let root;
-const f = { q: '', stage: '', tag: '', sort: 'recent' };
+const f = { q: '', stage: '', tag: '', type: '', sort: 'recent' };
 
 export function mountContacts(el) {
   root = el;
@@ -24,6 +24,8 @@ function filtered() {
   if (f.stage === '_none') list = list.filter((c) => !c.stage_id);
   else if (f.stage) list = list.filter((c) => c.stage_id === f.stage);
   if (f.tag) list = list.filter((c) => c.tag_ids.includes(Number(f.tag)));
+  if (f.type === '_none') list = list.filter((c) => !typeById(c.type_id));
+  else if (f.type) list = list.filter((c) => c.type_id === f.type);
   const sorters = {
     recent: (a, b) => b.last_ts - a.last_ts,
     name: (a, b) => a.display_name.localeCompare(b.display_name, 'pt-BR'),
@@ -41,6 +43,10 @@ function render() {
       h('h2', null, 'Contatos ', countEl),
       h('div', { class: 'row' },
         h('input', { class: 'input search', type: 'search', placeholder: 'Nome, telefone, empresa…', value: f.q, oninput: debounce((e) => { f.q = e.target.value; renderRows(); }, 150) }),
+        h('select', { class: 'input select-sm', onchange: (e) => { f.type = e.target.value; renderRows(); } },
+          h('option', { value: '' }, 'Todos os tipos'),
+          h('option', { value: '_none', selected: f.type === '_none' }, 'Não classificados'),
+          state.contactTypes.map((t) => h('option', { value: t.id, selected: f.type === t.id }, `${t.icon || ''} ${t.name}`))),
         h('select', { class: 'input select-sm', onchange: (e) => { f.stage = e.target.value; renderRows(); } },
           h('option', { value: '' }, 'Todas as etapas'),
           h('option', { value: '_none', selected: f.stage === '_none' }, 'Sem etapa'),
@@ -55,7 +61,7 @@ function render() {
         h('button', { class: 'btn', onclick: exportCsv }, '⬇ Exportar planilha'))),
     h('div', { class: 'table-wrap' },
       h('table', { class: 'table' },
-        h('thead', null, h('tr', null, ['', 'Nome', 'Telefone', 'Empresa', 'Etapa', 'Etiquetas', 'Valor', 'Última mensagem'].map((t) => h('th', null, t)))),
+        h('thead', null, h('tr', null, ['', 'Nome', 'Telefone', 'Tipo', 'Empresa', 'Etapa', 'Etiquetas', 'Valor', 'Última mensagem'].map((t) => h('th', null, t)))),
         tbody)),
   );
   renderRows();
@@ -69,6 +75,7 @@ function renderRows() {
     h('td', null, avatarEl(c, 30)),
     h('td', null, h('b', null, c.display_name), c.email ? h('div', { class: 'muted small' }, c.email) : null),
     h('td', null, formatPhone(phoneOf(c.jid))),
+    h('td', null, typePill(c.type_id)),
     h('td', null, c.company || ''),
     h('td', null, stagePill(c.stage_id, { small: true })),
     h('td', null, tagDots(c.tag_ids, { max: 3 })),
@@ -78,10 +85,10 @@ function renderRows() {
 
 async function exportCsv() {
   const list = filtered();
-  const rows = [['Nome', 'Telefone', 'Empresa', 'E-mail', 'Funil', 'Etapa', 'Etiquetas', 'Valor', 'Última mensagem']];
+  const rows = [['Nome', 'Telefone', 'Tipo', 'Empresa', 'E-mail', 'Funil', 'Etapa', 'Etiquetas', 'Valor', 'Última mensagem']];
   for (const c of list) {
     const st = stageById(c.stage_id);
-    rows.push([c.display_name, phoneOf(c.jid) || '', c.company || '', c.email || '', st?.pipeline.name || '', st?.name || '',
+    rows.push([c.display_name, phoneOf(c.jid) || '', typeById(c.type_id)?.name || '', c.company || '', c.email || '', st?.pipeline.name || '', st?.name || '',
       c.tag_ids.map((t) => tagById(t)?.name).filter(Boolean).join(', '), c.value ?? '',
       c.last_ts ? new Date(c.last_ts).toLocaleString('pt-BR') : '']);
   }

@@ -4,8 +4,8 @@ import {
   h, clear, fill, fmtDateTime, fmtDue, fmtDuration, formatPhone, phoneOf, toLocalInput, fromLocalInput,
   modal, errToast, toast, confirmDialog, debounce,
 } from '../util.js';
-import { state, on, emit, api, stageById, openChat } from '../store.js';
-import { avatarEl, stageMenu } from '../components.js';
+import { state, on, emit, api, stageById, openChat, typeById } from '../store.js';
+import { avatarEl, stageMenu, typeMenu } from '../components.js';
 
 let root;
 let jid = null;
@@ -78,9 +78,16 @@ function renderTop() {
       phone ? h('div', { class: 'muted' }, formatPhone(phone)) : null,
       chat.notify && chat.notify !== chat.display_name ? h('div', { class: 'muted small' }, `~${chat.notify}`) : null),
     h('div', { class: 'crm-block' },
+      h('div', { class: 'crm-label' }, 'Tipo de contato'),
+      h('button', {
+        class: `stage-btn wide ${typeById(chat.type_id) ? '' : 'unset'}`,
+        style: typeById(chat.type_id) ? { '--c': typeById(chat.type_id).color } : null,
+        onclick: (e) => typeMenu(e.currentTarget, chat),
+      }, typeById(chat.type_id) ? `${typeById(chat.type_id).icon || ''} ${typeById(chat.type_id).name}` : '❓ Não classificado', ' ▾')),
+    h('div', { class: 'crm-block' },
       h('div', { class: 'crm-label' }, 'Etapa no funil'),
       h('button', {
-        class: `stage-btn wide ${st ? '' : 'empty'}`,
+        class: `stage-btn wide ${st ? '' : 'unset'}`,
         style: st ? { '--c': st.color } : null,
         onclick: (e) => stageMenu(e.currentTarget, chat),
       }, st ? `${st.pipeline.icon || ''} ${st.pipeline.name} → ${st.name}` : '＋ Adicionar ao funil', ' ▾'),

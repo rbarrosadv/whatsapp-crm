@@ -88,6 +88,18 @@ Interface (`src/renderer`, JS puro em módulos ES, sem build):
   tela de conexão fica aberta (QR ou código pelo número via
   `requestPairingCode`). Falhas antes do registro trocam o perfil de
   navegador (`BROWSERS`) e um watchdog de 40 s reinicia se não vier QR.
+- **Tipos de contato** (`contact_types`, `crm.type_id`) e **filtros da
+  lista** (`chat_filters`, regras em JSON aplicadas por `chatMatchesRules`
+  em `store.js`) são editáveis pelo usuário. Filtros nunca escondem
+  mensagens de verdade: a lista "Tudo" existe por padrão e os chips mostram
+  quantas não lidas há em cada filtro. `personal` no tipo = fora de
+  "Aguardando resposta" e do aviso de conversa esquecida (`checkForgotten`
+  em `index.js`, configurável em horas; `chats.alerted_ts` evita repetir).
+- **Notificações no Windows**: AppUserModelID fixo (`com.whatsappcrm.desktop`)
+  + atalho no Menu Iniciar com o mesmo id, recriado pelo próprio app
+  (`ensureStartMenuShortcut`, via `shell.writeShortcutLink`). As
+  `Notification` ficam guardadas em `liveNotifications` para o clique não
+  se perder.
 - Mídia pequena (foto, figurinha, áudio) é baixada automaticamente quando
   chega; o resto sob demanda (botão Baixar), com `reuploadRequest` pra
   mídia expirada.

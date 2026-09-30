@@ -23,6 +23,12 @@ no seu computador**. Ao abrir de novo, ele entra direto, sem pedir login.
   - **áudio gravado no microfone** (🎤), que chega como mensagem de voz;
   - **respostas rápidas**: digite `/` + o atalho (ex.: `/ola`). Use
     `{nome}` no texto pra colocar o primeiro nome do contato.
+- **Tipos de contato e filtros editáveis** — classifique cada conversa
+  (Pessoal, Cliente, Empresa ou os tipos que você criar) e use os filtros
+  no topo da lista: *Tudo, Trabalho, Pessoal, Para classificar, Aguardando
+  resposta, Não lidas* — ou crie os seus. Cada filtro mostra quantas não
+  lidas tem; nenhuma mensagem some. O app avisa quando um contato de
+  trabalho está há muito tempo sem resposta.
 - **Ficha do contato (CRM)** ao lado da conversa: nome, empresa, e-mail,
   valor do negócio, etapa do funil, etiquetas, **notas**, **tarefas com
   lembrete** (aviso do Windows na hora marcada) e histórico de
@@ -81,6 +87,11 @@ Tudo fica no seu computador, em `%APPDATA%\WhatsAppCRM`:
 - Nunca envie a pasta `auth` pra ninguém: ela dá acesso ao seu WhatsApp.
 
 ## Se algo não funcionar
+
+- **Notificações não aparecem**: Configurações → *Testar notificação*. Se
+  não aparecer, clique em *Abrir notificações do Windows* e confira se
+  **WhatsApp CRM** está ligado e se o *Não perturbe / Assistente de foco*
+  está desligado.
 
 - **O QR code não aparece (fica "Conectando ao WhatsApp…")**: o app não
   está conseguindo falar com os servidores do WhatsApp. Confira a internet

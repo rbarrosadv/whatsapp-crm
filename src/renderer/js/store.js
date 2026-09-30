@@ -21,6 +21,8 @@ export const state = {
   pipelines: [],
   tags: [],
   quickReplies: [],
+  contactTypes: [],
+  filters: [],
   settings: {},
   view: 'inbox',
   activeJid: null,
@@ -37,6 +39,8 @@ export async function bootstrap() {
   state.pipelines = b.pipelines;
   state.tags = b.tags;
   state.quickReplies = b.quickReplies;
+  state.contactTypes = b.contactTypes;
+  state.filters = b.filters;
   state.settings = b.settings;
   state.legacyAvailable = b.legacyAvailable;
   state.legacyPending = b.legacyPending;
@@ -66,6 +70,7 @@ export async function bootstrap() {
   window.api.on('tasks:changed', () => emit('tasks'));
   window.api.on('ui:open-chat', (jid) => openChat(jid));
   window.api.on('ui:open-view', (v) => setView(v));
+  window.api.on('ui:open-filter', (kind) => { setView('inbox'); emit('open-filter', kind); });
 }
 
 function setChats(list) {
@@ -96,6 +101,43 @@ export function stageById(id) {
     if (s) return { ...s, pipeline: p };
   }
   return null;
+}
+
+export function typeById(id) {
+  return state.contactTypes.find((t) => t.id === id);
+}
+
+const HOUR = 3600 * 1000;
+
+/** Conversa esperando resposta sua (última mensagem é do contato). */
+export function isAwaiting(c) {
+  return !c.is_group && !c.last_from_me && c.last_ts > 0 && !(typeById(c.type_id)?.personal)
+    && Date.now() - c.last_ts < 30 * 24 * HOUR; // conversas muito antigas não contam como pendência
+}
+
+/** Aplica as regras de um filtro (editável em Configurações) a uma conversa. */
+export function chatMatchesRules(c, r = {}) {
+  const t = typeById(c.type_id);
+  const unclassified = !t;
+  if (r.groups === 'exclude' && c.is_group) return false;
+  if (r.groups === 'only' && !c.is_group) return false;
+  if (r.unclassified === 'only' && !unclassified) return false;
+  if (r.types?.length) {
+    const inTypes = t && r.types.includes(t.id);
+    if (!inTypes && !(unclassified && r.unclassified === 'include')) return false;
+  } else if (r.unclassified === 'exclude' && unclassified) return false;
+  if (r.work && t?.personal) return false;
+  if (r.unread && !(c.unread > 0)) return false;
+  if (r.awaiting) {
+    if (!isAwaiting(c)) return false;
+    if (r.awaitingHours && Date.now() - c.last_ts < r.awaitingHours * HOUR) return false;
+  }
+  if (r.tasks && !(c.open_tasks > 0)) return false;
+  if (r.noStage && c.stage_id) return false;
+  if (r.pipeline && c.pipeline_id !== r.pipeline) return false;
+  if (r.stages?.length && !r.stages.includes(c.stage_id)) return false;
+  if (r.tags?.length && !r.tags.some((x) => c.tag_ids.includes(x))) return false;
+  return true;
 }
 
 export function tagById(id) {
