@@ -206,6 +206,33 @@ try {
   check(true, 'caso de exemplo em "Casos em andamento"');
   await shot(page, '05-board-after');
 
+  // 6a) agenda (Google de demonstração)
+  await page.click('.rail-btn[title="Agenda"]');
+  await page.waitForSelector('.gcard.ok');
+  await page.waitForSelector('.tg-event:has-text("Reunião com sócio")');
+  check(true, 'agenda mostra os eventos do Google (semana)');
+  await page.click('.agenda-side button:has-text("Novo compromisso")');
+  await page.click('.modal .seg:has-text("Audiência")');
+  await page.fill('.modal .field:has-text("Título") input', 'Audiência Carlos x Transportes');
+  await page.selectOption('.modal .field:has-text("Cliente") select', { label: 'Carlos Pereira' });
+  await page.click('.modal button:has-text("Salvar")');
+  await page.waitForSelector('.tg-event:has-text("Audiência Carlos x Transportes")', { timeout: 8000 });
+  check(await page.locator('.tg-event:has-text("Audiência Carlos x Transportes")').count() === 1, 'audiência criada na agenda vai para o Google (sem duplicar)');
+  await shot(page, '05a-agenda-semana');
+  await page.locator('.cal-item', { hasText: 'Escritório' }).locator('input').uncheck();
+  await page.waitForTimeout(300);
+  check(await page.locator('.tg-event:has-text("Reunião com sócio")').count() === 0, 'esconder uma agenda some com os eventos dela');
+  await page.locator('.cal-item', { hasText: 'Escritório' }).locator('input').check();
+  await page.click('.segmented .seg:has-text("Mês")');
+  await page.waitForSelector('.mo-grid .ev-chip');
+  await shot(page, '05a-agenda-mes');
+  check(true, 'visão de mês');
+  await page.click('.segmented .seg:has-text("Semana")');
+  await page.locator('.tg-event:has-text("Audiência Carlos x Transportes")').click();
+  await page.waitForSelector('.modal button:has-text("Carlos Pereira")');
+  check(true, 'detalhes do compromisso ligam ao cliente');
+  await page.keyboard.press('Escape');
+
   // 6b) financeiro
   await page.click('.rail-btn[title="Financeiro"]');
   await page.waitForSelector('.stat');

@@ -1,14 +1,16 @@
 // Processo principal do Electron: janela, bandeja, notificações,
 // lembretes e a ponte (IPC) entre a interface e o WhatsApp/banco.
 import {
-  app, BrowserWindow, ipcMain, protocol, net, shell, dialog, Notification, Tray, Menu, nativeImage, powerMonitor,
+  app, BrowserWindow, ipcMain, protocol, net, shell, dialog, Notification, Tray, Menu, nativeImage, powerMonitor, safeStorage,
 } from 'electron';
 import path from 'node:path';
 import fs from 'node:fs';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import * as db from './db.js';
 import { WhatsAppService } from './whatsapp.js';
-import { DemoWhatsAppService } from './demo.js';
+import { DemoWhatsAppService, DemoGoogleService } from './demo.js';
+import { GoogleService } from './google.js';
+import { CalendarSync } from './calendar-sync.js';
 import { webmToOgg } from './ogg.js';
 import { importLegacy, legacyStateFile } from './legacy.js';
 import { diagnoseConnection } from './diag.js';
@@ -41,6 +43,8 @@ protocol.registerSchemesAsPrivileged([
 let win = null;
 let tray = null;
 let wa = null;
+let google = null;
+let calSync = null;
 let quitting = false;
 let settings = {};
 
@@ -304,6 +308,12 @@ function chargeText(paymentId) {
   return tpl.replace(/\{(\w+)\}/g, (m, k) => (k in vars ? vars[k] : m));
 }
 
+// envia ao Google em segundo plano, sem travar a tela
+function syncTaskLater(id) {
+  calSync?.syncTask(id).catch((e) => console.error('google: sincronizar', e.message));
+}
+
+let googleTick = 0;
 function startReminders() {
   const check = () => {
     try {
@@ -318,6 +328,10 @@ function startReminders() {
       }
       checkForgotten();
       checkFinanceAndCases();
+      // a cada ~10 min traz mudanças de horário feitas no Google
+      if (++googleTick % 20 === 1 && google?.status().connected) {
+        calSync.agenda(Date.now() - 7 * DAY, Date.now() + 120 * DAY).catch(() => {});
+      }
     } catch (e) { console.error(e); }
   };
   setInterval(check, 30000);
@@ -521,8 +535,18 @@ const api = {
   'finance:defaultTemplate': () => DEFAULT_CHARGE_TEMPLATE,
   'notes:delete': (id) => db.deleteNote(id),
   'tasks:list': (opts) => db.listTasks(opts || {}),
-  'tasks:save': (task) => {
+  'tasks:save': async (task) => {
     const id = db.saveTask(task);
+    if (task.calendar_id) {
+      // escolheu outra agenda do Google: move o evento para lá
+      const cur = db.getTask(id);
+      if (cur.gcal_event_id && cur.gcal_calendar_id !== task.calendar_id) {
+        await calSync?.removeTask(cur).catch(() => {});
+        db.setTaskGcal(id, null, null);
+      }
+      db.run('UPDATE tasks SET gcal_calendar_id = ? WHERE id = ? AND gcal_event_id IS NULL', task.calendar_id, id);
+    }
+    syncTaskLater(id);
     const cid = task.case_id ?? db.get('SELECT case_id FROM tasks WHERE id = ?', id)?.case_id;
     if (cid) send('cases:changed', db.getCase(cid)?.jid);
     if (task.jid) wa.markChanged(task.jid);
@@ -530,7 +554,8 @@ const api = {
     return id;
   },
   'tasks:delete': (id) => {
-    const t = db.get('SELECT jid FROM tasks WHERE id = ?', id);
+    const t = db.getTask(id);
+    calSync?.removeTask(t).catch((e) => console.error('google: apagar evento', e.message));
     db.deleteTask(id);
     if (t?.jid) wa.markChanged(t.jid);
   },
@@ -548,7 +573,8 @@ const api = {
   'settings:set': (key, value) => {
     const allowed = ['notifications', 'notificationPreview', 'minimizeToTray', 'sendReadReceipts', 'openAtLogin',
       'theme', 'lastView', 'lastPipeline', 'enterToSend', 'forgottenHours', 'lastFilter',
-      'chargeTemplate', 'pixKey', 'paymentNoticeDays', 'staleCaseDays'];
+      'chargeTemplate', 'pixKey', 'paymentNoticeDays', 'staleCaseDays',
+      'googleSync', 'googleCalendarId', 'agendaHidden', 'agendaView', 'agendaHours'];
     if (!allowed.includes(key)) throw new Error('configuração desconhecida');
     settings[key] = value;
     db.setSetting(key, value);
@@ -582,6 +608,34 @@ const api = {
     refreshAllChats();
     return res;
   },
+  // agenda / Google
+  'google:status': () => google.status(),
+  'google:importClient': async () => {
+    const r = await dialog.showOpenDialog(win, {
+      title: 'Escolha o arquivo da chave do Google (client_secret….json)',
+      filters: [{ name: 'Chave do Google', extensions: ['json'] }], properties: ['openFile'],
+    });
+    if (r.canceled || !r.filePaths[0]) return google.status();
+    google.importClient(r.filePaths[0]);
+    return google.status();
+  },
+  'google:connect': async () => {
+    const st = await google.connect();
+    showWindow();
+    calSync.syncAll().then((n) => { if (n) notify('📅 Google Agenda conectado', `${n} compromisso(s) do CRM enviados para a sua agenda.`); }).catch(() => {});
+    return st;
+  },
+  'google:disconnect': () => google.disconnect(),
+  'google:calendars': (force) => google.calendars(force),
+  'google:syncAll': () => calSync.syncAll(),
+  'agenda:events': async (from, to, calendarIds) => {
+    // o que foi criado com o Google desconectado vai agora
+    if (calSync.enabled() && db.tasksToSync().length) await calSync.syncAll().catch(() => {});
+    return calSync.agenda(from, to, calendarIds);
+  },
+  'agenda:saveEvent': async (calendarId, ev, eventId) => google.saveEvent(calendarId, ev, eventId),
+  'agenda:deleteEvent': (calendarId, eventId) => google.deleteEvent(calendarId, eventId),
+
   'app:testNotification': () => {
     if (!Notification.isSupported()) throw new Error('Este Windows não permite notificações para o app.');
     notify('WhatsApp CRM — teste', 'Se você está vendo isto, as notificações estão funcionando. 👍');
@@ -666,6 +720,24 @@ app.whenReady().then(async () => {
   wa = new Service({ dataDir: DATA_DIR, logFile: path.join(DATA_DIR, 'logs', 'whatsapp.log') });
   applySettings();
   wireWhatsApp();
+
+  google = DEMO ? new DemoGoogleService() : new GoogleService({
+    dir: path.join(DATA_DIR, 'google'),
+    fetch: (url, opts) => net.fetch(url, opts),
+    openExternal: (url) => shell.openExternal(url),
+    safeStorage,
+  });
+  calSync = new CalendarSync({ google, getSettings: () => settings, onChange: () => send('tasks:changed', null) });
+  let warnedReconnect = false;
+  google.on('status', (st) => {
+    send('google:status', st);
+    if (st.needsReconnect && !warnedReconnect) {
+      warnedReconnect = true;
+      notify('📅 Reconectar Google Agenda', 'A conexão com o Google expirou (acontece a cada 7 dias no modo de teste). Clique para reconectar.',
+        () => { showWindow(); send('ui:open-view', 'agenda'); });
+    }
+    if (!st.needsReconnect) warnedReconnect = false;
+  });
 
   Menu.setApplicationMenu(Menu.buildFromTemplate([
     {

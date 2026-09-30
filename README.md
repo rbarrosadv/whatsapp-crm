@@ -47,6 +47,11 @@ no seu computador**. Ao abrir de novo, ele entra direto, sem pedir login.
 - **💰 Financeiro** — todas as parcelas: vencidas, a vencer, pagas, totais do
   mês e cobrança com um clique (ou várias vencidas de uma vez, com
   intervalo). Modelo da mensagem e chave PIX em Configurações.
+- **📅 Agenda** — dia, semana e mês com **todas as suas agendas do Google**
+  juntas (pessoal, escritório, feriados…), cada uma com sua cor, para ver os
+  horários livres. Prazos, audiências e reuniões criados no CRM vão para o
+  Google sozinhos (e chegam no celular); se mudar o horário no Google, o CRM
+  acompanha. Configuração: veja "Conectar o Google Agenda" abaixo.
 - **Contatos** — tabela com filtros e **exportação para planilha** (CSV,
   abre no Excel).
 - **Tarefas** — tudo que está atrasado, pra hoje e próximo.
@@ -79,6 +84,18 @@ Da próxima vez, abra pelo atalho **WhatsApp CRM** (ou
 
 Quer conhecer antes de conectar seu número? Abra `Demonstracao.bat`:
 ele simula uma conta com conversas de exemplo (dados separados dos reais).
+
+## Conectar o Google Agenda
+
+1. Crie a chave gratuita no Google Cloud (projeto → ativar **Google Calendar
+   API** → **Google Auth Platform** → público **Externo** → adicionar o seu
+   e-mail em **Usuários de teste** → **Clientes → Criar cliente → App para
+   computador** → **Baixar JSON**).
+2. No app: **Agenda → 1. Escolher a chave (.json)** → **2. Entrar com o
+   Google**. No aviso "O Google não verificou este app", clique em
+   **Avançado → Acessar**.
+3. Com o app em **modo de teste** no Google, a autorização vence a cada 7
+   dias: o app avisa e é só clicar em **Reconectar Google**.
 
 ## Onde ficam os dados
 

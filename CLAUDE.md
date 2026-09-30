@@ -51,6 +51,16 @@ Processo principal (`src/main`, ESM):
   em `migrate()`; `meta.schema` guarda a versão atual).
 - `ogg.js` — remux WebM/Opus (MediaRecorder do Chromium) → OGG/Opus, que
   é o que o WhatsApp aceita como mensagem de voz.
+- `google.js` — `GoogleService`: Google Agenda pela API oficial com a chave
+  (client_secret JSON, tipo "App para computador") do próprio usuário;
+  login no navegador com retorno em `http://127.0.0.1:<porta>` + PKCE;
+  refresh token criptografado (`safeStorage`) em `google/token.bin`;
+  `invalid_grant` (modo de teste do Google vence em 7 dias) → `needsReconnect`.
+- `calendar-sync.js` — `CalendarSync`: tarefas/prazos/audiências/reuniões do
+  CRM viram eventos no Google (`tasks.gcal_event_id`, marcados com
+  `extendedProperties.private.crmTaskId`); horário mudado no Google volta
+  para o CRM (`pullChanges`); `agenda()` junta eventos do Google + tarefas
+  ainda não sincronizadas. No demo, `DemoGoogleService` (em `demo.js`).
 - `legacy.js` — importa `%APPDATA%\KanbanCRMWhatsApp\kanban-state.json`
   do app v3.
 
@@ -68,7 +78,8 @@ Interface (`src/renderer`, JS puro em módulos ES, sem build):
 - `js/views/*` — `chatlist`, `chatview` (mensagens + composer + gravação),
   `crmpanel` (ficha do contato, com a lista de casos), `casemodal` (ficha do
   caso em abas: dados, honorários/parcelas/cobrança, prazos, documentos,
-  notas), `finance` (todas as parcelas), `board` (kanban de CASOS com
+  notas), `finance` (todas as parcelas), `agenda` (dia/semana/mês com todas
+  as agendas do Google + compromissos do CRM), `board` (kanban de CASOS com
   drag-and-drop HTML5),
   `contacts`, `tasks`, `dashboard`, `settings`, `connect` (QR + faixa de
   status).

@@ -8,7 +8,7 @@ import fs from 'node:fs';
 
 let db;
 
-const SCHEMA_VERSION = 3;
+const SCHEMA_VERSION = 4;
 
 const DEFAULT_PIPELINES = [
   {
@@ -300,6 +300,11 @@ function migrate() {
   addColumn('tasks', 'case_id', 'INTEGER');
   addColumn('tasks', 'kind', "TEXT NOT NULL DEFAULT 'tarefa'");
   addColumn('notes', 'case_id', 'INTEGER');
+  // versão 4: ligação de tarefas/prazos com eventos do Google Agenda
+  addColumn('tasks', 'end_at', 'INTEGER');
+  addColumn('tasks', 'gcal_event_id', 'TEXT');
+  addColumn('tasks', 'gcal_calendar_id', 'TEXT');
+  addColumn('tasks', 'gcal_synced_at', 'INTEGER');
 
   const version = Number(get('SELECT value FROM meta WHERE key = ?', 'schema')?.value || 0);
   if (version < 1) seedDefaults();
@@ -1101,11 +1106,17 @@ export function listTasks({ jid, caseId, includeDone = false } = {}) {
   return all(`SELECT k.*, c.title AS case_title, c.process_number FROM tasks k LEFT JOIN cases c ON c.id = k.case_id ${where.length ? `WHERE ${where.join(' AND ')}` : ''}
               ORDER BY k.done, CASE WHEN k.due_at IS NULL THEN 1 ELSE 0 END, k.due_at, k.id DESC`, ...args);
 }
-export function saveTask({ id, jid, title, due_at, done, case_id, kind }) {
+export function saveTask({ id, jid, title, due_at, done, case_id, kind, end_at }) {
   if (id) {
     const cur = get('SELECT * FROM tasks WHERE id = ?', id);
     if (!cur) return id;
     const newDue = due_at === undefined ? cur.due_at : due_at;
+    if (end_at !== undefined || due_at !== undefined) {
+      // mantém a duração quando só o início muda
+      const dur = cur.end_at && cur.due_at ? cur.end_at - cur.due_at : null;
+      const newEnd = end_at !== undefined ? end_at : (dur && newDue ? newDue + dur : cur.end_at);
+      run('UPDATE tasks SET end_at = ? WHERE id = ?', newEnd || null, id);
+    }
     run('UPDATE tasks SET title = ?, due_at = ?, done = ?, notified = ?, jid = ?, case_id = ?, kind = ? WHERE id = ?',
       title ?? cur.title, newDue, done === undefined ? cur.done : (done ? 1 : 0),
       newDue !== cur.due_at ? 0 : cur.notified,
@@ -1114,10 +1125,25 @@ export function saveTask({ id, jid, title, due_at, done, case_id, kind }) {
     return id;
   }
   if (case_id && !jid) jid = get('SELECT jid FROM cases WHERE id = ?', case_id)?.jid;
-  return Number(run('INSERT INTO tasks (jid, title, due_at, created_at, case_id, kind) VALUES (?, ?, ?, ?, ?, ?)',
-    jid || null, title, due_at || null, now(), case_id || null, kind || 'tarefa').lastInsertRowid);
+  return Number(run('INSERT INTO tasks (jid, title, due_at, created_at, case_id, kind, end_at) VALUES (?, ?, ?, ?, ?, ?, ?)',
+    jid || null, title, due_at || null, now(), case_id || null, kind || 'tarefa', end_at || null).lastInsertRowid);
 }
 export function deleteTask(id) { run('DELETE FROM tasks WHERE id = ?', id); }
+export function getTask(id) {
+  return get(`SELECT k.*, c.title AS case_title, c.process_number, c.court FROM tasks k LEFT JOIN cases c ON c.id = k.case_id WHERE k.id = ?`, id);
+}
+export function setTaskGcal(id, eventId, calendarId) {
+  run('UPDATE tasks SET gcal_event_id = ?, gcal_calendar_id = ?, gcal_synced_at = ? WHERE id = ?', eventId, calendarId, now(), id);
+}
+/** Tarefas com data que ainda não foram para o Google. */
+export function tasksToSync() {
+  return all('SELECT id FROM tasks WHERE due_at IS NOT NULL AND gcal_event_id IS NULL AND (done = 0 OR due_at > ?)', now() - 30 * 24 * 3600 * 1000);
+}
+/** Tarefas com data no intervalo (para mostrar na agenda). */
+export function tasksInRange(from, to) {
+  return all(`SELECT k.*, c.title AS case_title, c.process_number FROM tasks k LEFT JOIN cases c ON c.id = k.case_id
+              WHERE k.due_at IS NOT NULL AND k.due_at >= ? AND k.due_at < ?`, from, to);
+}
 export function dueTasksToNotify() {
   return all('SELECT * FROM tasks WHERE done = 0 AND notified = 0 AND due_at IS NOT NULL AND due_at <= ?', now());
 }

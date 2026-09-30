@@ -2,6 +2,7 @@
 // conversas de exemplo, sem conectar em nada. Serve pra conhecer o app e
 // pra testar a interface. Usa uma pasta de dados separada da real.
 import fs from 'node:fs';
+import { EventEmitter } from 'node:events';
 import path from 'node:path';
 import QRCode from 'qrcode';
 import { WhatsAppService, guessMime, extFor } from './whatsapp.js';
@@ -248,4 +249,46 @@ export class DemoWhatsAppService extends WhatsAppService {
     await this.onMessages([textMsg(jid, false, text, Math.floor(Date.now() / 1000), name)], 'notify');
     return jid;
   }
+}
+
+/** Google Agenda de mentira para o modo demonstração. */
+export class DemoGoogleService extends EventEmitter {
+  constructor() {
+    super();
+    this.cals = [
+      { id: 'pessoal@demo', name: 'Pessoal', color: '#a855f7', primary: true, writable: true, selected: true },
+      { id: 'escritorio@demo', name: 'Escritório', color: '#3b82f6', primary: false, writable: true, selected: true },
+      { id: 'feriados@demo', name: 'Feriados no Brasil', color: '#22c55e', primary: false, writable: false, selected: true },
+    ];
+    const day = (d, h, m = 0) => { const x = new Date(); x.setDate(x.getDate() + d); x.setHours(h, m, 0, 0); return x.getTime(); };
+    let n = 0;
+    this.items = [
+      { calendarId: 'pessoal@demo', title: 'Academia', start: day(0, 7), end: day(0, 8) },
+      { calendarId: 'pessoal@demo', title: 'Dentista', start: day(1, 17), end: day(1, 18) },
+      { calendarId: 'escritorio@demo', title: 'Reunião com sócio', start: day(0, 14), end: day(0, 15, 30) },
+      { calendarId: 'escritorio@demo', title: 'Despacho com juiz', start: day(2, 10), end: day(2, 11) },
+      { calendarId: 'pessoal@demo', title: 'Aniversário da mãe', start: day(3, 0), end: day(4, 0), allDay: true },
+      { calendarId: 'feriados@demo', title: 'Feriado', start: day(6, 0), end: day(7, 0), allDay: true },
+    ].map((e) => ({ ...e, id: `demo${n++}` }));
+    this.seq = n;
+  }
+
+  status() { return { configured: true, connected: true, needsReconnect: false, email: 'voce@hotmail.com (demonstração)' }; }
+  importClient() {}
+  async connect() { return this.status(); }
+  async disconnect() {}
+  async calendars() { return this.cals; }
+  async events(ids, from, to) {
+    return this.items.filter((e) => (!ids || ids.includes(e.calendarId)) && e.end > from && e.start < to).map((e) => {
+      const cal = this.cals.find((c) => c.id === e.calendarId);
+      return { description: '', location: '', allDay: false, taskId: null, ...e, source: 'google', calendarName: cal.name, color: cal.color, writable: cal.writable, htmlLink: null };
+    });
+  }
+  async saveEvent(calendarId, ev, eventId) {
+    let item = eventId && this.items.find((e) => e.id === eventId);
+    if (!item) { item = { id: `demo${this.seq++}`, calendarId }; this.items.push(item); }
+    Object.assign(item, Object.fromEntries(Object.entries(ev).filter(([, v]) => v !== undefined)), { calendarId });
+    return { id: item.id };
+  }
+  async deleteEvent(calendarId, eventId) { this.items = this.items.filter((e) => e.id !== eventId); }
 }
