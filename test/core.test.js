@@ -229,3 +229,33 @@ test('conversor de áudio gera OGG válido a partir de WebM', () => {
   assert.equal(seconds, 2); // 100 pacotes de 20 ms
   assert.ok(ogg.includes(Buffer.from('OpusTags')));
 });
+
+test('queda de conexão (428): com sessão salva reconecta sem pedir QR; sem sessão gera QR novo', async () => {
+  const auth = path.join(dir, 'auth');
+  const writeCreds = (registered) => {
+    fs.mkdirSync(auth, { recursive: true });
+    fs.writeFileSync(path.join(auth, 'creds.json'), JSON.stringify(registered ? { me: { id: '5511@s.whatsapp.net' }, account: {} } : { me: null }));
+  };
+  const close = async (code) => {
+    const fake = { end() {} };
+    wa.sock = fake;
+    wa.stopped = false;
+    await wa.onConnectionUpdate(fake, { connection: 'close', lastDisconnect: { error: { message: 'Connection Closed', output: { statusCode: code } } } });
+  };
+
+  writeCreds(true);
+  wa.retry = 0;
+  await close(428);
+  assert.equal(wa.getStatus().state, 'reconnecting');
+  assert.equal(wa.getStatus().retryIn, 500, 'primeira tentativa é quase imediata');
+  assert.ok(fs.existsSync(path.join(auth, 'creds.json')), 'sessão salva é mantida');
+  await close(428);
+  assert.equal(wa.getStatus().retryIn, 2000);
+  await wa.stop();
+
+  writeCreds(false);
+  await close(428);
+  assert.equal(wa.getStatus().state, 'starting');
+  assert.ok(!fs.existsSync(auth), 'sessão incompleta é descartada');
+  await wa.stop();
+});

@@ -1,7 +1,7 @@
 // Processo principal do Electron: janela, bandeja, notificações,
 // lembretes e a ponte (IPC) entre a interface e o WhatsApp/banco.
 import {
-  app, BrowserWindow, ipcMain, protocol, net, shell, dialog, Notification, Tray, Menu, nativeImage,
+  app, BrowserWindow, ipcMain, protocol, net, shell, dialog, Notification, Tray, Menu, nativeImage, powerMonitor,
 } from 'electron';
 import path from 'node:path';
 import fs from 'node:fs';
@@ -233,7 +233,7 @@ const api = {
     version: app.getVersion(),
   }),
   'wa:logout': () => wa.logout(),
-  'wa:reconnect': () => { wa.retry = 0; return wa.start(); },
+  'wa:reconnect': () => wa.reconnectNow(),
   'wa:status': () => wa.getStatus(),
   'wa:reset': () => wa.reset(),
   'wa:pairingCode': (phone) => wa.requestPairingCode(phone),
@@ -487,6 +487,12 @@ app.whenReady().then(async () => {
       ],
     },
   ]));
+
+  // ao voltar da suspensão a conexão antiga já morreu: reconecta na hora
+  powerMonitor.on('resume', () => {
+    if (!wa.hasSession()) return;
+    setTimeout(() => wa.reconnectNow().catch((e) => console.error(e)), 1500);
+  });
 
   createWindow();
   createTray();

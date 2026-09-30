@@ -208,11 +208,23 @@ export class WhatsAppService extends EventEmitter {
         this.scheduleReconnect(delay);
       } else {
         this.retry++;
-        const delay = Math.min(30000, 1000 * 2 ** Math.min(this.retry, 5));
+        // quedas rápidas (428/408) são comuns: tenta logo, depois vai espaçando
+        const delay = [500, 2000, 5000, 10000, 20000][this.retry - 1] ?? 30000;
         this.setStatus({ state: 'reconnecting', error: describeError(lastDisconnect?.error, code), retryIn: delay });
         this.scheduleReconnect(delay);
       }
     }
+  }
+
+  /** Fecha a conexão atual (se houver) e conecta de novo, sem abrir duas ao mesmo tempo. */
+  async reconnectNow() {
+    clearTimeout(this.reconnectTimer);
+    clearTimeout(this.watchdog);
+    const old = this.sock;
+    this.sock = null; // o evento 'close' da conexão antiga passa a ser ignorado
+    try { old?.end(undefined); } catch { /* ignore */ }
+    this.retry = 0;
+    await this.start();
   }
 
   scheduleReconnect(ms) {

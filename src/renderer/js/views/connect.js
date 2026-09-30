@@ -91,11 +91,24 @@ function errorBox(s) {
   return s.error ? h('div', { class: 'alert connect-error' }, s.error) : h('div', { class: 'connect-error' });
 }
 
+// quedas curtas se resolvem sozinhas: a faixa só aparece depois de 10 s
+const BANNER_DELAY = 10000;
+let offlineSince = null;
+let bannerTimer = null;
+
 function renderBanner(el, s) {
   const h_ = state.history;
   const syncing = s.state === 'open' && h_ && h_.progress != null && h_.progress < 100;
+  const offline = s.registered && ['connecting', 'reconnecting'].includes(s.state);
+  if (offline && !offlineSince) offlineSince = Date.now();
+  if (!offline) offlineSince = null;
+  clearTimeout(bannerTimer);
+  const waited = offline ? Date.now() - offlineSince : 0;
+  if (offline && waited < BANNER_DELAY) {
+    bannerTimer = setTimeout(() => renderBanner(el, state.status), BANNER_DELAY - waited + 50);
+  }
   let content = null;
-  if (s.registered && ['connecting', 'reconnecting'].includes(s.state)) {
+  if (offline && waited >= BANNER_DELAY) {
     content = h('div', { class: 'banner warn' }, h('span', { class: 'spinner small' }), statusLabel(s.state),
       s.error ? h('span', { class: 'muted small' }, ` (${s.error})`) : null,
       s.state === 'reconnecting' ? h('button', { class: 'btn btn-sm', onclick: () => api('wa:reconnect') }, 'Tentar agora') : null);

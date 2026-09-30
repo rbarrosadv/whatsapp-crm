@@ -88,8 +88,12 @@ Tudo fica no seu computador, em `%APPDATA%\WhatsAppCRM`:
   app). Clique em *Gerar novo código* para tentar de novo e, se continuar,
   clique em *Abrir registros de erro* e mande o arquivo `whatsapp.log`.
 
-- **Fica em "Conectando…" / "tentando reconectar"**: confira a internet.
-  O app tenta de novo sozinho; tem também o botão *Tentar agora*.
+- **Faixa "Sem conexão — tentando reconectar" (ex.: código 428)**: a
+  ligação com o WhatsApp caiu (internet oscilou, computador saiu da
+  suspensão, ou o próprio WhatsApp fechou). A sessão continua salva e o
+  app reconecta sozinho; a faixa só aparece se demorar mais de 10 s. Se
+  ficar muito tempo assim, confira a internet e se o antivírus (proteção
+  web/HTTPS) não está bloqueando o app.
 - **Pediu QR code de novo**: acontece se você remover o aparelho pelo
   celular (Aparelhos conectados) ou se ficar muitos dias sem abrir o app
   — é regra do WhatsApp. É só ler de novo; as conversas salvas continuam.
