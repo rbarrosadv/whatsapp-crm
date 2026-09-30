@@ -68,6 +68,8 @@ export async function bootstrap() {
     emit('chats', { changed: null });
   });
   window.api.on('tasks:changed', () => emit('tasks'));
+  window.api.on('cases:changed', (jid) => emit('cases', jid));
+  window.api.on('finance:changed', () => emit('finance'));
   window.api.on('ui:open-chat', (jid) => openChat(jid));
   window.api.on('ui:open-view', (v) => setView(v));
   window.api.on('ui:open-filter', (kind) => { setView('inbox'); emit('open-filter', kind); });
@@ -133,9 +135,11 @@ export function chatMatchesRules(c, r = {}) {
     if (r.awaitingHours && Date.now() - c.last_ts < r.awaitingHours * HOUR) return false;
   }
   if (r.tasks && !(c.open_tasks > 0)) return false;
-  if (r.noStage && c.stage_id) return false;
-  if (r.pipeline && c.pipeline_id !== r.pipeline) return false;
-  if (r.stages?.length && !r.stages.includes(c.stage_id)) return false;
+  const stageIds = c.stage_ids || (c.stage_id ? [c.stage_id] : []);
+  const pipelineIds = c.pipeline_ids || (c.pipeline_id ? [c.pipeline_id] : []);
+  if (r.noStage && stageIds.length) return false;
+  if (r.pipeline && !pipelineIds.includes(r.pipeline)) return false;
+  if (r.stages?.length && !r.stages.some((x) => stageIds.includes(x))) return false;
   if (r.tags?.length && !r.tags.some((x) => c.tag_ids.includes(x))) return false;
   return true;
 }

@@ -91,6 +91,21 @@ function render() {
             h('button', { class: 'btn btn-sm', onclick: () => filterEditor(f) }, 'Editar')))),
         h('button', { class: 'btn', onclick: () => filterEditor() }, '＋ Novo filtro')),
 
+      section('💰 Honorários e cobrança',
+        h('label', { class: 'field' }, h('span', null, 'Chave PIX / dados para pagamento'),
+          h('input', { class: 'input', value: state.settings.pixKey || '', placeholder: 'Ex.: CNPJ, e-mail ou celular', onchange: (e) => setSetting('pixKey', e.target.value.trim()).catch(errToast) })),
+        h('label', { class: 'field' }, h('span', null, 'Mensagem de cobrança'),
+          chargeTemplateInput()),
+        h('p', { class: 'muted small' }, 'Campos que são preenchidos sozinhos: {nome} {nome_completo} {valor} {vencimento} {parcela} {descricao} {caso} {processo} {pix} {pix_linha}. Você sempre revisa antes de enviar.'),
+        h('label', { class: 'toggle-row' }, h('div', null, 'Avisar antes do vencimento'),
+          h('select', { class: 'input select-sm', onchange: (e) => setSetting('paymentNoticeDays', Number(e.target.value)).catch(errToast) },
+            [[0, 'Não avisar'], [1, '1 dia antes'], [3, '3 dias antes'], [5, '5 dias antes'], [7, '7 dias antes']].map(([v, l]) =>
+              h('option', { value: v, selected: Number(state.settings.paymentNoticeDays ?? 3) === v }, l)))),
+        h('label', { class: 'toggle-row' }, h('div', null, h('div', null, 'Avisar caso sem retorno ao cliente'), h('div', { class: 'muted small' }, 'Quando um caso aberto fica esse tempo sem você mandar notícia.')),
+          h('select', { class: 'input select-sm', onchange: (e) => setSetting('staleCaseDays', Number(e.target.value)).catch(errToast) },
+            [[0, 'Nunca'], [7, '7 dias'], [15, '15 dias'], [30, '30 dias'], [60, '60 dias']].map(([v, l]) =>
+              h('option', { value: v, selected: Number(state.settings.staleCaseDays ?? 15) === v }, l))))),
+
       section('📊 Funis e etapas',
         h('p', { class: 'muted small' }, 'Cada funil tem suas etapas (colunas do quadro). Ex.: Atendimento → Novo, Proposta, Fechado.'),
         ...state.pipelines.map((p, i) => h('div', { class: 'list-row' },
@@ -249,6 +264,16 @@ export function pipelineEditor(p) {
       },
     ],
   });
+}
+
+function chargeTemplateInput() {
+  const ta = h('textarea', { class: 'input', rows: 5, onchange: (e) => setSetting('chargeTemplate', e.target.value).catch(errToast) });
+  if (state.settings.chargeTemplate) ta.value = state.settings.chargeTemplate;
+  else api('finance:defaultTemplate').then((t) => { ta.value = t; }).catch(() => {});
+  return h('div', null, ta, h('button', {
+    class: 'btn btn-sm', style: { marginTop: '6px' },
+    onclick: async () => { const t = await api('finance:defaultTemplate'); ta.value = t; setSetting('chargeTemplate', null).catch(errToast); },
+  }, 'Restaurar texto padrão'));
 }
 
 async function moveItem(kind, list, i, dir) {

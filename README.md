@@ -33,9 +33,20 @@ no seu computador**. Ao abrir de novo, ele entra direto, sem pedir login.
   valor do negócio, etapa do funil, etiquetas, **notas**, **tarefas com
   lembrete** (aviso do Windows na hora marcada) e histórico de
   movimentações.
-- **Funil (Kanban)** — colunas por etapa, **arrastar e soltar** os cartões,
-  total em R$ por coluna, tempo em cada etapa. Vários funis (ex.:
-  Atendimento, Pós-venda, Pessoal), todos editáveis.
+- **Casos** — cada cliente pode ter vários casos (processos, consultas,
+  consultorias). A ficha do caso tem abas: **Dados** (nº do processo, área,
+  vara/órgão, parte contrária), **Honorários** (fixo, parcelado e/ou êxito,
+  parcelas com vencimento, "Recebi" e **📤 Cobrar** pelo WhatsApp),
+  **Prazos** (prazos, audiências, reuniões, com aviso), **Documentos**
+  (arquivos do computador ou "Anexar ao caso" direto da mensagem) e
+  **Notas**. Mostra também o **último retorno ao cliente** e avisa quando
+  passa de X dias sem notícia.
+- **Funil (Kanban)** — os cartões são os casos: **Captação**, **Casos em
+  andamento** e **Consultoria** (todos editáveis), com **arrastar e soltar**,
+  total de honorários por coluna, parcelas vencidas e próximo prazo.
+- **💰 Financeiro** — todas as parcelas: vencidas, a vencer, pagas, totais do
+  mês e cobrança com um clique (ou várias vencidas de uma vez, com
+  intervalo). Modelo da mensagem e chave PIX em Configurações.
 - **Contatos** — tabela com filtros e **exportação para planilha** (CSV,
   abre no Excel).
 - **Tarefas** — tudo que está atrasado, pra hoje e próximo.

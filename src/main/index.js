@@ -208,6 +208,10 @@ function wireWhatsApp() {
     if (msg) delete msg.raw;
     send('message', { chatJid: ev.chatJid, id: ev.id, isNew: ev.isNew, removed: !!ev.removed, message: msg });
     if (ev.notify && msg) maybeNotifyMessage(ev.chatJid, msg);
+    // mensagem sua para o cliente = retorno dado nos casos dele
+    if (ev.isNew && msg?.from_me && msg.type !== 'system') {
+      try { db.touchCasesOfContact(ev.chatJid); } catch { /* ignore */ }
+    }
   });
 }
 
@@ -241,6 +245,65 @@ function checkForgotten() {
   });
 }
 
+const DAY = 24 * 3600 * 1000;
+const money = (v) => Number(v || 0).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' });
+const dateBR = (ts) => (ts ? new Date(ts).toLocaleDateString('pt-BR') : 'sem data');
+
+// honorários vencendo / vencidos e casos sem retorno ao cliente
+function checkFinanceAndCases() {
+  if (settings.notifications === false) return;
+  const days = Number(settings.paymentNoticeDays ?? 3);
+  const { upcoming, overdue } = db.paymentsToNotify(days);
+  if (upcoming.length) {
+    db.markPaymentsNotified(upcoming.map((p) => p.id), 'upcoming');
+    const total = upcoming.reduce((a, p) => a + p.amount, 0);
+    notify(`💰 ${upcoming.length} parcela(s) de honorários vencendo em até ${days} dia(s)`, `Total ${money(total)}`,
+      () => { showWindow(); send('ui:open-view', 'finance'); });
+  }
+  if (overdue.length) {
+    db.markPaymentsNotified(overdue.map((p) => p.id), 'overdue');
+    const total = overdue.reduce((a, p) => a + p.amount, 0);
+    notify(`⚠ ${overdue.length} parcela(s) de honorários vencida(s)`, `Total ${money(total)} — abra o Financeiro para cobrar`,
+      () => { showWindow(); send('ui:open-view', 'finance'); });
+  }
+  const staleDays = Number(settings.staleCaseDays ?? 15);
+  if (staleDays > 0) {
+    const stale = db.staleCases(staleDays * DAY);
+    if (stale.length) {
+      db.markCasesAlerted(stale.map((c) => c.id));
+      const names = stale.slice(0, 3).map((c) => `${db.getChat(c.jid)?.display_name || ''} (${c.title})`);
+      notify(`📣 ${stale.length} caso(s) sem notícia ao cliente há mais de ${staleDays} dias`,
+        `${names.join(', ')}${stale.length > 3 ? ` e mais ${stale.length - 3}` : ''}`,
+        () => { showWindow(); if (stale.length === 1) send('ui:open-chat', stale[0].jid); else send('ui:open-view', 'board'); });
+    }
+  }
+}
+
+const DEFAULT_CHARGE_TEMPLATE = 'Olá, {nome}! Tudo bem? Passando para lembrar da {parcela} dos honorários referentes a {caso}, '
+  + 'no valor de {valor}, com vencimento em {vencimento}.{pix_linha}\nQualquer dúvida, estou à disposição.';
+
+function chargeText(paymentId) {
+  const p = db.getPayment(paymentId);
+  if (!p) throw new Error('Parcela não encontrada');
+  const chat = db.getChat(p.jid);
+  const first = (chat?.display_name || '').split(' ')[0];
+  const pix = (settings.pixKey || '').trim();
+  const tpl = settings.chargeTemplate || DEFAULT_CHARGE_TEMPLATE;
+  const vars = {
+    nome: first,
+    nome_completo: chat?.display_name || '',
+    valor: money(p.amount),
+    vencimento: dateBR(p.due_at),
+    parcela: p.of_total > 1 ? `parcela ${p.seq}/${p.of_total}` : 'parcela',
+    descricao: p.description || 'honorários',
+    caso: p.case_title || 'seu atendimento',
+    processo: p.process_number || '',
+    pix,
+    pix_linha: pix ? `\nChave PIX: ${pix}` : '',
+  };
+  return tpl.replace(/\{(\w+)\}/g, (m, k) => (k in vars ? vars[k] : m));
+}
+
 function startReminders() {
   const check = () => {
     try {
@@ -254,6 +317,7 @@ function startReminders() {
         send('tasks:changed', null);
       }
       checkForgotten();
+      checkFinanceAndCases();
     } catch (e) { console.error(e); }
   };
   setInterval(check, 30000);
@@ -400,12 +464,67 @@ const api = {
   'filters:reorder': (ids) => { db.reorderChatFilters(ids); broadcastConfig(); },
   'crm:setTags': (jid, tagIds) => { db.setChatTags(jid, tagIds); wa.markChanged(jid); },
   'crm:activity': (jid) => db.listActivity(jid),
-  'notes:list': (jid) => db.listNotes(jid),
-  'notes:add': (jid, text) => { const id = db.addNote(jid, text); db.logActivity(jid, 'note', 'Nota adicionada'); return id; },
+  'notes:list': (jid, caseId) => db.listNotes(jid, caseId),
+  'notes:add': (jid, text, caseId) => { const id = db.addNote(jid, text, caseId); db.logActivity(jid, 'note', 'Nota adicionada'); return id; },
+
+  // casos
+  'cases:list': (opts) => db.listCases(opts || {}),
+  'cases:get': (id) => db.getCase(id),
+  'cases:save': (c) => { const id = db.saveCase(c); const k = db.getCase(id); wa.markChanged(k.jid); send('cases:changed', k.jid); return id; },
+  'cases:setStage': (id, stageId) => { db.setCaseStage(id, stageId); const k = db.getCase(id); wa.markChanged(k.jid); send('cases:changed', k.jid); },
+  'cases:setStatus': (id, status) => { db.setCaseStatus(id, status); const k = db.getCase(id); wa.markChanged(k.jid); send('cases:changed', k.jid); },
+  'cases:touch': (id) => { db.touchCase(id); send('cases:changed', db.getCase(id)?.jid); },
+  'cases:delete': (id) => { const jid = db.deleteCase(id); if (jid) { wa.markChanged(jid); send('cases:changed', jid); } },
+  'cases:docs': (id) => db.listCaseDocs(id).map((d) => ({ ...d, url: mediaUrl(d.file) })),
+  'cases:attachMessage': async (caseId, chatJid, msgId) => {
+    const m = db.getMessage(chatJid, msgId);
+    if (!m) throw new Error('Mensagem não encontrada');
+    const rel = m.media_file && fs.existsSync(resolveMedia(m.media_file)) ? m.media_file : await wa.downloadMedia(chatJid, msgId);
+    const name = m.media_name || `${{ image: 'foto', video: 'video', audio: 'audio', ptt: 'audio', sticker: 'figurinha' }[m.type] || 'arquivo'}-${new Date(m.ts).toISOString().slice(0, 10)}${path.extname(rel)}`;
+    const id = db.addCaseDoc({ case_id: caseId, name, file: rel, mime: m.media_mime, size: m.media_size, msg_id: msgId });
+    send('cases:changed', db.getCase(caseId)?.jid);
+    return id;
+  },
+  'cases:addFiles': async (caseId) => {
+    const r = await dialog.showOpenDialog(win, { properties: ['openFile', 'multiSelections'], title: 'Adicionar documentos ao caso' });
+    if (r.canceled) return 0;
+    const dir = path.join(wa.mediaDir, '_casos', String(caseId));
+    fs.mkdirSync(dir, { recursive: true });
+    for (const f of r.filePaths) {
+      let name = path.basename(f);
+      let dest = path.join(dir, name);
+      for (let i = 2; fs.existsSync(dest); i++) { name = `${path.parse(f).name} (${i})${path.extname(f)}`; dest = path.join(dir, name); }
+      fs.copyFileSync(f, dest);
+      db.addCaseDoc({ case_id: caseId, name, file: path.relative(wa.mediaDir, dest), size: fs.statSync(dest).size });
+    }
+    send('cases:changed', db.getCase(caseId)?.jid);
+    return r.filePaths.length;
+  },
+  'cases:deleteDoc': (id) => { const d = db.deleteCaseDoc(id); if (d) send('cases:changed', db.getCase(d.case_id)?.jid); },
+
+  // honorários / financeiro
+  'finance:summary': () => db.financeSummary(),
+  'finance:list': (opts) => db.listPayments(opts || {}),
+  'finance:save': (p) => { const id = db.savePayment(p); const k = db.getCase(p.case_id || db.getPayment(id)?.case_id); if (k) { wa.markChanged(k.jid); send('cases:changed', k.jid); } send('finance:changed'); return id; },
+  'finance:generate': (caseId, opts) => { const ids = db.generateInstallments(caseId, opts); const k = db.getCase(caseId); wa.markChanged(k.jid); send('cases:changed', k.jid); send('finance:changed'); return ids; },
+  'finance:setPaid': (id, paid) => { db.setPaymentPaid(id, paid); const p = db.getPayment(id); if (p) { wa.markChanged(p.jid); send('cases:changed', p.jid); } send('finance:changed'); },
+  'finance:delete': (id) => { const p = db.getPayment(id); db.deletePayment(id); if (p) { wa.markChanged(p.jid); send('cases:changed', p.jid); } send('finance:changed'); },
+  'finance:chargeText': (id) => chargeText(id),
+  'finance:sendCharge': async (id, text) => {
+    const p = db.getPayment(id);
+    if (!p) throw new Error('Parcela não encontrada');
+    await wa.sendText(p.jid, text || chargeText(id));
+    db.markPaymentCharged(id);
+    db.logActivity(p.jid, 'charge', `Cobrança enviada: ${p.description || 'honorários'} (${money(p.amount)})`);
+    send('finance:changed');
+  },
+  'finance:defaultTemplate': () => DEFAULT_CHARGE_TEMPLATE,
   'notes:delete': (id) => db.deleteNote(id),
   'tasks:list': (opts) => db.listTasks(opts || {}),
   'tasks:save': (task) => {
     const id = db.saveTask(task);
+    const cid = task.case_id ?? db.get('SELECT case_id FROM tasks WHERE id = ?', id)?.case_id;
+    if (cid) send('cases:changed', db.getCase(cid)?.jid);
     if (task.jid) wa.markChanged(task.jid);
     else { const t = db.get('SELECT jid FROM tasks WHERE id = ?', id); if (t?.jid) wa.markChanged(t.jid); }
     return id;
@@ -428,7 +547,8 @@ const api = {
   // configurações
   'settings:set': (key, value) => {
     const allowed = ['notifications', 'notificationPreview', 'minimizeToTray', 'sendReadReceipts', 'openAtLogin',
-      'theme', 'lastView', 'lastPipeline', 'enterToSend', 'forgottenHours', 'lastFilter'];
+      'theme', 'lastView', 'lastPipeline', 'enterToSend', 'forgottenHours', 'lastFilter',
+      'chargeTemplate', 'pixKey', 'paymentNoticeDays', 'staleCaseDays'];
     if (!allowed.includes(key)) throw new Error('configuração desconhecida');
     settings[key] = value;
     db.setSetting(key, value);

@@ -46,7 +46,9 @@ Processo principal (`src/main`, ESM):
 - `db.js` — `node:sqlite` (embutido no Electron 44, sem módulo nativo).
   Tabelas: `chats`, `contacts`, `aliases`, `messages`, `pipelines`,
   `stages`, `crm`, `tags`, `chat_tags`, `notes`, `tasks`, `activity`,
-  `quick_replies`, `settings`, `legacy_pending`, `meta`.
+  `quick_replies`, `settings`, `legacy_pending`, `meta`, `contact_types`,
+  `chat_filters`, `cases`, `payments`, `case_docs` (migrações por versão
+  em `migrate()`; `meta.schema` guarda a versão atual).
 - `ogg.js` — remux WebM/Opus (MediaRecorder do Chromium) → OGG/Opus, que
   é o que o WhatsApp aceita como mensagem de voz.
 - `legacy.js` — importa `%APPDATA%\KanbanCRMWhatsApp\kanban-state.json`
@@ -64,7 +66,10 @@ Interface (`src/renderer`, JS puro em módulos ES, sem build):
   ignorando null — **não use `el.append(null)`**, imprime "null"),
   formatação, modais, menus, toasts.
 - `js/views/*` — `chatlist`, `chatview` (mensagens + composer + gravação),
-  `crmpanel` (ficha), `board` (kanban com drag-and-drop HTML5),
+  `crmpanel` (ficha do contato, com a lista de casos), `casemodal` (ficha do
+  caso em abas: dados, honorários/parcelas/cobrança, prazos, documentos,
+  notas), `finance` (todas as parcelas), `board` (kanban de CASOS com
+  drag-and-drop HTML5),
   `contacts`, `tasks`, `dashboard`, `settings`, `connect` (QR + faixa de
   status).
 - Estilos em `styles.css` com variáveis e `[data-theme=light|dark]`. Cores
@@ -95,6 +100,16 @@ Interface (`src/renderer`, JS puro em módulos ES, sem build):
   quantas não lidas há em cada filtro. `personal` no tipo = fora de
   "Aguardando resposta" e do aviso de conversa esquecida (`checkForgotten`
   em `index.js`, configurável em horas; `chats.alerted_ts` evita repetir).
+- **Casos**: o funil é de casos, não de contatos — um contato pode ter
+  vários (`cases.jid`). `listChats` traz `stage_ids`/`pipeline_ids` dos casos
+  abertos; `stage_id`/`pipeline_id` da conversa = caso mais recente (compat.).
+  Honorários: tipos fixo/parcelado/êxito no caso; valores em `payments`
+  (parcelas geradas por `generateInstallments`, centavos certos na última).
+  Cobrança = texto do modelo (`chargeTemplate` + `pixKey` nas configurações,
+  variáveis `{nome}` `{valor}` …) revisado e enviado pelo usuário; nada é
+  enviado sozinho. `cases.last_update_at` ("último retorno ao cliente") é
+  atualizado quando você manda mensagem ao contato; avisos de parcelas e de
+  casos sem retorno em `checkFinanceAndCases` (`index.js`).
 - **Notificações no Windows**: AppUserModelID fixo (`com.whatsappcrm.desktop`)
   + atalho no Menu Iniciar com o mesmo id, recriado pelo próprio app
   (`ensureStartMenuShortcut`, via `shell.writeShortcutLink`). As

@@ -1,11 +1,12 @@
 // Ficha do contato (coluna da direita): dados, funil, etiquetas, tarefas,
 // notas e histórico.
 import {
-  h, clear, fill, fmtDateTime, fmtDue, fmtDuration, formatPhone, phoneOf, toLocalInput, fromLocalInput,
+  h, clear, fill, fmtDateTime, fmtDue, fmtMoney, fmtDuration, formatPhone, phoneOf, toLocalInput, fromLocalInput,
   modal, errToast, toast, confirmDialog, debounce,
 } from '../util.js';
 import { state, on, emit, api, stageById, openChat, typeById } from '../store.js';
-import { avatarEl, stageMenu, typeMenu } from '../components.js';
+import { avatarEl, typeMenu } from '../components.js';
+import { openCase, newCaseDialog, TASK_KINDS, feeLabel } from './casemodal.js';
 
 let root;
 let jid = null;
@@ -17,6 +18,7 @@ export function mountCrmPanel(el) {
   on('config', () => jid && render());
   on('notes', (j) => { if (j === jid) renderNotes(); });
   on('tasks', () => jid && renderTasks());
+  on('cases', (j) => { if (jid && (!j || j === jid)) { renderCases(); renderTasks(); } });
 }
 
 let sections = {};
@@ -26,13 +28,15 @@ function render() {
   if (!jid) return;
   sections = {
     top: h('div', { class: 'crm-top' }),
+    cases: h('div', { class: 'crm-section' }),
     tasks: h('div', { class: 'crm-section' }),
     notes: h('div', { class: 'crm-section' }),
     group: h('div', { class: 'crm-section' }),
     activity: h('div', { class: 'crm-section' }),
   };
-  root.append(sections.top, sections.tasks, sections.notes, sections.group, sections.activity);
+  root.append(sections.top, sections.cases, sections.tasks, sections.notes, sections.group, sections.activity);
   renderTop();
+  renderCases();
   renderTasks();
   renderNotes();
   renderGroup();
@@ -57,8 +61,6 @@ function renderTop() {
   // não redesenha enquanto o usuário digita num campo da ficha
   if (el.contains(document.activeElement) && document.activeElement.tagName === 'INPUT') return;
   const phone = phoneOf(chat.jid);
-  const st = chat.stage_id ? stageById(chat.stage_id) : null;
-
   const tagBox = h('div', { class: 'tag-select' }, state.tags.map((t) => {
     const on_ = chat.tag_ids.includes(t.id);
     return h('button', {
@@ -84,21 +86,45 @@ function renderTop() {
         style: typeById(chat.type_id) ? { '--c': typeById(chat.type_id).color } : null,
         onclick: (e) => typeMenu(e.currentTarget, chat),
       }, typeById(chat.type_id) ? `${typeById(chat.type_id).icon || ''} ${typeById(chat.type_id).name}` : '❓ Não classificado', ' ▾')),
-    h('div', { class: 'crm-block' },
-      h('div', { class: 'crm-label' }, 'Etapa no funil'),
-      h('button', {
-        class: `stage-btn wide ${st ? '' : 'unset'}`,
-        style: st ? { '--c': st.color } : null,
-        onclick: (e) => stageMenu(e.currentTarget, chat),
-      }, st ? `${st.pipeline.icon || ''} ${st.pipeline.name} → ${st.name}` : '＋ Adicionar ao funil', ' ▾'),
-      st && chat.stage_changed_at ? h('div', { class: 'muted small' }, `Nesta etapa há ${fmtDuration(Date.now() - chat.stage_changed_at)}`) : null),
     h('div', { class: 'crm-block' }, h('div', { class: 'crm-label' }, 'Etiquetas'), tagBox),
     h('div', { class: 'crm-block crm-fields' },
       field('Nome no CRM', 'custom_name', chat, { placeholder: chat.contact_name || chat.notify || chat.name || '' }),
       field('Empresa', 'company', chat),
-      field('E-mail', 'email', chat, { type: 'email' }),
-      field('Valor (R$)', 'value', chat, { type: 'number', placeholder: '0,00' })),
+      field('E-mail', 'email', chat, { type: 'email' })),
   );
+}
+
+// ------------------------------------------------------------------ casos
+
+async function renderCases() {
+  const el = sections.cases;
+  if (!el) return;
+  const myJid = jid;
+  const chat = state.chats.get(myJid);
+  if (chat?.is_group) { fill(el); return; }
+  const cases = await api('cases:list', { jid: myJid }).catch(() => []);
+  if (myJid !== jid) return;
+  const open = cases.filter((k) => k.status === 'aberto');
+  const closed = cases.filter((k) => k.status !== 'aberto');
+  fill(el,
+    h('div', { class: 'crm-section-head' },
+      h('h4', null, `📁 Casos${open.length ? ` (${open.length})` : ''}`),
+      h('button', { class: 'btn btn-sm', onclick: () => newCaseDialog(myJid) }, '＋ Novo caso')),
+    cases.length ? null : h('div', { class: 'muted small' }, 'Nenhum caso. Crie um para acompanhar processo, prazos, documentos e honorários.'),
+    ...open.map(caseCard),
+    closed.length ? h('details', { class: 'closed-cases' }, h('summary', { class: 'muted small' }, `${closed.length} caso(s) encerrado(s)`), ...closed.map(caseCard)) : null);
+}
+
+function caseCard(k) {
+  const st = stageById(k.stage_id);
+  return h('div', { class: `case-card ${k.status !== 'aberto' ? 'closed' : ''}`, style: st ? { '--c': st.color } : null, onclick: () => openCase(k.id) },
+    h('div', { class: 'case-card-title' }, k.title),
+    st ? h('div', { class: 'small' }, h('span', { class: 'stage-pill small', style: { '--c': st.color } }, st.name), h('span', { class: 'muted' }, ` ${st.pipeline.name}`)) : null,
+    k.process_number ? h('div', { class: 'muted small mono' }, k.process_number) : null,
+    h('div', { class: 'case-card-foot small' },
+      k.billed_total ? h('span', null, `💰 ${fmtMoney(k.paid_total)} / ${fmtMoney(k.billed_total)}`) : (feeLabel(k) ? h('span', { class: 'muted' }, feeLabel(k)) : null),
+      k.overdue_payments ? h('span', { class: 'bad-text' }, `⚠ ${k.overdue_payments} vencida(s)`) : null,
+      k.next_due ? h('span', { class: k.next_due < Date.now() ? 'bad-text' : 'muted' }, `📅 ${fmtDue(k.next_due)}`) : null));
 }
 
 // ---------------------------------------------------------------- tarefas
@@ -132,9 +158,10 @@ export function taskRow(t, { showChat = false } = {}) {
       },
     }),
     h('div', { class: 'task-main', onclick: () => taskDialog(t) },
-      h('div', { class: 'task-title' }, t.title),
+      h('div', { class: 'task-title' }, t.kind && t.kind !== 'tarefa' ? `${TASK_KINDS[t.kind]?.icon || ''} ` : '', t.title),
       h('div', { class: 'task-sub' }, t.due_at ? `${late ? '⚠ ' : ''}${fmtDue(t.due_at)}` : 'Sem data',
-        showChat && chat ? h('a', { class: 'link', onclick: (e) => { e.stopPropagation(); openChat(chat.jid); } }, ` · ${chat.display_name}`) : null)),
+        showChat && chat ? h('a', { class: 'link', onclick: (e) => { e.stopPropagation(); openChat(chat.jid); } }, ` · ${chat.display_name}`) : null,
+        t.case_title ? h('a', { class: 'link', onclick: (e) => { e.stopPropagation(); openCase(t.case_id, { tab: 'prazos' }); } }, ` · 📁 ${t.case_title}`) : null)),
     h('button', {
       class: 'icon-btn small', title: 'Excluir',
       onclick: async () => { await api('tasks:delete', t.id).catch(errToast); emitTasks(); },
@@ -163,13 +190,27 @@ export function taskDialog(task = {}) {
   const chatSel = h('select', { class: 'input' },
     h('option', { value: '' }, '— Sem contato —'),
     chats.map((c) => h('option', { value: c.jid, selected: c.jid === task.jid }, c.display_name)));
+  const kindSel = h('select', { class: 'input' },
+    Object.entries(TASK_KINDS).map(([k, v]) => h('option', { value: k, selected: (task.kind || 'tarefa') === k }, `${v.icon} ${v.label}`)));
+  const caseSel = h('select', { class: 'input' });
+  const loadCases = async () => {
+    const list = chatSel.value ? await api('cases:list', { jid: chatSel.value, includeClosed: false }).catch(() => []) : [];
+    fill(caseSel, h('option', { value: '' }, list.length ? '— Sem caso —' : '— Contato sem casos —'),
+      ...list.map((k) => h('option', { value: String(k.id), selected: k.id === task.case_id }, k.title)));
+  };
+  chatSel.addEventListener('change', loadCases);
+  loadCases();
   modal({
-    title: task.id ? 'Editar tarefa' : 'Nova tarefa',
+    title: task.id ? 'Editar compromisso' : `Novo(a) ${TASK_KINDS[task.kind || 'tarefa']?.label.toLowerCase() || 'tarefa'}`,
     body: h('div', { class: 'form' },
-      h('label', { class: 'field' }, h('span', null, 'O que fazer'), title),
+      h('div', { class: 'row' },
+        h('label', { class: 'field' }, h('span', null, 'Tipo'), kindSel),
+        h('label', { class: 'field grow' }, h('span', null, 'O que é'), title)),
       h('label', { class: 'field' }, h('span', null, 'Quando (você recebe um aviso na hora)'), due),
       quick,
-      h('label', { class: 'field' }, h('span', null, 'Contato'), chatSel)),
+      h('div', { class: 'row' },
+        h('label', { class: 'field grow' }, h('span', null, 'Contato'), chatSel),
+        h('label', { class: 'field grow' }, h('span', null, 'Caso'), caseSel))),
     actions: [
       { label: 'Cancelar' },
       {
@@ -177,7 +218,10 @@ export function taskDialog(task = {}) {
         primary: true,
         onClick: async () => {
           if (!title.value.trim()) { toast('Escreva o que precisa ser feito', 'error'); return false; }
-          await api('tasks:save', { id: task.id, jid: chatSel.value || null, title: title.value.trim(), due_at: fromLocalInput(due.value) });
+          await api('tasks:save', {
+            id: task.id, jid: chatSel.value || null, title: title.value.trim(), due_at: fromLocalInput(due.value),
+            kind: kindSel.value, case_id: caseSel.value ? Number(caseSel.value) : null,
+          });
           emitTasks();
           return true;
         },

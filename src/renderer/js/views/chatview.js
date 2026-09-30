@@ -4,7 +4,8 @@ import {
   toast, errToast, modal, confirmDialog, popupMenu, EMOJIS, QUICK_REACTIONS,
 } from '../util.js';
 import { state, on, emit, api, stageById, openChat, typeById } from '../store.js';
-import { avatarEl, ticks, stageMenu, emptyState, typeMenu, classifyBar } from '../components.js';
+import { avatarEl, ticks, emptyState, typeMenu, classifyBar } from '../components.js';
+import { openCase, newCaseDialog } from './casemodal.js';
 import { newChatDialog } from './chatlist.js';
 
 export function mediaUrl(rel) {
@@ -29,6 +30,7 @@ export function mountChatView(el, { onTogglePanel }) {
   });
   on('status', () => current && renderComposerState());
   on('config', () => current && renderHeader());
+  on('cases', (j) => { if (current && (!j || j === current.jid)) renderHeader(); });
   root._togglePanel = onTogglePanel;
   renderEmpty();
 }
@@ -73,12 +75,13 @@ function renderHeader() {
   const phone = phoneOf(chat.jid);
   const sub = chat.is_group ? 'Grupo' : (phone ? formatPhone(phone) : '');
   const st = chat.stage_id ? stageById(chat.stage_id) : null;
-  const stageBtn = h('button', {
-    class: `stage-btn ${st ? '' : 'unset'}`,
-    style: st ? { '--c': st.color } : null,
-    title: 'Mudar etapa do funil',
-    onclick: (e) => stageMenu(e.currentTarget, chat),
-  }, st ? `${st.pipeline.icon || ''} ${st.name}` : '＋ Adicionar ao funil', ' ▾');
+  const n = chat.open_cases || 0;
+  const stageBtn = chat.is_group ? null : h('button', {
+    class: `stage-btn ${n ? '' : 'unset'}`,
+    style: st && n === 1 ? { '--c': st.color } : null,
+    title: 'Casos deste contato',
+    onclick: (e) => casesMenu(e.currentTarget, chat),
+  }, n === 0 ? '＋ Novo caso' : n === 1 && st ? `📁 ${st.name}` : `📁 ${n} casos`, ' ▾');
   const t = typeById(chat.type_id);
   const typeBtn = h('button', {
     class: `stage-btn ${t ? '' : 'unset'}`,
@@ -97,6 +100,38 @@ function renderHeader() {
     h('button', { class: 'icon-btn', title: 'Marcar como não lida', onclick: () => api('chats:markUnread', chat.jid) }, '●'),
     h('button', { class: 'icon-btn', title: 'Ficha do contato (CRM)', onclick: () => root._togglePanel?.() }, '☰'),
   );
+}
+
+async function casesMenu(anchor, chat) {
+  const list = await api('cases:list', { jid: chat.jid, includeClosed: false }).catch(() => []);
+  if (!list.length) { newCaseDialog(chat.jid); return; }
+  popupMenu(anchor, [
+    ...list.map((k) => {
+      const s = stageById(k.stage_id);
+      return { icon: '📁', label: `${k.title}${s ? ` — ${s.name}` : ''}`, color: s?.color, onClick: () => openCase(k.id) };
+    }),
+    ...(list.length ? ['-'] : []),
+    { icon: '＋', label: 'Novo caso', onClick: () => newCaseDialog(chat.jid) },
+  ]);
+}
+
+/** Guarda a mídia da mensagem nos documentos de um caso do contato. */
+async function attachToCase(anchor, m) {
+  const jid = current.jid;
+  const list = await api('cases:list', { jid, includeClosed: false }).catch(() => []);
+  const attach = async (caseId) => {
+    try {
+      const id = await api('cases:attachMessage', caseId, jid, m.id);
+      toast(id ? 'Arquivo guardado nos documentos do caso' : 'Este arquivo já estava no caso', 'success');
+    } catch (e) { errToast(e); }
+  };
+  if (!list.length) {
+    toast('Este contato ainda não tem caso. Crie um e depois anexe o arquivo.');
+    newCaseDialog(jid);
+    return;
+  }
+  if (list.length === 1) { attach(list[0].id); return; }
+  popupMenu(anchor, list.map((k) => ({ icon: '📁', label: k.title, onClick: () => attach(k.id) })));
 }
 
 // ---------------------------------------------------------------- mensagens
@@ -397,6 +432,8 @@ function msgMenu(anchor, m) {
     ...(m.text ? [{ icon: '📋', label: 'Copiar texto', onClick: () => navigator.clipboard.writeText(m.text) }] : []),
     ...(m.text ? [{ icon: '📝', label: 'Salvar como nota do contato', onClick: () => saveAsNote(m) }] : []),
     ...(m.text ? [{ icon: '⏰', label: 'Criar tarefa a partir desta mensagem', onClick: () => import('./crmpanel.js').then((x) => x.taskDialog({ jid: current.jid, title: m.text.slice(0, 120) })) }] : []),
+    ...(['image', 'video', 'audio', 'ptt', 'document', 'sticker'].includes(m.type) && !m.deleted
+      ? [{ icon: '📎', label: 'Anexar ao caso…', onClick: () => attachToCase(anchor, m) }] : []),
     ...(m.media_file ? [
       { icon: '💾', label: 'Salvar arquivo como…', onClick: () => api('media:saveAs', m.media_file, m.media_name) },
       { icon: '📂', label: 'Mostrar na pasta', onClick: () => api('media:showInFolder', m.media_file) },

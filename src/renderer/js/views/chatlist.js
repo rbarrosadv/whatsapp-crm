@@ -3,7 +3,8 @@ import { h, fill, fmtListTime, fmtDuration, normalize, debounce, modal, errToast
 import {
   state, on, api, sortedChats, openChat, stageById, typeById, chatMatchesRules, isAwaiting, setSetting,
 } from '../store.js';
-import { avatarEl, ticks, stagePill, tagDots, stageMenu, typeMenu } from '../components.js';
+import { avatarEl, ticks, stagePill, tagDots, typeMenu } from '../components.js';
+import { newCaseDialog } from './casemodal.js';
 import { filterEditor } from './settings.js';
 
 const filters = { q: '', filterId: null, stage: '', tag: '', archived: false };
@@ -135,10 +136,12 @@ export function mountChatList(root) {
       h('div', { class: 'chat-bottom' },
         h('span', { class: 'chat-preview' }, c.last_from_me ? ticks(c.last_status) : null, ' ', c.last_preview || ''),
         c.unread > 0 ? h('span', { class: 'badge' }, c.unread > 99 ? '99+' : String(c.unread)) : null),
-      (st || c.tag_ids.length || c.open_tasks || waitingMs(c)) ? h('div', { class: 'chat-meta' },
+      (st || c.tag_ids.length || c.open_tasks || waitingMs(c) || c.overdue_payments) ? h('div', { class: 'chat-meta' },
         waitingMs(c) ? h('span', { class: `waiting ${waitingMs(c) > 24 * 3600e3 ? 'late' : ''}`, title: 'Aguardando sua resposta' },
           `⏳ ${fmtDuration(waitingMs(c))}`) : null,
         st ? stagePill(c.stage_id, { small: true }) : null,
+        c.open_cases > 1 ? h('span', { class: 'tag-more' }, `+${c.open_cases - 1} caso(s)`) : null,
+        c.overdue_payments ? h('span', { class: 'fee-late', title: 'Honorários vencidos' }, `💰 ${c.overdue_payments} vencida(s)`) : null,
         tagDots(c.tag_ids, { max: 2 }),
         c.open_tasks ? h('span', { class: `task-flag ${c.next_due && c.next_due < Date.now() ? 'late' : ''}` }, `⏰ ${c.open_tasks}`) : null) : null));
     return el;
@@ -147,7 +150,7 @@ export function mountChatList(root) {
   function rowMenu(c, e) {
     popupMenu(null, [
       { icon: '🏷', label: 'Classificar contato…', onClick: () => typeMenu(null, c, { x: e.clientX, y: e.clientY }) },
-      { icon: '📊', label: 'Mover para etapa…', onClick: () => stageMenu(null, c, { x: e.clientX, y: e.clientY }) },
+      c.is_group ? null : { icon: '📁', label: 'Novo caso…', onClick: () => newCaseDialog(c.jid) },
       c.unread > 0
         ? { icon: '✔', label: 'Marcar como lida', onClick: () => api('chats:markRead', c.jid) }
         : { icon: '●', label: 'Marcar como não lida', onClick: () => api('chats:markUnread', c.jid) },

@@ -103,32 +103,71 @@ try {
   await page.click('.modal button:has-text("Salvar")');
   await page.click('.chips .chip:has-text("Clientes")');
   await page.waitForTimeout(200);
-  check(await page.locator('.chat-row').count() === 1, 'filtro criado pelo usuário funciona');
+  check(await page.locator('.chat-row').count() === 2
+    && await page.locator('.chat-row:has-text("Mariana Souza")').count() === 1
+    && await page.locator('.chat-row:has-text("João (Fornecedor)")').count() === 0, 'filtro criado pelo usuário funciona');
   await page.click('.chips .chip:has-text("Tudo")');
   await page.locator('.chat-row', { hasText: 'Mariana Souza' }).click();
   await page.waitForSelector('.chat-head .stage-btn:has-text("Cliente")');
 
-  // 4) etapa do funil pelo cabeçalho
-  await page.click('.chat-head .stage-btn:has-text("Adicionar ao funil")');
-  await page.locator('.popup-item', { hasText: 'Proposta enviada' }).click();
-  await page.waitForSelector('.chat-head .stage-btn:has-text("Proposta enviada")');
-  check(true, 'conversa movida para a etapa "Proposta enviada"');
+  // 4) caso novo pelo cabeçalho
+  await page.click('.chat-head .stage-btn:has-text("Novo caso")');
+  await page.fill('.modal input.input', 'Plano anual');
+  await page.click('.modal .stage-btn.wide');
+  await page.locator('.popup-item', { hasText: 'Proposta de honorários' }).click();
+  await page.click('.modal button:has-text("Criar caso")');
+  await page.waitForSelector('.modal-case .case-head');
+  check(true, 'caso criado e ficha do caso aberta');
+  await page.fill('.modal-case .field:has-text("Nº do processo") input', '0001234-56.2026.8.26.0100');
+  await page.locator('.modal-case .field:has-text("Nº do processo") input').press('Tab');
+  // honorários: parcelado, gera 2 parcelas, recebe a 1ª, cobra a 2ª
+  await page.click('.modal-case .tab:has-text("Honorários")');
+  await page.click('.modal-case .fee-type:has-text("Parcelado")');
+  await page.waitForSelector('.modal-case .fee-type.on:has-text("Parcelado")');
+  const feeInput = page.locator('.modal-case .field:has-text("Valor contratado") input');
+  await feeInput.fill('2388');
+  await feeInput.press('Tab');
+  await page.waitForTimeout(300);
+  await page.click('.modal-case button:has-text("Gerar parcelas")');
+  await page.fill('.modal:not(.modal-case) .field:has-text("Nº de parcelas") input', '2');
+  await page.click('.modal:not(.modal-case) button:has-text("Gerar")');
+  await page.waitForSelector('.modal-case table tbody tr >> nth=1');
+  check(await page.locator('.modal-case table tbody tr').count() === 2, 'parcelas geradas (2× R$ 1.194,00)');
+  await page.locator('.modal-case table tbody tr').first().locator('button:has-text("Recebi")').click();
+  await page.waitForSelector('.modal-case .status-pill.ok:has-text("Paga")');
+  check((await page.locator('.modal-case .fee-summary').innerText()).includes('1.194,00'), 'parcela recebida entra no resumo');
+  await page.locator('.modal-case table tbody tr').nth(1).locator('button:has-text("Cobrar")').click();
+  await page.waitForSelector('.modal textarea');
+  const chargeMsg = await page.locator('.modal textarea').last().inputValue();
+  check(chargeMsg.includes('Mariana') && chargeMsg.includes('1.194,00') && chargeMsg.includes('parcela 2/2'), 'mensagem de cobrança preenchida');
+  await page.locator('.modal button:has-text("Enviar")').last().click();
+  await shot(page, '03b-caso-honorarios');
+  // prazo / audiência do caso
+  await page.click('.modal-case .tab:has-text("Prazos")');
+  await page.click('.modal-case button:has-text("Audiência")');
+  await page.fill('.modal:not(.modal-case) .field.grow input', 'Audiência de conciliação');
+  await page.click('.modal:not(.modal-case) .chip:has-text("Em 3 dias")');
+  await page.click('.modal:not(.modal-case) button:has-text("Salvar")');
+  await page.waitForSelector('.modal-case .task-title:has-text("Audiência de conciliação")');
+  check(true, 'audiência criada no caso');
+  await page.keyboard.press('Escape');
+  await page.waitForSelector('.msg.out:has-text("parcela 2/2")');
+  check(true, 'cobrança enviada aparece na conversa');
+  await page.waitForSelector('.crm-panel .case-card:has-text("Plano anual")');
+  check(true, 'caso aparece na ficha do contato');
 
-  // etiqueta, campo, nota
+  // etiqueta, nota
   await page.locator('.crm-panel .tag-chip.toggle', { hasText: 'Lead quente' }).click();
   await page.waitForSelector('.crm-panel .tag-chip.toggle.on:has-text("Lead quente")');
   check(true, 'etiqueta aplicada');
-  const valueInput = page.locator('.crm-field:has-text("Valor") input');
-  await valueInput.fill('2388');
-  await valueInput.press('Tab');
   await page.fill('.crm-panel textarea', 'Quer plano anual, decidir até sexta.');
   await page.click('.crm-panel button:has-text("Salvar nota")');
   await page.waitForSelector('.note-text:has-text("plano anual")');
   check(true, 'nota salva');
 
-  // tarefa
+  // tarefa avulsa
   await page.click('.crm-panel button:has-text("Nova")');
-  await page.fill('.modal input.input >> nth=0', 'Ligar para fechar o plano anual');
+  await page.fill('.modal .field.grow input', 'Ligar para fechar o plano anual');
   await page.click('.modal .chip:has-text("Em 1 hora")');
   await page.click('.modal button:has-text("Salvar")');
   await page.waitForSelector('.crm-panel .task-title:has-text("fechar o plano")');
@@ -141,24 +180,42 @@ try {
   const first = await page.locator('.chat-row').first().innerText();
   check(first.includes('Carlos Pereira'), 'nova mensagem sobe a conversa e marca como não lida');
 
-  // 6) funil (kanban) com arrastar e soltar
+  // 6) funil (kanban) com casos, arrastar e soltar
   await page.click('.rail-btn[title="Funil"]');
-  await page.waitForSelector('.col');
+  await page.click('.board-head .tab:has-text("Captação")');
+  await page.waitForSelector('.col .card');
   await shot(page, '04-board');
-  const card = page.locator('.card', { hasText: 'Mariana Souza' });
-  check(await card.count() === 1, 'cartão aparece no funil');
-  const target = page.locator('.col', { hasText: 'Negociação' });
+  const card = page.locator('.card', { hasText: 'Plano anual' });
+  check(await card.count() === 1, 'caso aparece no funil');
+  const target = page.locator('.col', { hasText: 'Contratou ✔' });
   await card.dragTo(target);
-  await page.waitForSelector('.col:has-text("Negociação") .card:has-text("Mariana Souza")', { timeout: 5000 });
-  check(true, 'cartão arrastado para "Negociação"');
-  check((await page.locator('.col:has-text("Negociação") .col-total').innerText()).includes('2.388'), 'total da coluna soma o valor');
-
-  // adicionar conversa ao funil pelo seletor
-  await page.click('.col:has-text("Novo contato") .col-add');
+  await page.waitForSelector('.col:has-text("Contratou ✔") .card:has-text("Plano anual")', { timeout: 5000 });
+  check(true, 'caso arrastado para "Contratou ✔"');
+  check((await page.locator('.col:has-text("Contratou ✔") .col-total').innerText()).includes('2.388'), 'total da coluna soma os honorários');
+  // novo caso pela coluna
+  await page.click('.col:has-text("Primeiro contato") .col-add');
   await page.locator('.modal .picker-item', { hasText: 'Ana Beatriz' }).click();
-  await page.waitForSelector('.col:has-text("Novo contato") .card:has-text("Ana Beatriz")');
-  check(true, 'conversa adicionada ao funil');
+  await page.fill('.modal .field:has-text("Nome do caso") input', 'Consulta inventário');
+  await page.click('.modal button:has-text("Criar caso")');
+  await page.waitForSelector('.modal-case');
+  await page.keyboard.press('Escape');
+  await page.waitForSelector('.col:has-text("Primeiro contato") .card:has-text("Consulta inventário")');
+  check(true, 'caso criado pela coluna do funil');
+  await page.click('.board-head .tab:has-text("Casos em andamento")');
+  await page.waitForSelector('.card:has-text("Reclamação trabalhista")');
+  check(true, 'caso de exemplo em "Casos em andamento"');
   await shot(page, '05-board-after');
+
+  // 6b) financeiro
+  await page.click('.rail-btn[title="Financeiro"]');
+  await page.waitForSelector('.stat');
+  await page.click('.chips .chip:has-text("Vencidas")');
+  await page.waitForSelector('.table tbody tr:has-text("Carlos Pereira")');
+  check(true, 'parcela vencida aparece no Financeiro');
+  await shot(page, '05b-financeiro');
+  await page.click('.chips .chip:has-text("Pagas")');
+  await page.waitForSelector('.table tbody tr:has-text("Mariana Souza")');
+  check(true, 'parcela recebida aparece em Pagas');
 
   // 7) outras telas
   await page.click('.rail-btn[title="Contatos"]');
@@ -220,8 +277,8 @@ try {
   await page.locator('.chat-row', { hasText: 'Mariana Souza' }).click();
   await page.waitForSelector('.msg.out:has-text("10% mais barato")');
   check(true, 'mensagens continuam armazenadas após reabrir');
-  await page.waitForSelector('.chat-head .stage-btn:has-text("Negociação")');
-  check(true, 'etapa do funil continua salva');
+  await page.waitForSelector('.chat-head .stage-btn:has-text("Contratou")');
+  check(true, 'caso e etapa continuam salvos');
   await page.waitForSelector('.chat-head .stage-btn:has-text("Cliente")');
   check(true, 'classificação continua salva');
   await shot(page, '11-reopen');

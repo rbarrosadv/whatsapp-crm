@@ -8,6 +8,7 @@ import { mountBoard } from './views/board.js';
 import { mountContacts } from './views/contacts.js';
 import { mountTasks } from './views/tasks.js';
 import { mountDashboard } from './views/dashboard.js';
+import { mountFinance } from './views/finance.js';
 import { mountSettings, applyTheme } from './views/settings.js';
 import { mountConnect } from './views/connect.js';
 
@@ -16,6 +17,7 @@ const NAV = [
   ['board', '📊', 'Funil'],
   ['contacts', '👥', 'Contatos'],
   ['tasks', '⏰', 'Tarefas'],
+  ['finance', '💰', 'Financeiro'],
   ['dashboard', '📈', 'Painel'],
 ];
 
@@ -30,6 +32,7 @@ async function main() {
     contacts: h('div', { class: 'view view-page' }),
     tasks: h('div', { class: 'view view-page' }),
     dashboard: h('div', { class: 'view view-page' }),
+    finance: h('div', { class: 'view view-page' }),
     settings: h('div', { class: 'view view-page' }),
   };
 
@@ -72,6 +75,7 @@ async function main() {
   mountContacts(views.contacts);
   mountTasks(views.tasks);
   mountDashboard(views.dashboard);
+  mountFinance(views.finance);
   mountSettings(views.settings);
   mountConnect(overlay, banner);
 
@@ -99,7 +103,7 @@ async function main() {
 
   // atalhos de teclado
   document.addEventListener('keydown', (e) => {
-    if (e.ctrlKey && !e.shiftKey && !e.altKey && /^[1-6]$/.test(e.key)) {
+    if (e.ctrlKey && !e.shiftKey && !e.altKey && /^[1-7]$/.test(e.key)) {
       e.preventDefault();
       setView([...NAV.map((n) => n[0]), 'settings'][Number(e.key) - 1]);
     }
@@ -109,7 +113,7 @@ async function main() {
     }
   });
 
-  const initial = ['inbox', 'board', 'contacts', 'tasks', 'dashboard'].includes(state.settings.lastView) ? state.settings.lastView : 'inbox';
+  const initial = ['inbox', 'board', 'contacts', 'tasks', 'finance', 'dashboard'].includes(state.settings.lastView) ? state.settings.lastView : 'inbox';
   state.view = null;
   setView(initial);
   showView(initial);

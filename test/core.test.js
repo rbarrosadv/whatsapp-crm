@@ -142,7 +142,7 @@ test('LID: conversa que chegou pelo @lid é unida à do número, com a ficha do 
   const LID2 = '11112222333344@lid';
   await wa.onMessages([{ key: { remoteJid: LID2, fromMe: false, id: 'L1' }, message: { conversation: 'via lid' }, messageTimestamp: now() - 10 }], 'notify');
   assert.ok(db.getChat(LID2));
-  db.setStage(LID2, 'vendas.proposta');
+  db.setStage(LID2, 'captacao.proposta');
   db.addNote(LID2, 'nota no lid');
   db.updateCrmFields(LID2, { value: '150,50' });
 
@@ -151,7 +151,7 @@ test('LID: conversa que chegou pelo @lid é unida à do número, com a ficha do 
 
   assert.equal(db.getChat(LID2), null);
   const c = db.getChat(PN2);
-  assert.equal(c.stage_id, 'vendas.proposta');
+  assert.equal(c.stage_id, 'captacao.proposta');
   assert.equal(c.value, 150.5);
   assert.equal(db.listMessages(PN2).length, 2);
   assert.equal(db.listNotes(PN2).length, 1);
@@ -166,14 +166,15 @@ test('LID: conversa que chegou pelo @lid é unida à do número, com a ficha do 
 });
 
 test('CRM: etapas, etiquetas, tarefas e funil', () => {
+  assert.ok(db.listPipelines().some((x) => x.id === 'casos'), 'funis de casos criados');
   const pid = db.savePipeline({ name: 'Pós-venda', icon: '🎁', stages: [{ name: 'Entregue', color: '#000' }, { name: 'Avaliar', color: '#111' }] });
   const p = db.listPipelines().find((x) => x.id === pid);
   assert.equal(p.stages.length, 2);
   db.setStage(PN, p.stages[1].id);
   assert.equal(db.getChat(PN).pipeline_id, pid);
-  // remover a etapa tira a conversa do funil
+  // remover a etapa não some com o caso: ele vai para a primeira etapa
   db.savePipeline({ id: pid, name: 'Pós-venda', stages: [p.stages[0]] });
-  assert.equal(db.getChat(PN).stage_id, null);
+  assert.equal(db.getChat(PN).stage_id, p.stages[0].id);
 
   const tag = db.saveTag({ name: 'X', color: '#f00' });
   db.setChatTags(PN, [tag]);
@@ -258,4 +259,69 @@ test('queda de conexão (428): com sessão salva reconecta sem pedir QR; sem ses
   assert.equal(wa.getStatus().state, 'starting');
   assert.ok(!fs.existsSync(auth), 'sessão incompleta é descartada');
   await wa.stop();
+});
+
+test('casos: vários por contato, honorários em parcelas e documentos', () => {
+  const J = '5511911112222@s.whatsapp.net';
+  db.upsertChat({ jid: J, name: 'Cliente Casos', last_ts: Date.now() });
+  const c1 = db.saveCase({ jid: J, title: 'Reclamação trabalhista', stage_id: 'casos.protocolo', process_number: '0001234-56.2026.5.02.0001', fee_installments: true, fee_success: true, fee_percent: '30' });
+  const c2 = db.saveCase({ jid: J, title: 'Consulta inventário', stage_id: 'captacao.consulta' });
+  const chat = db.getChat(J);
+  assert.equal(chat.open_cases, 2);
+  assert.deepEqual(new Set(chat.stage_ids), new Set(['casos.protocolo', 'captacao.consulta']));
+  assert.ok(chat.pipeline_ids.includes('casos') && chat.pipeline_ids.includes('captacao'));
+
+  // 1000 em 3 parcelas: 333,33 + 333,33 + 333,34, vencimentos mensais (31 → último dia)
+  const first = new Date(2030, 0, 31, 12).getTime();
+  const ids = db.generateInstallments(c1, { total: '1000', count: 3, firstDue: first });
+  const pays = db.listPayments({ caseId: c1 });
+  assert.equal(ids.length, 3);
+  assert.deepEqual(pays.map((x) => x.amount), [333.33, 333.33, 333.34]);
+  assert.equal(new Date(pays[1].due_at).getDate(), 28, 'fevereiro de 2030 termina dia 28');
+  assert.equal(pays[2].seq, 3);
+  assert.equal(pays[2].of_total, 3);
+
+  db.setPaymentPaid(ids[0], true);
+  const k = db.getCase(c1);
+  assert.equal(k.paid_total, 333.33);
+  assert.equal(k.billed_total, 1000);
+  assert.equal(k.fee_success, true);
+  assert.equal(k.fee_percent, 30);
+
+  // parcela vencida aparece no resumo e nos avisos
+  const late = db.savePayment({ case_id: c2, amount: '500,50', due_at: Date.now() - 86400000, description: 'Consulta' });
+  const sum = db.financeSummary();
+  assert.ok(sum.overdue >= 500.5);
+  assert.ok(db.paymentsToNotify(3).overdue.some((x) => x.id === late));
+  db.markPaymentsNotified([late], 'overdue');
+  assert.ok(!db.paymentsToNotify(3).overdue.some((x) => x.id === late));
+  assert.equal(db.getChat(J).overdue_payments, 1);
+
+  // tarefas e notas do caso
+  db.saveTask({ case_id: c1, title: 'Audiência de instrução', kind: 'audiencia', due_at: Date.now() + 86400000 });
+  assert.equal(db.listTasks({ caseId: c1 })[0].jid, J, 'tarefa do caso fica ligada ao contato');
+  assert.equal(db.listTasks({ caseId: c1 })[0].case_title, 'Reclamação trabalhista');
+  db.addNote(J, 'nota do caso', c1);
+  assert.equal(db.listNotes(null, c1).length, 1);
+
+  // documentos (sem duplicar a mesma mensagem)
+  assert.ok(db.addCaseDoc({ case_id: c1, name: 'rg.pdf', file: 'x/rg.pdf', msg_id: 'M1' }));
+  assert.equal(db.addCaseDoc({ case_id: c1, name: 'rg.pdf', file: 'x/rg.pdf', msg_id: 'M1' }), null);
+  assert.equal(db.getCase(c1).docs_count, 1);
+
+  // encerrar caso tira ele das etapas abertas; mover reabre
+  db.setCaseStatus(c2, 'encerrado');
+  assert.deepEqual(db.getChat(J).stage_ids, ['casos.protocolo']);
+  db.setCaseStage(c2, 'captacao.contratou');
+  assert.equal(db.getCase(c2).status, 'aberto');
+
+  // sem retorno ao cliente
+  db.run('UPDATE cases SET last_update_at = ? WHERE id = ?', Date.now() - 20 * 86400000, c1);
+  assert.ok(db.staleCases(15 * 86400000).some((x) => x.id === c1));
+  db.touchCasesOfContact(J);
+  assert.ok(!db.staleCases(15 * 86400000).some((x) => x.id === c1));
+
+  db.deleteCase(c2);
+  assert.equal(db.getCase(c2), null);
+  assert.equal(db.listPayments({ caseId: c2 }).length, 0);
 });

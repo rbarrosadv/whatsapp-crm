@@ -43,28 +43,25 @@ export function tagDots(tagIds, { max = 4 } = {}) {
     tags.length > max ? h('span', { class: 'tag-more' }, `+${tags.length - max}`) : null);
 }
 
-/** Menu para escolher etapa do funil de uma conversa. */
-export function stageMenu(anchor, chat, opts = {}) {
+/** Menu com todas as etapas de todos os funis. */
+export function stagePicker(anchor, currentStageId, onPick, opts = {}) {
   const items = [];
   for (const p of state.pipelines) {
-    items.push({ label: `${p.icon || ''} ${p.name}`.trim(), onClick: null, header: true });
+    items.push({ label: `${p.icon || ''} ${p.name}`.trim(), header: true });
     for (const s of p.stages) {
-      items.push({
-        icon: '●', color: s.color, label: `   ${s.name}`, active: chat.stage_id === s.id,
-        onClick: () => api('crm:setStage', chat.jid, s.id).catch(console.error),
-      });
+      items.push({ icon: '●', color: s.color, label: `   ${s.name}`, active: currentStageId === s.id, onClick: () => onPick(s.id) });
     }
-  }
-  if (chat.stage_id) {
-    items.push('-');
-    items.push({ label: 'Remover do funil', danger: true, onClick: () => api('crm:setStage', chat.jid, null) });
   }
   const menu = popupMenu(anchor, items.map((i) => (i.header ? { ...i, onClick: undefined } : i)), opts);
   menu.querySelectorAll('.popup-item').forEach((b, idx) => {
-    const it = items.filter((x) => x !== '-')[idx];
-    if (it?.header) { b.classList.add('popup-header'); b.disabled = true; }
+    if (items[idx]?.header) { b.classList.add('popup-header'); b.disabled = true; }
   });
   return menu;
+}
+
+/** Mudar a etapa de um caso. */
+export function caseStageMenu(anchor, kase, opts = {}) {
+  return stagePicker(anchor, kase.stage_id, (sid) => api('cases:setStage', kase.id, sid).catch(errToast), opts);
 }
 
 export function emptyState(icon, title, text, action) {
