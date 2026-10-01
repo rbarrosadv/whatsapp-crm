@@ -651,3 +651,49 @@ textarea.input { resize: vertical; }
 .mo-date { font-size: 12px; align-self: center; width: 24px; height: 24px; display: grid; place-items: center; border-radius: 50%; cursor: pointer; }
 .mo-cell.today .mo-date { background: var(--accent); color: #fff; font-weight: 600; }
 .mo-more { font-size: 11px; color: var(--muted); cursor: pointer; padding-left: 4px; }
+
+/* modo discreto: embaça valores e prévias; passar o mouse mostra */
+body.discreet .chat-preview,
+body.discreet .card-preview,
+body.discreet .search-hit .chat-preview,
+body.discreet .money,
+body.discreet .money-total,
+body.discreet .fee-late,
+body.discreet .fee-summary b,
+body.discreet .view-page .stat-value,
+body.discreet .col-total,
+body.discreet .table td.num,
+body.discreet .case-card-foot,
+body.discreet .card-foot .bad-text,
+body.discreet .funnel-n,
+body.discreet .panel-head .money,
+body.discreet .crm-field input[type="number"],
+body.discreet .case-grid input[type="number"],
+body.discreet-msgs .bubble-body,
+body.discreet-msgs .reply-bar .quoted {
+  filter: blur(6px);
+  transition: filter .15s;
+}
+body.discreet .chat-row:hover .chat-preview,
+body.discreet .card:hover .card-preview,
+body.discreet .money:hover,
+body.discreet .money-total:hover,
+body.discreet .fee-late:hover,
+body.discreet .fee-summary b:hover,
+body.discreet .view-page .stat:hover .stat-value,
+body.discreet .col-head:hover .col-total,
+body.discreet .table tr:hover td.num,
+body.discreet .case-card:hover .case-card-foot,
+body.discreet .card:hover .card-foot .bad-text,
+body.discreet .funnel-row:hover .funnel-n,
+body.discreet .panel-head:hover .money,
+body.discreet .crm-field input[type="number"]:hover,
+body.discreet .crm-field input[type="number"]:focus,
+body.discreet .case-grid input[type="number"]:hover,
+body.discreet .case-grid input[type="number"]:focus,
+body.discreet-msgs .bubble:hover .bubble-body,
+body.discreet-msgs .reply-bar .quoted:hover {
+  filter: none;
+}
+.rail-btn.on { background: rgba(0, 168, 132, .18); color: var(--accent-2); }
+.rail-btn.on .rail-icon { filter: drop-shadow(0 0 4px var(--accent)); }

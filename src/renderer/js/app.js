@@ -1,6 +1,6 @@
 // Ponto de entrada da interface.
 import { h, debounce } from './util.js';
-import { state, on, bootstrap, setView, openChat, forgetAvatar } from './store.js';
+import { state, on, bootstrap, setView, openChat, forgetAvatar, setSetting } from './store.js';
 import { mountChatList } from './views/chatlist.js';
 import { mountChatView } from './views/chatview.js';
 import { mountCrmPanel } from './views/crmpanel.js';
@@ -40,6 +40,7 @@ async function main() {
   };
 
   const navBtns = {};
+  let discreetBtn;
   const unreadBadge = h('span', { class: 'nav-badge hidden' });
   const statusDot = h('span', { class: 'status-dot' });
   const nav = h('nav', { class: 'rail' },
@@ -50,6 +51,8 @@ async function main() {
       return navBtns[id];
     }),
     h('div', { class: 'grow' }),
+    discreetBtn = h('button', { class: 'rail-btn', title: 'Modo discreto (Ctrl+Shift+D): esconde valores e prévias das mensagens', onclick: () => toggleDiscreet() },
+      h('span', { class: 'rail-icon' }, '🕶'), h('span', { class: 'rail-label' }, 'Discreto')),
     navBtns.settings = h('button', { class: 'rail-btn', title: 'Configurações', onclick: () => setView('settings') },
       h('span', { class: 'rail-icon' }, '⚙️'), h('span', { class: 'rail-label' }, 'Ajustes')),
     h('div', { class: 'rail-status', title: 'Status da conexão' }, statusDot));
@@ -105,8 +108,24 @@ async function main() {
   on('chats', updateUnread);
   updateUnread();
 
+  // modo discreto: embaça valores e prévias (passar o mouse mostra)
+  const applyDiscreet = () => {
+    document.body.classList.toggle('discreet', !!state.settings.discreet);
+    document.body.classList.toggle('discreet-msgs', !!state.settings.discreet && !!state.settings.discreetMessages);
+    discreetBtn.classList.toggle('on', !!state.settings.discreet);
+    discreetBtn.querySelector('.rail-label').textContent = state.settings.discreet ? 'Discreto ✓' : 'Discreto';
+  };
+  const toggleDiscreet = () => setSetting('discreet', !state.settings.discreet).catch(() => {});
+  on('settings', applyDiscreet);
+  applyDiscreet();
+
   // atalhos de teclado
   document.addEventListener('keydown', (e) => {
+    if (e.ctrlKey && e.shiftKey && e.key.toLowerCase() === 'd') {
+      e.preventDefault();
+      toggleDiscreet();
+      return;
+    }
     if (e.ctrlKey && !e.shiftKey && !e.altKey && /^[1-8]$/.test(e.key)) {
       e.preventDefault();
       setView([...NAV.map((n) => n[0]), 'settings'][Number(e.key) - 1]);

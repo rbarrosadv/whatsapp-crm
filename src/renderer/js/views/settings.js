@@ -69,6 +69,11 @@ function render() {
             [[0, 'Nunca'], [2, '2 horas'], [4, '4 horas'], [8, '8 horas'], [24, '24 horas'], [48, '2 dias']].map(([v, l]) =>
               h('option', { value: v, selected: Number(state.settings.forgottenHours ?? 24) === v }, l))))),
 
+      section('🕶 Modo discreto',
+        h('p', { class: 'muted small' }, 'Para compartilhar a tela ou atender alguém na sua sala: embaça valores (honorários, financeiro, totais) e as prévias das mensagens na lista. Passe o mouse em cima para ver. Liga e desliga pelo botão 🕶 na barra lateral ou com Ctrl+Shift+D. Os avisos do Windows também deixam de mostrar nomes e mensagens.'),
+        toggle('discreet', 'Modo discreto ligado', null, false),
+        toggle('discreetMessages', 'Embaçar também as mensagens da conversa aberta', 'Útil se for mostrar a tela com uma conversa aberta.', false)),
+
       section('👥 Tipos de contato',
         h('p', { class: 'muted small' }, 'Classifique cada conversa (ex.: Pessoal, Cliente, Empresa). Tipos marcados como pessoais não entram em "Aguardando resposta" nem nos avisos de conversa esquecida.'),
         ...state.contactTypes.map((t, i) => h('div', { class: 'list-row' },

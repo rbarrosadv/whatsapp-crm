@@ -56,6 +56,10 @@ no seu computador**. Ao abrir de novo, ele entra direto, sem pedir login.
   abre no Excel).
 - **Tarefas** — tudo que está atrasado, pra hoje e próximo.
 - **Painel** — números do atendimento e do funil.
+- **🕶 Modo discreto** (botão na barra lateral ou **Ctrl+Shift+D**) — para
+  compartilhar a tela ou atender alguém na sala: embaça valores e prévias das
+  mensagens (passe o mouse para ver) e os avisos do Windows deixam de mostrar
+  nomes, mensagens e valores. Opcional: embaçar também a conversa aberta.
 - Avisos de novas mensagens, contador de não lidas, continua rodando perto
   do relógio ao fechar a janela (opcional), abrir junto com o Windows
   (opcional), tema claro/escuro, backup com um clique.

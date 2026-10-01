@@ -42,7 +42,7 @@ async function render() {
     h('div', { class: 'row wrap finance-bar' },
       h('div', { class: 'chips' }, chip('overdue', '⚠ Vencidas'), chip('upcoming', '📅 A vencer'), chip('open', 'Em aberto'), chip('paid', '✔ Pagas'), chip('all', 'Todas')),
       h('div', { class: 'grow' }),
-      h('span', { class: 'muted' }, `${list.length} parcela(s) · ${fmtMoney(total)}`),
+      h('span', { class: 'muted' }, `${list.length} parcela(s) · `, h('span', { class: 'money-total' }, fmtMoney(total))),
       filter === 'overdue' && list.length > 1 ? h('button', { class: 'btn btn-primary btn-sm', onclick: () => chargeMany(list) }, `📤 Cobrar as ${list.length} vencidas`) : null),
     list.length
       ? h('div', { class: 'table-wrap' }, h('table', { class: 'table' },

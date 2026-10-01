@@ -79,7 +79,7 @@ function renderRows() {
     h('td', null, c.company || ''),
     h('td', null, stagePill(c.stage_id, { small: true })),
     h('td', null, tagDots(c.tag_ids, { max: 3 })),
-    h('td', null, c.value ? fmtMoney(c.value) : ''),
+    h('td', { class: 'num' }, c.value ? fmtMoney(c.value) : ''),
     h('td', { class: 'muted' }, fmtListTime(c.last_ts)))));
 }
 

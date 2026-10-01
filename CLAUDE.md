@@ -126,6 +126,11 @@ Interface (`src/renderer`, JS puro em módulos ES, sem build):
   (`ensureStartMenuShortcut`, via `shell.writeShortcutLink`). As
   `Notification` ficam guardadas em `liveNotifications` para o clique não
   se perder.
+- **Modo discreto**: configurações `discreet`/`discreetMessages` → classes
+  `body.discreet`/`body.discreet-msgs` com `filter: blur` nos valores e
+  prévias (hover mostra; ao criar tela com valor em R$, use as classes
+  `money`/`money-total`/`td.num` para entrar no embaçamento). No processo
+  principal, `notify(..., discreetTitle)` troca título/texto por genérico.
 - Mídia pequena (foto, figurinha, áudio) é baixada automaticamente quando
   chega; o resto sob demanda (botão Baixar), com `reuploadRequest` pra
   mídia expirada.

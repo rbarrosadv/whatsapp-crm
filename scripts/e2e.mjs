@@ -234,6 +234,20 @@ try {
   check(true, 'detalhes do compromisso ligam ao cliente');
   await page.keyboard.press('Escape');
 
+  // 6a2) modo discreto
+  await page.click('.rail-btn[title="Conversas"]');
+  await page.keyboard.press('Control+Shift+D');
+  await page.waitForSelector('body.discreet');
+  const blur = await page.locator('.chat-row .chat-preview').first().evaluate((el) => getComputedStyle(el).filter);
+  check(blur.includes('blur'), 'modo discreto embaça as prévias (Ctrl+Shift+D)');
+  await page.click('.rail-btn[title="Financeiro"]');
+  await page.waitForSelector('.stat-value');
+  check((await page.locator('.stat-value').first().evaluate((el) => getComputedStyle(el).filter)).includes('blur'), 'modo discreto embaça os valores');
+  await shot(page, '05c-modo-discreto');
+  await page.click('.rail-btn[title^="Modo discreto"]');
+  await page.waitForSelector('body:not(.discreet)');
+  check(true, 'botão 🕶 desliga o modo discreto');
+
   // 6b) financeiro
   await page.click('.rail-btn[title="Financeiro"]');
   await page.waitForSelector('.stat');

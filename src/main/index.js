@@ -147,8 +147,16 @@ function createTray() {
 // nelas deixa de funcionar no Windows.
 const liveNotifications = new Set();
 
-function notify(title, body, onClick) {
+/**
+ * `discreet`: texto genérico usado no lugar quando o modo discreto está ligado
+ * (o aviso não mostra nomes, mensagens nem valores).
+ */
+function notify(title, body, onClick, discreet) {
   if (!Notification.isSupported()) return;
+  if (discreet && settings.discreet) {
+    title = discreet;
+    body = 'Abra o WhatsApp CRM para ver.';
+  }
   const n = new Notification({
     title, body, icon: fs.existsSync(ICON) ? ICON : undefined, silent: false, timeoutType: 'default',
   });
@@ -231,7 +239,7 @@ function maybeNotifyMessage(chatJid, msg) {
   if (win && !win.isFocused()) win.flashFrame(true);
   const who = chat.is_group ? `${chat.display_name} — ${msg.sender_name || 'alguém'}` : chat.display_name;
   const body = settings.notificationPreview === false ? 'Nova mensagem' : db.previewOf(msg).slice(0, 180);
-  notify(who, body, () => { showWindow(); send('ui:open-chat', chatJid); });
+  notify(who, body, () => { showWindow(); send('ui:open-chat', chatJid); }, '💬 Nova mensagem');
 }
 
 // avisa quando conversas de trabalho estão há muito tempo sem resposta
@@ -246,7 +254,7 @@ function checkForgotten() {
   notify(`⏳ ${list.length} conversa(s) aguardando sua resposta há mais de ${hours} h`, `${names.join(', ')}${more}`, () => {
     showWindow();
     if (list.length === 1) send('ui:open-chat', list[0].jid); else send('ui:open-filter', 'awaiting');
-  });
+  }, '⏳ Conversas aguardando resposta');
 }
 
 const DAY = 24 * 3600 * 1000;
@@ -262,13 +270,13 @@ function checkFinanceAndCases() {
     db.markPaymentsNotified(upcoming.map((p) => p.id), 'upcoming');
     const total = upcoming.reduce((a, p) => a + p.amount, 0);
     notify(`💰 ${upcoming.length} parcela(s) de honorários vencendo em até ${days} dia(s)`, `Total ${money(total)}`,
-      () => { showWindow(); send('ui:open-view', 'finance'); });
+      () => { showWindow(); send('ui:open-view', 'finance'); }, '💰 Honorários vencendo');
   }
   if (overdue.length) {
     db.markPaymentsNotified(overdue.map((p) => p.id), 'overdue');
     const total = overdue.reduce((a, p) => a + p.amount, 0);
     notify(`⚠ ${overdue.length} parcela(s) de honorários vencida(s)`, `Total ${money(total)} — abra o Financeiro para cobrar`,
-      () => { showWindow(); send('ui:open-view', 'finance'); });
+      () => { showWindow(); send('ui:open-view', 'finance'); }, '⚠ Honorários vencidos');
   }
   const staleDays = Number(settings.staleCaseDays ?? 15);
   if (staleDays > 0) {
@@ -278,7 +286,8 @@ function checkFinanceAndCases() {
       const names = stale.slice(0, 3).map((c) => `${db.getChat(c.jid)?.display_name || ''} (${c.title})`);
       notify(`📣 ${stale.length} caso(s) sem notícia ao cliente há mais de ${staleDays} dias`,
         `${names.join(', ')}${stale.length > 3 ? ` e mais ${stale.length - 3}` : ''}`,
-        () => { showWindow(); if (stale.length === 1) send('ui:open-chat', stale[0].jid); else send('ui:open-view', 'board'); });
+        () => { showWindow(); if (stale.length === 1) send('ui:open-chat', stale[0].jid); else send('ui:open-view', 'board'); },
+        '📣 Casos sem retorno ao cliente');
     }
   }
 }
@@ -323,7 +332,7 @@ function startReminders() {
         notify(`⏰ Lembrete${chat ? ` — ${chat.display_name}` : ''}`, t.title, () => {
           showWindow();
           if (t.jid) send('ui:open-chat', t.jid); else send('ui:open-view', 'tasks');
-        });
+        }, '⏰ Lembrete');
         send('tasks:changed', null);
       }
       checkForgotten();
@@ -574,7 +583,8 @@ const api = {
     const allowed = ['notifications', 'notificationPreview', 'minimizeToTray', 'sendReadReceipts', 'openAtLogin',
       'theme', 'lastView', 'lastPipeline', 'enterToSend', 'forgottenHours', 'lastFilter',
       'chargeTemplate', 'pixKey', 'paymentNoticeDays', 'staleCaseDays',
-      'googleSync', 'googleCalendarId', 'agendaHidden', 'agendaView', 'agendaHours'];
+      'googleSync', 'googleCalendarId', 'agendaHidden', 'agendaView', 'agendaHours',
+      'discreet', 'discreetMessages'];
     if (!allowed.includes(key)) throw new Error('configuração desconhecida');
     settings[key] = value;
     db.setSetting(key, value);
