@@ -334,3 +334,18 @@ test('versão anunciada ao WhatsApp nunca fica vazia', async () => {
     assert.ok(Array.isArray(v) && v.length === 3 && v.every(Number.isFinite), `versão válida (${v})`);
   }
 });
+
+test('quedas seguidas com sessão salva sugerem ler o QR code de novo', async () => {
+  const auth = path.join(dir, 'auth');
+  fs.mkdirSync(auth, { recursive: true });
+  fs.writeFileSync(path.join(auth, 'creds.json'), JSON.stringify({ me: { id: '5511@s.whatsapp.net' }, account: {} }));
+  wa.retry = 0; wa.fastFails = 0;
+  for (let i = 0; i < 6; i++) {
+    const fake = { end() {} };
+    wa.sock = fake; wa.stopped = false; wa.startedAt = Date.now();
+    await wa.onConnectionUpdate(fake, { connection: 'close', lastDisconnect: { error: { message: 'Connection Terminated', output: { statusCode: 428 } } } });
+    assert.equal(wa.getStatus().suggestRepair, i >= 5, `tentativa ${i + 1}`);
+  }
+  assert.ok(fs.existsSync(path.join(auth, 'creds.json')), 'nada é apagado sozinho');
+  await wa.stop();
+});

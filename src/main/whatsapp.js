@@ -180,7 +180,7 @@ export class WhatsAppService extends EventEmitter {
       this.fastFails = 0;
       this.failedPairing = 0;
       const me = sock.user ? { jid: jidNormalizedUser(sock.user.id), name: sock.user.name || sock.user.verifiedName } : null;
-      this.setStatus({ state: 'open', registered: true, qr: null, pairingCode: null, me, error: null });
+      this.setStatus({ state: 'open', registered: true, qr: null, pairingCode: null, me, error: null, suggestRepair: false });
     }
     if (connection === 'close') {
       const code = lastDisconnect?.error?.output?.statusCode;
@@ -230,7 +230,10 @@ export class WhatsAppService extends EventEmitter {
         const delay = [500, 2000, 5000, 10000, 20000][this.retry - 1] ?? 30000;
         const blocked = this.fastFails >= 3
           ? ' — a conexão cai logo ao abrir; use “Testar conexão” em Configurações' : '';
-        this.setStatus({ state: 'reconnecting', error: describeError(lastDisconnect?.error, code) + blocked, retryIn: delay });
+        // muitas quedas seguidas logo ao abrir com a sessão salva: o WhatsApp
+        // provavelmente não aceita mais essa sessão → oferece ler o QR de novo
+        const suggestRepair = this.fastFails >= 6;
+        this.setStatus({ state: 'reconnecting', error: describeError(lastDisconnect?.error, code) + blocked, retryIn: delay, suggestRepair });
         this.scheduleReconnect(delay);
       }
     }
@@ -283,6 +286,31 @@ export class WhatsAppService extends EventEmitter {
 
   clearAuth() {
     try { fs.rmSync(this.authDir, { recursive: true, force: true }); } catch { /* ignore */ }
+  }
+
+  /**
+   * Descarta a sessão salva (que o WhatsApp deixou de aceitar) e volta para o
+   * QR code. Conversas e dados do CRM ficam intactos (estão no banco). A
+   * sessão antiga é guardada em auth-antiga-<data> por segurança.
+   */
+  async repair() {
+    this.stopped = true;
+    clearTimeout(this.reconnectTimer);
+    clearTimeout(this.watchdog);
+    const old = this.sock;
+    this.sock = null;
+    try { old?.end(undefined); } catch { /* ignore */ }
+    if (fs.existsSync(this.authDir)) {
+      const dest = `${this.authDir}-antiga-${new Date().toISOString().slice(0, 19).replace(/[:T]/g, '-')}`;
+      try { fs.renameSync(this.authDir, dest); } catch { this.clearAuth(); }
+    }
+    this.logger.warn('sessão descartada pelo usuário para ler o QR code de novo');
+    this.retry = 0;
+    this.fastFails = 0;
+    this.failedPairing = 0;
+    this.versionIndex = 0;
+    this.setStatus({ state: 'starting', registered: false, me: null, error: null, suggestRepair: false });
+    await this.start();
   }
 
   /** Descarta a tentativa atual e começa de novo (gera um QR novo se ainda não conectou). */

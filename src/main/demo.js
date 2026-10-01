@@ -65,6 +65,13 @@ export class DemoWhatsAppService extends WhatsAppService {
     await this.start();
   }
 
+  async repair() {
+    clearTimeout(this.qrTimer);
+    this.clearAuth();
+    this.setStatus({ state: 'starting', registered: false, suggestRepair: false, error: null });
+    await this.start();
+  }
+
   async start() {
     this.stopped = false;
     if (this.hasSession()) {

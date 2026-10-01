@@ -347,6 +347,15 @@ try {
   await page.waitForSelector('.connect-overlay.hidden', { state: 'attached', timeout: 10000 });
   await page.waitForSelector('.chat-row');
   check(true, 'conecta após digitar o código no celular');
+  // sessão recusada pelo WhatsApp → botão para ler o QR code de novo
+  await page.evaluate(() => window.api.call('demo:simulateStuck'));
+  await page.waitForSelector('.banner button:has-text("Conectar de novo")');
+  await shot(page, '14-conectar-de-novo');
+  await page.click('.banner button:has-text("Conectar de novo")');
+  await page.click('.modal button:has-text("Mostrar QR code")');
+  await page.waitForSelector('.connect-overlay:not(.hidden) img.qr', { timeout: 10000 });
+  check(true, 'botão "Conectar de novo" volta para o QR code');
+  check(await page.locator('.chat-row').count() > 0, 'conversas continuam salvas');
 } catch (e) {
   await shot(page, 'zz-failure-pair').catch(() => {});
   await app.close();

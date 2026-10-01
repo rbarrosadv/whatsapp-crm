@@ -386,6 +386,9 @@ const api = {
   'wa:reconnect': () => wa.reconnectNow(),
   'wa:status': () => wa.getStatus(),
   'wa:reset': () => wa.reset(),
+  'wa:repair': () => wa.repair(),
+  // usado pelos testes do modo demo
+  ...(DEMO ? { 'demo:simulateStuck': () => wa.setStatus({ state: 'reconnecting', registered: true, error: 'conexão fechada, código 428', suggestRepair: true }) } : {}),
   'wa:diagnose': async () => {
     const r = await diagnoseConnection();
     wa.logger.warn({ diagnostico: r }, 'teste de conexão');
@@ -730,6 +733,7 @@ app.whenReady().then(async () => {
   wa = new Service({ dataDir: DATA_DIR, logFile: path.join(DATA_DIR, 'logs', 'whatsapp.log') });
   applySettings();
   wireWhatsApp();
+  wa.logger.warn({ versaoApp: app.getVersion(), pastaApp: ROOT, electron: process.versions.electron }, 'app aberto');
 
   google = DEMO ? new DemoGoogleService() : new GoogleService({
     dir: path.join(DATA_DIR, 'google'),

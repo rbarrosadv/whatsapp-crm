@@ -1,5 +1,5 @@
 // Tela de conexão (QR code ou código pelo número) e faixa de status.
-import { h, fill, errToast } from '../util.js';
+import { h, fill, errToast, confirmDialog } from '../util.js';
 import { state, on, api } from '../store.js';
 import { statusLabel, runDiagnosis } from './settings.js';
 
@@ -105,14 +105,23 @@ function renderBanner(el, s) {
   if (!offline) offlineSince = null;
   clearTimeout(bannerTimer);
   const waited = offline ? Date.now() - offlineSince : 0;
-  if (offline && waited < BANNER_DELAY) {
+  if (offline && waited < BANNER_DELAY && !s.suggestRepair) {
     bannerTimer = setTimeout(() => renderBanner(el, state.status), BANNER_DELAY - waited + 50);
   }
   let content = null;
-  if (offline && waited >= BANNER_DELAY) {
+  if (offline && (waited >= BANNER_DELAY || s.suggestRepair)) {
     content = h('div', { class: 'banner warn' }, h('span', { class: 'spinner small' }), statusLabel(s.state),
       s.error ? h('span', { class: 'muted small' }, ` (${s.error})`) : null,
       s.state === 'reconnecting' ? h('button', { class: 'btn btn-sm', onclick: () => api('wa:reconnect') }, 'Tentar agora') : null,
+      s.suggestRepair ? h('button', {
+        class: 'btn btn-sm btn-primary',
+        title: 'O WhatsApp parece não aceitar mais a sessão salva',
+        onclick: async () => {
+          if (!await confirmDialog('O WhatsApp está recusando a sessão salva neste computador. Vamos ler o QR code de novo: as conversas, casos e todos os dados do CRM continuam salvos. Antes, no celular, em Dispositivos conectados, pode remover o "WhatsApp CRM" antigo se ele aparecer lá.', { okLabel: 'Mostrar QR code' })) return;
+          mode = 'qr';
+          api('wa:repair').catch(errToast);
+        },
+      }, '📱 Conectar de novo (QR code)') : null,
       h('button', { class: 'btn btn-sm', onclick: runDiagnosis }, '🩺 Testar conexão'));
   } else if (s.state === 'replaced') {
     content = h('div', { class: 'banner warn' }, '⚠ ', s.error || statusLabel(s.state),
