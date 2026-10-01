@@ -349,3 +349,18 @@ test('quedas seguidas com sessão salva sugerem ler o QR code de novo', async ()
   assert.ok(fs.existsSync(path.join(auth, 'creds.json')), 'nada é apagado sozinho');
   await wa.stop();
 });
+
+test('rota antiga do servidor (routingInfo) é descartada antes de reconectar', async () => {
+  const { useMultiFileAuthState } = await import('@whiskeysockets/baileys');
+  const auth = path.join(dir, 'auth-rota');
+  let { state, saveCreds } = await useMultiFileAuthState(auth);
+  state.creds.routingInfo = Buffer.from([8, 1, 8, 5]);
+  await saveCreds();
+  ({ state, saveCreds } = await useMultiFileAuthState(auth));
+  assert.ok(Buffer.isBuffer(state.creds.routingInfo), 'rota foi salva');
+  assert.equal(await wa.forgetRoute(state.creds, saveCreds), true);
+  ({ state } = await useMultiFileAuthState(auth));
+  assert.equal(state.creds.routingInfo, undefined, 'rota removida do disco');
+  assert.ok(state.creds.noiseKey, 'resto da sessão intacto');
+  assert.equal(await wa.forgetRoute(state.creds, async () => assert.fail('não salva à toa')), false);
+});

@@ -102,6 +102,7 @@ export class WhatsAppService extends EventEmitter {
     this.setStatus({ state: registered ? 'connecting' : 'starting', registered, qr: null, pairingCode: null, error: registered ? null : this.state.error });
 
     const { state, saveCreds } = await useMultiFileAuthState(this.authDir);
+    await this.forgetRoute(state.creds, saveCreds);
     // versão do WhatsApp Web anunciada na conexão; nunca pode ficar vazia
     const version = await this.pickVersion();
     this.lastVersion = version;
@@ -151,6 +152,17 @@ export class WhatsAppService extends EventEmitter {
     sock.ev.on('messages.delete', (d) => this.safe(() => this.onDelete(d)));
     sock.ev.on('groups.upsert', (gs) => this.safe(() => this.onGroups(gs)));
     sock.ev.on('groups.update', (gs) => this.safe(() => this.onGroups(gs)));
+  }
+
+  // "routingInfo" aponta para o servidor do WhatsApp da última conexão. Depois de
+  // suspender/hibernar (ou trocar de rede) ele fica velho e o WhatsApp derruba a
+  // conexão em meio segundo (428) a cada tentativa. Sem ele o servidor escolhe outro.
+  async forgetRoute(creds, saveCreds) {
+    if (!creds.routingInfo) return false;
+    delete creds.routingInfo;
+    await saveCreds();
+    this.logger.warn('rota antiga do servidor descartada');
+    return true;
   }
 
   async safe(fn) {

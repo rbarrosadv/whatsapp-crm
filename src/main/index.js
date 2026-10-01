@@ -61,7 +61,7 @@ function createWindow() {
     minWidth: 980,
     minHeight: 600,
     show: false,
-    title: DEMO ? 'WhatsApp CRM (demonstração)' : 'WhatsApp CRM',
+    title: `WhatsApp CRM ${app.getVersion()}${DEMO ? ' (demonstração)' : ''}`,
     icon: fs.existsSync(ICON) ? ICON : undefined,
     backgroundColor: '#0b141a',
     autoHideMenuBar: true,
@@ -79,6 +79,8 @@ function createWindow() {
     cb(['media', 'notifications', 'clipboard-sanitized-write'].includes(permission));
   });
   win.loadFile(path.join(ROOT, 'src', 'renderer', 'index.html'));
+  // mantém a versão no título (o <title> do HTML trocaria) — ajuda a saber qual cópia está aberta
+  win.on('page-title-updated', (e) => e.preventDefault());
   win.once('ready-to-show', () => {
     if (!process.argv.includes('--hidden')) win.show();
   });

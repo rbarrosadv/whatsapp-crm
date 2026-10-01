@@ -102,7 +102,9 @@ Interface (`src/renderer`, JS puro em módulos ES, sem build):
 - **Sessão registrada** = `creds.json` com `me.id` e `account` (só existe
   depois que o celular confirma). Sem isso, `start()` apaga `auth/` e a
   tela de conexão fica aberta (QR ou código pelo número via
-  `requestPairingCode`). Falhas antes do registro trocam o perfil de
+  `requestPairingCode`). `creds.routingInfo` (servidor da última conexão) é
+  descartado a cada `start()` (`forgetRoute`): velho, depois de suspender, fazia
+  o WhatsApp devolver 428 em loop. Falhas antes do registro trocam o perfil de
   navegador (`BROWSERS`) e um watchdog de 40 s reinicia se não vier QR.
 - **Tipos de contato** (`contact_types`, `crm.type_id`) e **filtros da
   lista** (`chat_filters`, regras em JSON aplicadas por `chatMatchesRules`
