@@ -29,10 +29,14 @@ import { parseMessage, rawToMessage, tsOf } from './parse.js';
 
 // Perfis de "aparelho" usados na conexão; se um falhar antes de ler o QR,
 // tenta o próximo.
+// Perfis de navegador anunciados ao WhatsApp. O "Windows Desktop" passou a ser
+// recusado (428 logo depois do login), por isso o Chrome vem primeiro.
+// A sessão só é aceita depois com o MESMO perfil usado ao ler o QR code:
+// ele fica gravado em auth/perfil.json.
 const BROWSERS = [
-  () => Browsers.windows('Desktop'),
-  () => Browsers.macOS('Desktop'),
   () => Browsers.ubuntu('Chrome'),
+  () => Browsers.macOS('Desktop'),
+  () => Browsers.windows('Desktop'),
 ];
 
 const MIME_EXT = {
@@ -72,6 +76,7 @@ export class WhatsAppService extends EventEmitter {
     this.pnCache = new Map();
     this.historyProgress = null;
     this.failedPairing = 0;
+    this.profileShift = 0;
   }
 
   // ----------------------------------------------------------- conexão
@@ -93,6 +98,26 @@ export class WhatsAppService extends EventEmitter {
     }
   }
 
+  /** Perfil de navegador desta tentativa: o da sessão salva, ou o próximo da fila no pareamento. */
+  browserIndex(registered) {
+    if (!registered) return this.failedPairing % BROWSERS.length;
+    let saved = 0; // sessões antigas sem perfil.json: o Chrome é o que o WhatsApp aceita
+    try {
+      const n = JSON.parse(fs.readFileSync(path.join(this.authDir, 'perfil.json'), 'utf-8')).browser;
+      if (Number.isInteger(n) && n >= 0 && n < BROWSERS.length) saved = n;
+    } catch { /* sem arquivo */ }
+    // quedas imediatas seguidas: talvez o perfil gravado não seja o do pareamento → tenta os outros
+    return (saved + this.profileShift) % BROWSERS.length;
+  }
+
+  saveBrowserIndex(i) {
+    try {
+      fs.writeFileSync(path.join(this.authDir, 'perfil.json'), JSON.stringify({ browser: i }));
+    } catch (e) {
+      this.logger.warn({ err: e?.message }, 'não foi possível gravar o perfil da sessão');
+    }
+  }
+
   async start() {
     this.stopped = false;
     clearTimeout(this.reconnectTimer);
@@ -107,7 +132,11 @@ export class WhatsAppService extends EventEmitter {
     const version = await this.pickVersion();
     this.lastVersion = version;
     this.startedAt = Date.now();
-    this.logger.warn({ version, registered, attempt: this.failedPairing }, 'iniciando conexão');
+    const browserIndex = this.browserIndex(registered);
+    this.lastBrowser = browserIndex;
+    this.lastRegistered = registered;
+    const browser = BROWSERS[browserIndex]();
+    this.logger.warn({ version, registered, attempt: this.failedPairing, browser }, 'iniciando conexão');
 
     // se em 40 s não vier nem QR nem conexão, avisa e tenta de novo do zero
     clearTimeout(this.watchdog);
@@ -127,7 +156,7 @@ export class WhatsAppService extends EventEmitter {
       version,
       auth: { creds: state.creds, keys: makeCacheableSignalKeyStore(state.keys, this.logger) },
       logger: this.logger,
-      browser: BROWSERS[this.failedPairing % BROWSERS.length](),
+      browser,
       syncFullHistory: true,
       markOnlineOnConnect: false,
       generateHighQualityLinkPreview: false,
@@ -191,6 +220,9 @@ export class WhatsAppService extends EventEmitter {
       this.retry = 0;
       this.fastFails = 0;
       this.failedPairing = 0;
+      this.profileShift = 0;
+      // o perfil que funcionou é o da sessão; reconexões precisam usar o mesmo
+      this.saveBrowserIndex(this.lastBrowser ?? 0);
       const me = sock.user ? { jid: jidNormalizedUser(sock.user.id), name: sock.user.name || sock.user.verifiedName } : null;
       this.setStatus({ state: 'open', registered: true, qr: null, pairingCode: null, me, error: null, suggestRepair: false });
     }
@@ -211,7 +243,9 @@ export class WhatsAppService extends EventEmitter {
       } else if (code === DisconnectReason.connectionReplaced) {
         this.setStatus({ state: 'replaced', error: 'O WhatsApp foi aberto em outro lugar com esta mesma sessão.' });
       } else if (code === DisconnectReason.restartRequired) {
-        // normal logo depois de ler o QR: reinicia já com a sessão nova
+        // normal logo depois de ler o QR: reinicia já com a sessão nova, com o
+        // mesmo perfil de navegador com que o celular acabou de parear
+        if (!this.lastRegistered && this.hasSession()) this.saveBrowserIndex(this.lastBrowser ?? 0);
         this.scheduleReconnect(0);
       } else if (!this.hasSession()) {
         // ainda não conectou nenhuma vez: descarta a tentativa e gera QR novo
@@ -233,6 +267,9 @@ export class WhatsAppService extends EventEmitter {
         else this.fastFails = 0;
         // depois de várias quedas imediatas, tenta a próxima versão conhecida
         if (this.fastFails && this.fastFails % 4 === 0) this.versionIndex = (this.versionIndex || 0) + 1;
+        // a cada 3 quedas imediatas, tenta outro perfil de navegador (sessões pareadas
+        // antes de o perfil ser gravado podem ter usado qualquer um deles)
+        if (this.fastFails && this.fastFails % 3 === 0) this.profileShift++;
         // quedas imediatas repetidas: registra mais detalhes no whatsapp.log
         if (this.fastFails >= 3 && this.logger.level !== 'info') {
           this.logger.level = 'info';
@@ -320,6 +357,7 @@ export class WhatsAppService extends EventEmitter {
     this.retry = 0;
     this.fastFails = 0;
     this.failedPairing = 0;
+    this.profileShift = 0;
     this.versionIndex = 0;
     this.setStatus({ state: 'starting', registered: false, me: null, error: null, suggestRepair: false });
     await this.start();

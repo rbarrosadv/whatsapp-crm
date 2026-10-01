@@ -364,3 +364,32 @@ test('rota antiga do servidor (routingInfo) é descartada antes de reconectar', 
   assert.ok(state.creds.noiseKey, 'resto da sessão intacto');
   assert.equal(await wa.forgetRoute(state.creds, async () => assert.fail('não salva à toa')), false);
 });
+
+test('reconexão usa o mesmo perfil de navegador do pareamento', async () => {
+  const auth = path.join(dir, 'auth');
+  fs.rmSync(auth, { recursive: true, force: true });
+  wa.failedPairing = 2; wa.profileShift = 0;
+  assert.equal(wa.browserIndex(false), 2, 'pareamento percorre os perfis');
+  // QR lido com o perfil 2 → 515 (reinício) grava o perfil
+  wa.lastBrowser = 2; wa.lastRegistered = false;
+  fs.mkdirSync(auth, { recursive: true });
+  fs.writeFileSync(path.join(auth, 'creds.json'), JSON.stringify({ me: { id: '5511:65@s.whatsapp.net' }, account: {} }));
+  const fake = { end() {} };
+  wa.sock = fake; wa.stopped = false;
+  await wa.onConnectionUpdate(fake, { connection: 'close', lastDisconnect: { error: { message: 'restart', output: { statusCode: 515 } } } });
+  await wa.stop();
+  wa.failedPairing = 0; // depois de conectar o contador volta a zero…
+  assert.equal(wa.browserIndex(true), 2, '…mas a sessão salva continua com o perfil do pareamento');
+  // sessão antiga sem perfil gravado: começa pelo Chrome e alterna se cair logo
+  fs.rmSync(path.join(auth, 'perfil.json'));
+  assert.equal(wa.browserIndex(true), 0);
+  wa.retry = 0; wa.fastFails = 0;
+  for (let i = 0; i < 3; i++) {
+    const f = { end() {} };
+    wa.sock = f; wa.stopped = false; wa.startedAt = Date.now();
+    await wa.onConnectionUpdate(f, { connection: 'close', lastDisconnect: { error: { message: 'Connection Terminated', output: { statusCode: 428 } } } });
+  }
+  await wa.stop();
+  assert.equal(wa.browserIndex(true), 1, 'três quedas imediatas → tenta o próximo perfil');
+  wa.profileShift = 0; wa.fastFails = 0; wa.retry = 0;
+});
