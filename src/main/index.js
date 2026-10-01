@@ -483,8 +483,13 @@ const api = {
   // CRM
   'crm:setStage': (jid, stageId) => { db.setStage(jid, stageId); wa.markChanged(jid); },
   'crm:update': (jid, fields) => { db.updateCrmFields(jid, fields); wa.markChanged(jid); },
-  'crm:setType': (jid, typeId) => { db.setContactType(jid, typeId); wa.markChanged(jid); },
-  'types:save': (t) => { const id = db.saveContactType(t); broadcastConfig(); return id; },
+  'crm:setType': (jid, typeId) => { db.setContactType(jid, typeId); wa.markChanged(jid); wa.backfillDownloads([jid]); },
+  'types:save': (t) => {
+    const id = db.saveContactType(t);
+    broadcastConfig();
+    if (t.autodownload) wa.backfillDownloads(db.autoDownloadChats(id));
+    return id;
+  },
   'types:delete': (id) => { db.deleteContactType(id); broadcastConfig(); refreshAllChats(); },
   'types:reorder': (ids) => { db.reorderContactTypes(ids); broadcastConfig(); },
   'filters:save': (f) => { const id = db.saveChatFilter(f); broadcastConfig(); return id; },

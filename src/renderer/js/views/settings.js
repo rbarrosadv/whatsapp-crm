@@ -78,7 +78,7 @@ function render() {
         h('p', { class: 'muted small' }, 'Classifique cada conversa (ex.: Pessoal, Cliente, Empresa). Tipos marcados como pessoais não entram em "Aguardando resposta" nem nos avisos de conversa esquecida.'),
         ...state.contactTypes.map((t, i) => h('div', { class: 'list-row' },
           h('span', { class: 'tag-chip', style: { '--c': t.color } }, `${t.icon || ''} ${t.name}`),
-          h('span', { class: 'muted small grow' }, [t.personal ? 'pessoal' : 'trabalho', t.notify ? null : 'sem avisos'].filter(Boolean).join(' · ')),
+          h('span', { class: 'muted small grow' }, [t.personal ? 'pessoal' : 'trabalho', t.notify ? null : 'sem avisos', t.autodownload ? 'baixa arquivos' : null].filter(Boolean).join(' · ')),
           h('div', { class: 'row' },
             h('button', { class: 'icon-btn small', title: 'Subir', disabled: i === 0, onclick: () => moveItem('types', state.contactTypes, i, -1) }, '↑'),
             h('button', { class: 'icon-btn small', title: 'Descer', disabled: i === state.contactTypes.length - 1, onclick: () => moveItem('types', state.contactTypes, i, 1) }, '↓'),
@@ -293,6 +293,7 @@ function typeEditor(t) {
   const icon = h('input', { class: 'input icon-input', value: t?.icon || '🏷', maxLength: 4 });
   const personal = h('input', { type: 'checkbox', class: 'switch', checked: !!t?.personal });
   const notify = h('input', { type: 'checkbox', class: 'switch', checked: t ? !!t.notify : true });
+  const autodownload = h('input', { type: 'checkbox', class: 'switch', checked: !!t?.autodownload });
   modal({
     title: t ? `Editar tipo “${t.name}”` : 'Novo tipo de contato',
     body: h('div', { class: 'form' },
@@ -303,7 +304,9 @@ function typeEditor(t) {
       h('label', { class: 'toggle-row' }, h('div', null, h('div', null, 'É pessoal (não é trabalho)'),
         h('div', { class: 'muted small' }, 'Fica fora de "Aguardando resposta" e dos avisos de conversa esquecida.')), personal),
       h('label', { class: 'toggle-row' }, h('div', null, h('div', null, 'Mostrar aviso de nova mensagem'),
-        h('div', { class: 'muted small' }, 'Desligue para receber em silêncio (a conversa continua aparecendo na lista).')), notify)),
+        h('div', { class: 'muted small' }, 'Desligue para receber em silêncio (a conversa continua aparecendo na lista).')), notify),
+      h('label', { class: 'toggle-row' }, h('div', null, h('div', null, 'Baixar arquivos automaticamente'),
+        h('div', { class: 'muted small' }, 'Documentos, fotos, vídeos e áudios (até 100 MB) são baixados assim que chegam, e os dos últimos 6 meses que faltam também.')), autodownload)),
     actions: [
       ...(t ? [{
         label: 'Excluir', danger: true,
@@ -318,7 +321,7 @@ function typeEditor(t) {
         label: 'Salvar', primary: true,
         onClick: async () => {
           if (!name.value.trim()) { toast('Dê um nome ao tipo', 'error'); return false; }
-          await api('types:save', { id: t?.id, name: name.value.trim(), icon: icon.value.trim(), color, personal: personal.checked, notify: notify.checked });
+          await api('types:save', { id: t?.id, name: name.value.trim(), icon: icon.value.trim(), color, personal: personal.checked, notify: notify.checked, autodownload: autodownload.checked });
           return true;
         },
       },

@@ -8,7 +8,7 @@ import fs from 'node:fs';
 
 let db;
 
-const SCHEMA_VERSION = 4;
+const SCHEMA_VERSION = 5;
 
 const DEFAULT_PIPELINES = [
   {
@@ -305,11 +305,14 @@ function migrate() {
   addColumn('tasks', 'gcal_event_id', 'TEXT');
   addColumn('tasks', 'gcal_calendar_id', 'TEXT');
   addColumn('tasks', 'gcal_synced_at', 'INTEGER');
+  // versão 5: baixar arquivos automaticamente por tipo de contato
+  addColumn('contact_types', 'autodownload', 'INTEGER NOT NULL DEFAULT 0');
 
   const version = Number(get('SELECT value FROM meta WHERE key = ?', 'schema')?.value || 0);
   if (version < 1) seedDefaults();
   if (version < 2) seedV2();
   if (version < 3) migrateV3();
+  if (version < 5) run("UPDATE contact_types SET autodownload = 1 WHERE id = 'cliente'");
   run('INSERT OR REPLACE INTO meta (key, value) VALUES (?, ?)', 'schema', String(SCHEMA_VERSION));
 }
 
@@ -1011,14 +1014,35 @@ export function setContactType(jid, typeId) {
 
 // tipos de contato
 export function listContactTypes() { return all('SELECT * FROM contact_types ORDER BY position, rowid'); }
-export function saveContactType({ id, name, icon, color, personal, notify }) {
+export function saveContactType({ id, name, icon, color, personal, notify, autodownload }) {
   const tid = id || uniqueId('tipo');
   const pos = get('SELECT COUNT(*) AS n FROM contact_types')?.n || 0;
-  run(`INSERT INTO contact_types (id, name, icon, color, personal, notify, position) VALUES (?, ?, ?, ?, ?, ?, ?)
+  run(`INSERT INTO contact_types (id, name, icon, color, personal, notify, autodownload, position) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
        ON CONFLICT(id) DO UPDATE SET name = excluded.name, icon = excluded.icon, color = excluded.color,
-         personal = excluded.personal, notify = excluded.notify`,
-  tid, name, icon || '🏷', color || '#94a3b8', personal ? 1 : 0, notify === false ? 0 : 1, pos);
+         personal = excluded.personal, notify = excluded.notify, autodownload = excluded.autodownload`,
+  tid, name, icon || '🏷', color || '#94a3b8', personal ? 1 : 0, notify === false ? 0 : 1, autodownload ? 1 : 0, pos);
   return tid;
+}
+
+/** O tipo do contato manda baixar todos os arquivos automaticamente? */
+export function chatAutoDownload(jid) {
+  return !!get(`SELECT t.autodownload FROM crm JOIN contact_types t ON t.id = crm.type_id
+                WHERE crm.jid = ? AND t.autodownload = 1`, jid);
+}
+
+/** Conversas cujo tipo baixa arquivos automaticamente (opcionalmente só de um tipo). */
+export function autoDownloadChats(typeId = null) {
+  return all(`SELECT crm.jid FROM crm JOIN contact_types t ON t.id = crm.type_id
+              WHERE t.autodownload = 1 AND (? IS NULL OR t.id = ?)`, typeId, typeId).map((r) => r.jid);
+}
+
+/** Arquivos ainda não baixados de uma conversa (mais recentes primeiro). */
+export function pendingMedia(jid, { since = 0, maxSize = Infinity } = {}) {
+  return all(`SELECT id, type, media_size FROM messages
+              WHERE chat_jid = ? AND type IN ('image', 'video', 'audio', 'ptt', 'document', 'sticker')
+                AND media_file IS NULL AND raw IS NOT NULL AND deleted = 0 AND ts >= ?
+              ORDER BY ts DESC`, jid, since)
+    .filter((m) => (m.media_size || 0) <= maxSize);
 }
 export function deleteContactType(id) {
   tx(() => {

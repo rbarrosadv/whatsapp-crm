@@ -393,3 +393,31 @@ test('reconexão usa o mesmo perfil de navegador do pareamento', async () => {
   assert.equal(wa.browserIndex(true), 1, 'três quedas imediatas → tenta o próximo perfil');
   wa.profileShift = 0; wa.fastFails = 0; wa.retry = 0;
 });
+
+test('contato "Cliente" baixa todos os arquivos automaticamente; os outros só mídia pequena', async () => {
+  const CLI = '5511911112222@s.whatsapp.net';
+  const OUT = '5511933334444@s.whatsapp.net';
+  const doc = (jid, mid, size) => ({
+    key: { remoteJid: jid, fromMe: false, id: mid },
+    message: { documentMessage: { fileName: 'rg.pdf', mimetype: 'application/pdf', fileLength: size, mediaKey: Buffer.from([1]) } },
+    messageTimestamp: now(),
+  });
+  const s = new WhatsAppService({ dataDir: dir, logFile: path.join(dir, 'logs', 'dl.log') });
+  const baixados = [];
+  s.state = { state: 'open' };
+  s.downloadMedia = async (jid, mid) => { baixados.push(mid); db.updateMessage(jid, mid, { media_file: `${mid}.pdf` }); };
+
+  assert.equal(db.listContactTypes().find((t) => t.id === 'cliente').autodownload, 1, 'Cliente vem ligado');
+  // documento antigo, de antes de classificar
+  await s.onMessages([doc(CLI, 'ANTIGO', 5e5)], 'notify');
+  await s.onMessages([doc(OUT, 'OUTRO', 5e5)], 'notify');
+  await new Promise((r) => setTimeout(r, 20));
+  assert.deepEqual(baixados, [], 'sem classificação: documento fica sob demanda');
+
+  db.setContactType(CLI, 'cliente');
+  assert.equal(s.backfillDownloads([CLI]), 1, 'ao classificar busca o que faltava');
+  await s.onMessages([doc(CLI, 'NOVO', 5e5), doc(CLI, 'ENORME', 500e6)], 'notify');
+  await new Promise((r) => setTimeout(r, 20));
+  assert.deepEqual(baixados.sort(), ['ANTIGO', 'NOVO'], 'arquivo acima de 100 MB continua sob demanda');
+  assert.equal(s.backfillDownloads(), 0, 'nada repetido');
+});

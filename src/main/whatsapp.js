@@ -47,6 +47,11 @@ const MIME_EXT = {
 
 // Mídias pequenas desses tipos são baixadas automaticamente quando chegam
 const AUTO_DOWNLOAD = { image: 8e6, sticker: 2e6, ptt: 8e6, audio: 8e6 };
+// Contatos de tipo com "baixar arquivos automaticamente" (ex.: Cliente): tudo até este tamanho
+const CLIENT_MAX_SIZE = 100e6;
+// ao conectar/classificar, busca os arquivos antigos destes últimos dias
+const BACKFILL_DAYS = 180;
+const MEDIA_KINDS = new Set(['image', 'video', 'audio', 'ptt', 'document', 'sticker']);
 
 export function extFor(mime, name) {
   const fromName = name && path.extname(name).slice(1);
@@ -77,6 +82,9 @@ export class WhatsAppService extends EventEmitter {
     this.historyProgress = null;
     this.failedPairing = 0;
     this.profileShift = 0;
+    this.dlQueue = [];
+    this.dlQueued = new Set();
+    this.dlRunning = false;
   }
 
   // ----------------------------------------------------------- conexão
@@ -223,6 +231,8 @@ export class WhatsAppService extends EventEmitter {
       this.profileShift = 0;
       // o perfil que funcionou é o da sessão; reconexões precisam usar o mesmo
       this.saveBrowserIndex(this.lastBrowser ?? 0);
+      // arquivos de clientes que chegaram enquanto o app estava fechado
+      setTimeout(() => { if (this.state.state === 'open') this.backfillDownloads(); }, 15000);
       const me = sock.user ? { jid: jidNormalizedUser(sock.user.id), name: sock.user.name || sock.user.verifiedName } : null;
       this.setStatus({ state: 'open', registered: true, qr: null, pairingCode: null, me, error: null, suggestRepair: false });
     }
@@ -589,9 +599,10 @@ export class WhatsAppService extends EventEmitter {
     for (const r of results) {
       this.markChanged(r.chatJid);
       if (type !== 'history') this.emit('message', { chatJid: r.chatJid, id: r.id, isNew: r.isNew, notify: !!r.notify });
-      if (r.row && AUTO_DOWNLOAD[r.row.type] && (r.row.media_size || 0) <= AUTO_DOWNLOAD[r.row.type] && type !== 'history') {
-        this.downloadMedia(r.chatJid, r.id).then(() => this.emit('message', { chatJid: r.chatJid, id: r.id, isNew: false }))
-          .catch(() => {});
+      if (r.row && MEDIA_KINDS.has(r.row.type) && type !== 'history') {
+        const size = r.row.media_size || 0;
+        const small = AUTO_DOWNLOAD[r.row.type] && size <= AUTO_DOWNLOAD[r.row.type];
+        if (small || (size <= CLIENT_MAX_SIZE && db.chatAutoDownload(r.chatJid))) this.queueDownload(r.chatJid, r.id);
       }
       if (r.notify && this.activeChat === r.chatJid && this.windowFocused) {
         this.markRead(r.chatJid).catch(() => {});
@@ -781,6 +792,46 @@ export class WhatsAppService extends EventEmitter {
 
   async sendPresence(chatJid, type) {
     try { await this.sock?.sendPresenceUpdate(type, chatJid); } catch { /* ignore */ }
+  }
+
+  /** Fila de downloads automáticos: um por vez, sem repetir. */
+  queueDownload(chatJid, id) {
+    const key = `${chatJid}|${id}`;
+    if (this.dlQueued.has(key)) return;
+    this.dlQueued.add(key);
+    this.dlQueue.push([chatJid, id]);
+    this.runDownloads();
+  }
+
+  async runDownloads() {
+    if (this.dlRunning) return;
+    this.dlRunning = true;
+    try {
+      while (this.dlQueue.length && this.state.state === 'open') {
+        const [chatJid, id] = this.dlQueue.shift();
+        try {
+          await this.downloadMedia(chatJid, id);
+          this.emit('message', { chatJid, id, isNew: false });
+        } catch (e) {
+          this.logger.warn({ chatJid, id, err: e?.message }, 'download automático falhou');
+        } finally {
+          this.dlQueued.delete(`${chatJid}|${id}`);
+        }
+      }
+    } finally {
+      this.dlRunning = false;
+    }
+  }
+
+  /** Baixa os arquivos que ainda faltam das conversas cujo tipo pede download automático. */
+  backfillDownloads(jids = db.autoDownloadChats()) {
+    const since = Date.now() - BACKFILL_DAYS * 86400e3;
+    let n = 0;
+    for (const jid of jids) {
+      if (!db.chatAutoDownload(jid)) continue;
+      for (const m of db.pendingMedia(jid, { since, maxSize: CLIENT_MAX_SIZE })) { this.queueDownload(jid, m.id); n++; }
+    }
+    return n;
   }
 
   async downloadMedia(chatJid, id) {

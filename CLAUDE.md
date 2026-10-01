@@ -137,7 +137,10 @@ Interface (`src/renderer`, JS puro em módulos ES, sem build):
   principal, `notify(..., discreetTitle)` troca título/texto por genérico.
 - Mídia pequena (foto, figurinha, áudio) é baixada automaticamente quando
   chega; o resto sob demanda (botão Baixar), com `reuploadRequest` pra
-  mídia expirada.
+  mídia expirada. Tipos de contato com `autodownload` (Cliente, por padrão)
+  baixam tudo até 100 MB, numa fila serial (`queueDownload`); ao classificar,
+  ao ligar a opção e ao conectar, `backfillDownloads` busca o que faltou dos
+  últimos 180 dias.
 - Pasta de dados fixa: `%APPDATA%\WhatsAppCRM` (`CRM_DATA_DIR` sobrescreve;
   demo usa `WhatsAppCRM-Demo`). Instância única (`requestSingleInstanceLock`)
   pra não corromper a sessão.

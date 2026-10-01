@@ -280,6 +280,8 @@ try {
   await page.click('.modal button:has-text("Fechar")');
   check(true, 'teste de conexão mostra o resultado passo a passo');
   check(true, 'painel e configurações');
+  check(await page.locator('.settings-grid .list-row', { hasText: 'Cliente' }).locator('text=baixa arquivos').count() === 1,
+    'tipo Cliente baixa arquivos automaticamente');
 
   // tema claro
   await page.selectOption('.settings-grid select', 'light');
