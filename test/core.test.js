@@ -325,3 +325,12 @@ test('casos: vários por contato, honorários em parcelas e documentos', () => {
   assert.equal(db.getCase(c2), null);
   assert.equal(db.listPayments({ caseId: c2 }).length, 0);
 });
+
+test('versão anunciada ao WhatsApp nunca fica vazia', async () => {
+  const s = new WhatsAppService({ dataDir: dir, logFile: path.join(dir, 'logs', 'v.log') });
+  for (let i = 0; i < 5; i++) {
+    s.versionIndex = i;
+    const v = await s.pickVersion();
+    assert.ok(Array.isArray(v) && v.length === 3 && v.every(Number.isFinite), `versão válida (${v})`);
+  }
+});

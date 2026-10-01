@@ -11,6 +11,8 @@ import makeWASocket, {
   useMultiFileAuthState,
   makeCacheableSignalKeyStore,
   fetchLatestBaileysVersion,
+  fetchLatestWaWebVersion,
+  DEFAULT_CONNECTION_CONFIG,
   downloadMediaMessage,
   jidNormalizedUser,
   isJidGroup,
@@ -100,13 +102,9 @@ export class WhatsAppService extends EventEmitter {
     this.setStatus({ state: registered ? 'connecting' : 'starting', registered, qr: null, pairingCode: null, error: registered ? null : this.state.error });
 
     const { state, saveCreds } = await useMultiFileAuthState(this.authDir);
-    let version;
-    // depois de várias quedas imediatas, alterna para a versão embutida no Baileys
-    if (!this.useBundledVersion) {
-      try {
-        ({ version } = await fetchLatestBaileysVersion({ signal: AbortSignal.timeout(6000) }));
-      } catch { /* usa a versão embutida */ }
-    }
+    // versão do WhatsApp Web anunciada na conexão; nunca pode ficar vazia
+    const version = await this.pickVersion();
+    this.lastVersion = version;
     this.startedAt = Date.now();
     this.logger.warn({ version, registered, attempt: this.failedPairing }, 'iniciando conexão');
 
@@ -176,7 +174,8 @@ export class WhatsAppService extends EventEmitter {
     }
     if (connection === 'open') {
       clearTimeout(this.watchdog);
-      this.logger.warn('conectado');
+      this.logger.warn({ version: this.lastVersion }, 'conectado');
+      this.logger.level = 'warn';
       this.retry = 0;
       this.fastFails = 0;
       this.failedPairing = 0;
@@ -186,7 +185,10 @@ export class WhatsAppService extends EventEmitter {
     if (connection === 'close') {
       const code = lastDisconnect?.error?.output?.statusCode;
       clearTimeout(this.watchdog);
-      this.logger.warn({ code, err: lastDisconnect?.error?.message }, 'conexão fechada');
+      this.logger.warn({
+        code, err: lastDisconnect?.error?.message, data: lastDisconnect?.error?.data,
+        msAfterStart: Date.now() - (this.startedAt || 0),
+      }, 'conexão fechada');
       this.sock = null;
       if (this.stopped) return;
       if (code === DisconnectReason.loggedOut) {
@@ -217,7 +219,13 @@ export class WhatsAppService extends EventEmitter {
         // derruba a conexão; avisa com uma dica e alterna a versão usada
         if (Date.now() - (this.startedAt || 0) < 5000) this.fastFails = (this.fastFails || 0) + 1;
         else this.fastFails = 0;
-        if (this.fastFails && this.fastFails % 4 === 0) this.useBundledVersion = !this.useBundledVersion;
+        // depois de várias quedas imediatas, tenta a próxima versão conhecida
+        if (this.fastFails && this.fastFails % 4 === 0) this.versionIndex = (this.versionIndex || 0) + 1;
+        // quedas imediatas repetidas: registra mais detalhes no whatsapp.log
+        if (this.fastFails >= 3 && this.logger.level !== 'info') {
+          this.logger.level = 'info';
+          this.logger.warn({ candidatos: this.versionCache?.list }, 'quedas seguidas logo ao abrir: registro detalhado ligado');
+        }
         // quedas rápidas (428/408) são comuns: tenta logo, depois vai espaçando
         const delay = [500, 2000, 5000, 10000, 20000][this.retry - 1] ?? 30000;
         const blocked = this.fastFails >= 3
@@ -237,6 +245,32 @@ export class WhatsAppService extends EventEmitter {
     try { old?.end(undefined); } catch { /* ignore */ }
     this.retry = 0;
     await this.start();
+  }
+
+  /**
+   * Versões candidatas do WhatsApp Web, em ordem de preferência: a atual do
+   * próprio site do WhatsApp, a indicada pelo Baileys e a embutida.
+   * Guardadas por 1 h para não buscar a cada reconexão.
+   */
+  async versionCandidates() {
+    if (this.versionCache && Date.now() - this.versionCache.at < 3600e3) return this.versionCache.list;
+    const list = [];
+    const add = (v) => {
+      if (Array.isArray(v) && v.length === 3 && v.every(Number.isFinite) && !list.some((x) => x.join('.') === v.join('.'))) list.push(v);
+    };
+    try {
+      const r = await fetchLatestWaWebVersion({ signal: AbortSignal.timeout(6000) });
+      if (!r?.error) add(r?.version);
+    } catch { /* sem acesso ao site */ }
+    try { add((await fetchLatestBaileysVersion({ signal: AbortSignal.timeout(6000) }))?.version); } catch { /* ignore */ }
+    add(DEFAULT_CONNECTION_CONFIG.version);
+    this.versionCache = { at: Date.now(), list };
+    return list;
+  }
+
+  async pickVersion() {
+    const list = await this.versionCandidates();
+    return list[(this.versionIndex || 0) % list.length];
   }
 
   scheduleReconnect(ms) {
