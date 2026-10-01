@@ -117,8 +117,9 @@ export class DemoWhatsAppService extends WhatsAppService {
       process_number: '1000123-45.2026.5.01.0001', area: 'Trabalhista', court: '1ª Vara do Trabalho do RJ',
       opposing_party: 'Transportes Exemplo Ltda.', fee_installments: true, fee_success: true, fee_total: 3000, fee_percent: 30,
     });
-    const lastMonth = new Date(); lastMonth.setMonth(lastMonth.getMonth() - 1); lastMonth.setHours(12, 0, 0, 0);
-    const ids = db.generateInstallments(caseId, { total: 3000, count: 3, firstDue: lastMonth.getTime(), description: 'Honorários' });
+    // 1ª parcela há ~2 meses (paga), 2ª há ~1 mês (vencida), 3ª agora
+    const first = new Date(Date.now() - 62 * 864e5); first.setHours(12, 0, 0, 0);
+    const ids = db.generateInstallments(caseId, { total: 3000, count: 3, firstDue: first.getTime(), description: 'Honorários' });
     db.setPaymentPaid(ids[0], true);
     db.saveTask({ case_id: caseId, kind: 'audiencia', title: 'Audiência de instrução', due_at: Date.now() + 5 * 864e5 });
     this.markChanged(carlos);

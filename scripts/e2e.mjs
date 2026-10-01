@@ -175,6 +175,7 @@ try {
   await shot(page, '03-chat-crm');
 
   // 5) mensagem recebida em outra conversa: não lida + reordenação
+  await page.waitForTimeout(3500); // deixa chegar a resposta automática do demo à cobrança
   await page.evaluate(() => window.api.call('demo:incoming', '5521991234567', 'Fechado! Pode mandar o contrato.', 'Carlos Pereira'));
   await page.waitForSelector('.chat-row.unread:has-text("Pode mandar o contrato") .badge');
   const first = await page.locator('.chat-row').first().innerText();
