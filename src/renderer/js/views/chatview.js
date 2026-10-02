@@ -1,0 +1,766 @@
+// Conversa aberta: cabeçalho, mensagens e caixa de envio.
+import { openImageViewer } from './imageviewer.js';
+import {
+  h, clear, fill, fmtTime, fmtDay, fmtSize, fmtSeconds, formatWhatsApp, formatPhone, phoneOf, colorFor,
+  toast, errToast, modal, confirmDialog, popupMenu, EMOJIS, QUICK_REACTIONS,
+} from '../util.js';
+import { state, on, emit, api, stageById, openChat, typeById } from '../store.js';
+import { avatarEl, ticks, emptyState, typeMenu, classifyBar } from '../components.js';
+import { openCase, newCaseDialog } from './casemodal.js';
+import { newChatDialog } from './chatlist.js';
+
+export function mediaUrl(rel) {
+  return `crm-media://file/${String(rel).split(/[\\/]/).map(encodeURIComponent).join('/')}`;
+}
+
+let root;
+let current = null; // { jid, messages: [], els: Map, loadingOlder, noMoreLocal }
+let replyTo = null;
+let editing = null; // mensagem sua sendo editada
+const EDIT_WINDOW_MS = 15 * 60 * 1000;
+let recorder = null;
+
+export function mountChatView(el, { onTogglePanel }) {
+  root = el;
+  on('active', (jid) => open(jid));
+  on('message', onMessageEvent);
+  on('chats', ({ changed }) => {
+    if (!current) return;
+    if (changed === null || changed.includes(current.jid)) {
+      renderHeader();
+      maybeFetchNewer();
+    }
+  });
+  on('status', () => current && renderComposerState());
+  on('config', () => current && renderHeader());
+  on('cases', (j) => { if (current && (!j || j === current.jid)) renderHeader(); });
+  root._togglePanel = onTogglePanel;
+  renderEmpty();
+}
+
+function renderEmpty() {
+  current = null;
+  fill(root, emptyState('💬', 'WhatsApp CRM',
+    'Escolha uma conversa na lista para ver as mensagens e a ficha do contato.',
+    h('button', { class: 'btn btn-primary', onclick: newChatDialog }, '＋ Nova conversa')));
+}
+
+async function open(jid) {
+  if (!jid) { renderEmpty(); return; }
+  if (current?.jid === jid) return;
+  stopRecording(true);
+  replyTo = null;
+  editing = null;
+  current = { jid, messages: [], els: new Map(), loadingOlder: false, noMoreLocal: false };
+  const headerEl = h('div', { class: 'chat-head' });
+  const classifyEl = h('div');
+  const msgsEl = h('div', { class: 'messages', onscroll: onScroll });
+  const newBtn = h('button', { class: 'new-msgs-btn hidden', onclick: () => scrollToBottom(true) }, '↓ Novas mensagens');
+  const composerEl = h('div', { class: 'composer' });
+  const pane = h('div', { class: 'chat-pane' }, headerEl, classifyEl, h('div', { class: 'messages-wrap' }, msgsEl, newBtn), composerEl);
+  setupDrop(pane);
+  fill(root, pane);
+  Object.assign(current, { headerEl, classifyEl, msgsEl, composerEl, newBtn });
+  renderHeader();
+  renderComposer();
+  const msgs = await api('messages:list', jid, { limit: 80 });
+  if (current?.jid !== jid) return;
+  current.messages = msgs;
+  current.noMoreLocal = msgs.length < 80;
+  renderMessages();
+  scrollToBottom();
+}
+
+// --------------------------------------------------------------- cabeçalho
+
+function renderHeader() {
+  const chat = state.chats.get(current.jid);
+  if (!chat) return;
+  const phone = phoneOf(chat.jid);
+  const sub = chat.is_group ? 'Grupo' : (phone ? formatPhone(phone) : '');
+  const st = chat.stage_id ? stageById(chat.stage_id) : null;
+  const n = chat.open_cases || 0;
+  const stageBtn = chat.is_group ? null : h('button', {
+    class: `stage-btn ${n ? '' : 'unset'}`,
+    style: st && n === 1 ? { '--c': st.color } : null,
+    title: 'Casos deste contato',
+    onclick: (e) => casesMenu(e.currentTarget, chat),
+  }, n === 0 ? '＋ Novo caso' : n === 1 && st ? `📁 ${st.name}` : `📁 ${n} casos`, ' ▾');
+  const t = typeById(chat.type_id);
+  const typeBtn = h('button', {
+    class: `stage-btn ${t ? '' : 'unset'}`,
+    style: t ? { '--c': t.color } : null,
+    title: 'Tipo de contato',
+    onclick: (e) => typeMenu(e.currentTarget, chat),
+  }, t ? `${t.icon || ''} ${t.name}` : '❓ Classificar', ' ▾');
+  fill(current.classifyEl, classifyBar(chat));
+  fill(current.headerEl, 
+    avatarEl(chat, 40),
+    h('div', { class: 'chat-head-info', onclick: () => root._togglePanel?.(true) },
+      h('div', { class: 'chat-head-name' }, chat.display_name),
+      h('div', { class: 'chat-head-sub' }, sub, chat.company ? ` · ${chat.company}` : '')),
+    typeBtn,
+    stageBtn,
+    h('button', { class: 'icon-btn', title: 'Marcar como não lida', onclick: () => api('chats:markUnread', chat.jid) }, '●'),
+    h('button', { class: 'icon-btn', title: 'Ficha do contato (CRM)', onclick: () => root._togglePanel?.() }, '☰'),
+  );
+}
+
+async function casesMenu(anchor, chat) {
+  const list = await api('cases:list', { jid: chat.jid, includeClosed: false }).catch(() => []);
+  if (!list.length) { newCaseDialog(chat.jid); return; }
+  popupMenu(anchor, [
+    ...list.map((k) => {
+      const s = stageById(k.stage_id);
+      return { icon: '📁', label: `${k.title}${s ? ` — ${s.name}` : ''}`, color: s?.color, onClick: () => openCase(k.id) };
+    }),
+    ...(list.length ? ['-'] : []),
+    { icon: '＋', label: 'Novo caso', onClick: () => newCaseDialog(chat.jid) },
+  ]);
+}
+
+/** Guarda a mídia da mensagem nos documentos de um caso do contato. */
+async function attachToCase(anchor, m) {
+  const jid = current.jid;
+  const list = await api('cases:list', { jid, includeClosed: false }).catch(() => []);
+  const attach = async (caseId) => {
+    try {
+      const id = await api('cases:attachMessage', caseId, jid, m.id);
+      toast(id ? 'Arquivo guardado nos documentos do caso' : 'Este arquivo já estava no caso', 'success');
+    } catch (e) { errToast(e); }
+  };
+  if (!list.length) {
+    toast('Este contato ainda não tem caso. Crie um e depois anexe o arquivo.');
+    newCaseDialog(jid);
+    return;
+  }
+  if (list.length === 1) { attach(list[0].id); return; }
+  popupMenu(anchor, list.map((k) => ({ icon: '📁', label: k.title, onClick: () => attach(k.id) })));
+}
+
+// ---------------------------------------------------------------- mensagens
+
+function renderMessages() {
+  const { msgsEl } = current;
+  const prevHeight = msgsEl.scrollHeight;
+  const prevTop = msgsEl.scrollTop;
+  const frag = document.createDocumentFragment();
+  current.els.clear();
+  frag.append(olderBar());
+  let lastDay = null;
+  for (const m of current.messages) {
+    const day = new Date(m.ts).toDateString();
+    if (day !== lastDay) { frag.append(h('div', { class: 'day-sep' }, h('span', null, fmtDay(m.ts)))); lastDay = day; }
+    const el = msgEl(m);
+    current.els.set(m.id, el);
+    frag.append(el);
+  }
+  fill(msgsEl, frag);
+  return { prevHeight, prevTop };
+}
+
+function olderBar() {
+  if (!current.noMoreLocal) return h('div', { class: 'older-bar' }, h('span', { class: 'muted small' }, 'Role para cima para ver mais'));
+  return h('div', { class: 'older-bar' },
+    h('button', {
+      class: 'btn btn-sm',
+      onclick: async (e) => {
+        e.target.disabled = true;
+        try {
+          const ok = await api('messages:loadOlder', current.jid);
+          toast(ok ? 'Pedido enviado ao celular. As mensagens antigas aparecem em instantes.' : 'Não há mensagens mais antigas disponíveis.');
+          if (ok) setTimeout(() => reloadOlderAfterSync(current?.jid), 4000);
+        } catch (err) { errToast(err); } finally { e.target.disabled = false; }
+      },
+    }, '⟳ Buscar mensagens mais antigas no celular'));
+}
+
+async function reloadOlderAfterSync(jid) {
+  if (!current || current.jid !== jid) return;
+  current.noMoreLocal = false;
+  await loadOlder();
+}
+
+async function onScroll() {
+  const el = current.msgsEl;
+  if (el.scrollTop < 120 && !current.loadingOlder && !current.noMoreLocal) loadOlder();
+  if (nearBottom()) current.newBtn.classList.add('hidden');
+}
+
+async function loadOlder() {
+  const c = current;
+  if (!c) return;
+  c.loadingOlder = true;
+  const before = c.messages[0]?.ts;
+  const older = await api('messages:list', c.jid, { before, limit: 60 });
+  if (current !== c) return;
+  c.loadingOlder = false;
+  const known = new Set(c.messages.map((m) => m.id));
+  const fresh = older.filter((m) => !known.has(m.id));
+  if (older.length < 60) c.noMoreLocal = true;
+  if (!fresh.length) { renderMessages(); return; }
+  c.messages = [...fresh, ...c.messages];
+  const { prevHeight, prevTop } = renderMessages();
+  c.msgsEl.scrollTop = c.msgsEl.scrollHeight - prevHeight + prevTop;
+}
+
+async function maybeFetchNewer() {
+  const c = current;
+  const newest = c.messages[c.messages.length - 1]?.ts || 0;
+  const chat = state.chats.get(c.jid);
+  if (!chat || chat.last_ts <= newest || c.fetchingNewer) return;
+  c.fetchingNewer = true;
+  const newer = await api('messages:list', c.jid, { after: newest - 1, limit: 200 }).catch(() => []);
+  c.fetchingNewer = false;
+  if (current !== c) return;
+  for (const m of newer) upsertMessage(m, true);
+}
+
+function nearBottom() {
+  const el = current.msgsEl;
+  return el.scrollHeight - el.scrollTop - el.clientHeight < 150;
+}
+
+function scrollToBottom(smooth) {
+  const el = current?.msgsEl;
+  if (!el) return;
+  el.scrollTo({ top: el.scrollHeight, behavior: smooth ? 'smooth' : 'auto' });
+  current.newBtn.classList.add('hidden');
+  // imagens carregando depois mudam a altura
+  if (!smooth) setTimeout(() => { if (current?.msgsEl === el) el.scrollTop = el.scrollHeight; }, 120);
+}
+
+function onMessageEvent({ chatJid, id, removed, message }) {
+  if (!current || chatJid !== current.jid) return;
+  if (removed) {
+    current.messages = current.messages.filter((m) => m.id !== id);
+    current.els.get(id)?.remove();
+    current.els.delete(id);
+    return;
+  }
+  if (message) upsertMessage(message, true);
+}
+
+function upsertMessage(m, fromLive) {
+  const c = current;
+  const idx = c.messages.findIndex((x) => x.id === m.id);
+  if (idx >= 0) {
+    c.messages[idx] = m;
+    const old = c.els.get(m.id);
+    if (old) {
+      const el = msgEl(m);
+      old.replaceWith(el);
+      c.els.set(m.id, el);
+    }
+    return;
+  }
+  const last = c.messages[c.messages.length - 1];
+  if (last && m.ts < last.ts) {
+    // mensagem antiga chegando fora de ordem (histórico): redesenha tudo
+    c.messages.push(m);
+    c.messages.sort((a, b) => a.ts - b.ts);
+    const top = c.msgsEl.scrollTop;
+    renderMessages();
+    c.msgsEl.scrollTop = top;
+    return;
+  }
+  const wasBottom = nearBottom();
+  c.messages.push(m);
+  if (!last || new Date(last.ts).toDateString() !== new Date(m.ts).toDateString()) {
+    c.msgsEl.append(h('div', { class: 'day-sep' }, h('span', null, fmtDay(m.ts))));
+  }
+  const el = msgEl(m);
+  c.els.set(m.id, el);
+  c.msgsEl.append(el);
+  if (wasBottom || m.from_me) scrollToBottom(true);
+  else if (fromLive) c.newBtn.classList.remove('hidden');
+}
+
+function msgEl(m) {
+  const chat = state.chats.get(current.jid) || {};
+  if (m.type === 'system' || m.type === 'call') {
+    return h('div', { class: 'sys-msg', dataset: { id: m.id } },
+      h('span', null, m.type === 'call' ? '📞 ' : '', m.sender_name && m.type === 'system' ? `${m.sender_name} ` : '', m.text, ' · ', fmtTime(m.ts)));
+  }
+  const out = !!m.from_me;
+  const body = h('div', { class: 'bubble-body' });
+
+  if (chat.is_group && !out) {
+    const who = m.sender_name || (m.sender ? formatPhone(phoneOf(m.sender)) : '');
+    body.append(h('div', { class: 'sender', style: { color: colorFor(m.sender || who) } }, who));
+  }
+  if (m.quoted_id) {
+    const qMsg = current.messages.find((x) => x.id === m.quoted_id);
+    const qWho = qMsg ? (qMsg.from_me ? 'Você' : (qMsg.sender_name || chat.display_name)) : '';
+    body.append(h('div', {
+      class: 'quoted',
+      onclick: () => {
+        const target = current.els.get(m.quoted_id);
+        if (target) { target.scrollIntoView({ block: 'center', behavior: 'smooth' }); flash(target); }
+      },
+    }, qWho ? h('div', { class: 'quoted-who' }, qWho) : null, h('div', { class: 'quoted-text' }, (m.quoted_text || 'Mensagem').slice(0, 200))));
+  }
+
+  if (m.deleted) {
+    body.append(h('div', { class: 'deleted' }, '🚫 Esta mensagem foi apagada'));
+  } else {
+    const media = mediaBlock(m);
+    if (media) body.append(media);
+    if (m.text && !['contact', 'location', 'poll'].includes(m.type)) {
+      body.append(h('div', { class: 'text', html: formatWhatsApp(m.text) }));
+    }
+  }
+  body.append(h('div', { class: 'meta' },
+    m.edited ? h('span', { class: 'edited' }, 'Editada') : null,
+    h('span', null, fmtTime(m.ts)),
+    out ? ticks(m.status) : null));
+
+  const actionsBtn = h('button', { class: 'msg-menu-btn', title: 'Opções', onclick: (e) => msgMenu(e.currentTarget, m) }, '▾');
+  const bubble = h('div', { class: `bubble ${out ? 'out' : 'in'} ${m.type === 'sticker' && !m.deleted ? 'sticker' : ''}` }, actionsBtn, body);
+  const reactions = parseJson(m.reactions, []);
+  const wrap = h('div', { class: `msg ${out ? 'out' : 'in'}`, dataset: { id: m.id }, ondblclick: () => setReply(m) }, bubble);
+  if (reactions.length) {
+    const counts = {};
+    reactions.forEach((r) => { counts[r.text] = (counts[r.text] || 0) + 1; });
+    bubble.append(h('div', { class: 'reactions' },
+      Object.entries(counts).map(([e, n]) => h('span', null, e, n > 1 ? h('small', null, n) : null))));
+  }
+  return wrap;
+}
+
+function flash(el) {
+  el.classList.add('flash');
+  setTimeout(() => el.classList.remove('flash'), 1400);
+}
+
+function parseJson(s, fb) { try { return s ? JSON.parse(s) : fb; } catch { return fb; } }
+
+function downloadBtn(m, label) {
+  return h('button', {
+    class: 'btn btn-sm dl-btn',
+    onclick: async (e) => {
+      const b = e.currentTarget;
+      b.disabled = true;
+      b.textContent = 'Baixando…';
+      try { await api('messages:download', current.jid, m.id); } catch (err) { errToast(err); b.disabled = false; b.textContent = label; }
+    },
+  }, label);
+}
+
+function mediaBlock(m) {
+  const url = m.media_file ? mediaUrl(m.media_file) : null;
+  switch (m.type) {
+    case 'image':
+    case 'sticker': {
+      if (url) {
+        return h('img', {
+          class: m.type === 'sticker' ? 'sticker-img' : 'media-img', src: url, loading: 'lazy',
+          onclick: () => m.type === 'image' && viewImage(url, m),
+        });
+      }
+      return h('div', { class: 'media-placeholder' },
+        m.thumb ? h('img', { class: 'media-img blur', src: m.thumb }) : h('div', { class: 'media-icon' }, m.type === 'sticker' ? '💟' : '📷'),
+        downloadBtn(m, `⬇ Baixar foto ${fmtSize(m.media_size)}`));
+    }
+    case 'video':
+      if (url) return h('video', { class: 'media-video', src: url, controls: true, preload: 'metadata' });
+      return h('div', { class: 'media-placeholder' },
+        m.thumb ? h('img', { class: 'media-img blur', src: m.thumb }) : h('div', { class: 'media-icon' }, '🎥'),
+        downloadBtn(m, `⬇ Baixar vídeo ${fmtSize(m.media_size)}`));
+    case 'audio':
+    case 'ptt':
+      if (url) return h('div', { class: 'audio' }, h('span', null, m.type === 'ptt' ? '🎤' : '🎵'), h('audio', { src: url, controls: true, preload: 'metadata' }));
+      return h('div', { class: 'audio' }, h('span', null, '🎤'), downloadBtn(m, `▶ Carregar áudio ${m.media_seconds ? fmtSeconds(m.media_seconds) : ''}`));
+    case 'document':
+      return h('div', { class: 'doc' },
+        h('div', { class: 'doc-icon' }, '📄'),
+        h('div', { class: 'doc-info' },
+          h('div', { class: 'doc-name' }, m.media_name || 'Documento'),
+          h('div', { class: 'muted small' }, [fmtSize(m.media_size), (m.media_mime || '').split('/')[1]].filter(Boolean).join(' · '))),
+        url
+          ? h('div', { class: 'doc-actions' },
+            h('button', { class: 'btn btn-sm', onclick: () => api('media:open', m.media_file).catch(errToast) }, 'Abrir'),
+            h('button', { class: 'btn btn-sm', onclick: () => api('media:saveAs', m.media_file, m.media_name).catch(errToast) }, 'Salvar como…'))
+          : downloadBtn(m, '⬇ Baixar'));
+    case 'location': {
+      const loc = parseJson(m.extra, {});
+      const href = `https://www.google.com/maps?q=${loc.lat},${loc.lng}`;
+      return h('a', { class: 'location', href, target: '_blank' },
+        m.thumb ? h('img', { src: m.thumb }) : h('div', { class: 'media-icon' }, '📍'),
+        h('div', null, h('b', null, '📍 Localização'), m.text ? h('div', null, m.text) : null, h('div', { class: 'small' }, 'Abrir no mapa')));
+    }
+    case 'contact': {
+      const data = parseJson(m.extra, { contacts: [] });
+      return h('div', { class: 'contact-card' }, data.contacts.map((c) => {
+        const tel = /TEL[^:]*:([+\d\s()-]+)/.exec(c.vcard || '')?.[1]?.trim();
+        return h('div', { class: 'contact-item' }, h('span', { class: 'media-icon small' }, '👤'),
+          h('div', null, h('b', null, c.name || 'Contato'), tel ? h('div', { class: 'small' }, tel) : null),
+          tel ? h('button', {
+            class: 'btn btn-sm',
+            onclick: async () => {
+              try {
+                const chat = await api('chats:start', tel.replace(/\D/g, ''), c.name);
+                state.chats.set(chat.jid, chat);
+                openChat(chat.jid);
+              } catch (e) { errToast(e); }
+            },
+          }, 'Conversar') : null);
+      }));
+    }
+    case 'poll': {
+      const data = parseJson(m.extra, { options: [] });
+      return h('div', { class: 'poll' }, h('b', null, '📊 ', m.text), h('ul', null, data.options.map((o) => h('li', null, o))));
+    }
+    default:
+      return null;
+  }
+}
+
+function viewImage(url, m) {
+  const list = (current?.messages || []).filter((x) => x.type === 'image' && x.media_file && !x.deleted);
+  let items = list.map((x) => ({ url: mediaUrl(x.media_file), m: x }));
+  let index = items.findIndex((it) => it.m.id === m.id);
+  if (index < 0) { items = [{ url, m }]; index = 0; }
+  openImageViewer(items, index, {
+    actions: (x) => [
+      { label: '📎', title: 'Anexar ao caso', onClick: (e) => attachToCase(e.currentTarget, x) },
+      { label: '💾', title: 'Salvar como…', onClick: () => api('media:saveAs', x.media_file, x.media_name || `imagem-${x.id}.jpg`) },
+      { label: '📂', title: 'Mostrar na pasta', onClick: () => api('media:showInFolder', x.media_file) },
+      { label: '🖼', title: 'Abrir no visualizador do Windows', onClick: () => api('media:open', x.media_file) },
+    ],
+  });
+}
+
+function msgMenu(anchor, m) {
+  const items = [
+    { icon: '↩', label: 'Responder', onClick: () => setReply(m) },
+    ...(!m.deleted ? [{ icon: '😊', label: 'Reagir…', onClick: () => reactMenu(anchor, m) }] : []),
+    ...(m.text ? [{ icon: '📋', label: 'Copiar texto', onClick: () => navigator.clipboard.writeText(m.text) }] : []),
+    ...(m.text ? [{ icon: '📝', label: 'Salvar como nota do contato', onClick: () => saveAsNote(m) }] : []),
+    ...(m.text ? [{ icon: '⏰', label: 'Criar tarefa a partir desta mensagem', onClick: () => import('./crmpanel.js').then((x) => x.taskDialog({ jid: current.jid, title: m.text.slice(0, 120) })) }] : []),
+    ...(['image', 'video', 'audio', 'ptt', 'document', 'sticker'].includes(m.type) && !m.deleted
+      ? [{ icon: '📎', label: 'Anexar ao caso…', onClick: () => attachToCase(anchor, m) }] : []),
+    ...(m.media_file ? [
+      { icon: '💾', label: 'Salvar arquivo como…', onClick: () => api('media:saveAs', m.media_file, m.media_name) },
+      { icon: '📂', label: 'Mostrar na pasta', onClick: () => api('media:showInFolder', m.media_file) },
+    ] : []),
+    ...(canEdit(m) ? [{ icon: '✏️', label: 'Editar', onClick: () => startEdit(m) }] : []),
+    ...(m.from_me && !m.deleted ? ['-', { icon: '🗑', label: 'Apagar para todos', danger: true, onClick: () => deleteMsg(m) }] : []),
+  ];
+  popupMenu(anchor, items);
+}
+
+async function saveAsNote(m) {
+  try {
+    await api('notes:add', current.jid, m.text);
+    toast('Nota salva na ficha do contato', 'success');
+    emit('notes', current.jid);
+  } catch (e) { errToast(e); }
+}
+
+function reactMenu(anchor, m) {
+  const mine = parseJson(m.reactions, []).find((r) => r.from === 'me')?.text;
+  popupMenu(anchor, [
+    ...QUICK_REACTIONS.map((e) => ({ label: e, active: mine === e, onClick: () => api('messages:react', current.jid, m.id, e).catch(errToast) })),
+    ...(mine ? ['-', { label: 'Remover reação', onClick: () => api('messages:react', current.jid, m.id, '').catch(errToast) }] : []),
+  ]);
+}
+
+async function deleteMsg(m) {
+  if (!await confirmDialog('Apagar esta mensagem para todos na conversa?', { okLabel: 'Apagar', danger: true })) return;
+  api('messages:delete', current.jid, m.id).catch(errToast);
+}
+
+// ---------------------------------------------------------------- envio
+
+function setReply(m) {
+  replyTo = m;
+  editing = null;
+  renderComposer();
+  current.composerEl.querySelector('textarea')?.focus();
+}
+
+function cancelEdit() {
+  if (!editing) return;
+  editing = null;
+  const draftKey = `draft:${current.jid}`;
+  sessionStorage.removeItem(draftKey);
+  renderComposer();
+  const ta = current.composerEl.querySelector('textarea');
+  if (ta) ta.value = '';
+}
+
+function startEdit(m) {
+  editing = m;
+  replyTo = null;
+  renderComposer();
+  const ta = current.composerEl.querySelector('textarea');
+  if (ta) { ta.value = m.text; ta.dispatchEvent(new Event('input')); ta.focus(); ta.setSelectionRange(ta.value.length, ta.value.length); }
+}
+
+export function canEdit(m) {
+  return !!m && m.from_me && !m.deleted && m.type === 'text' && Date.now() - m.ts < EDIT_WINDOW_MS;
+}
+
+function renderComposerState() {
+  const banner = current.composerEl.querySelector('.offline-banner');
+  const connected = state.status.state === 'open';
+  if (banner) banner.classList.toggle('hidden', connected);
+}
+
+function renderComposer() {
+  const c = current;
+  const chat = state.chats.get(c.jid);
+  const draftKey = `draft:${c.jid}`;
+  const ta = h('textarea', {
+    class: 'composer-input', rows: 1, placeholder: 'Digite uma mensagem  ( / para respostas rápidas )',
+    value: sessionStorage.getItem(draftKey) || '',
+  });
+  const suggest = h('div', { class: 'quick-suggest hidden' });
+  let suggestIdx = 0;
+  let typingTimer = null;
+  let lastTyping = 0;
+
+  const autosize = () => { ta.style.height = 'auto'; ta.style.height = `${Math.min(ta.scrollHeight, 180)}px`; };
+
+  const send = async () => {
+    const text = ta.value.trim();
+    if (!text) return;
+    if (editing) {
+      const m = editing;
+      if (text === m.text) { cancelEdit(); return; }
+      try {
+        await api('messages:edit', c.jid, m.id, text);
+        cancelEdit();
+      } catch (e) { errToast(e); }
+      return;
+    }
+    const quoted = replyTo?.id;
+    ta.value = '';
+    sessionStorage.removeItem(draftKey);
+    autosize();
+    replyTo = null;
+    c.composerEl.querySelector('.reply-bar')?.remove();
+    try {
+      await api('messages:sendText', c.jid, text, quoted);
+    } catch (e) {
+      errToast(e);
+      ta.value = text;
+      autosize();
+    }
+  };
+
+  const updateSuggest = () => {
+    const v = ta.value;
+    if (!v.startsWith('/') || v.includes('\n')) { suggest.classList.add('hidden'); return; }
+    const q = v.slice(1).toLowerCase();
+    const list = state.quickReplies.filter((r) => r.shortcut.toLowerCase().includes(q) || r.text.toLowerCase().includes(q));
+    if (!list.length) { suggest.classList.add('hidden'); return; }
+    suggestIdx = Math.min(suggestIdx, list.length - 1);
+    fill(suggest, ...list.slice(0, 8).map((r, i) => h('div', {
+      class: `quick-item ${i === suggestIdx ? 'active' : ''}`,
+      onmousedown: (e) => { e.preventDefault(); applyQuick(r); },
+    }, h('b', null, `/${r.shortcut}`), h('span', null, r.text))));
+    suggest._list = list.slice(0, 8);
+    suggest.classList.remove('hidden');
+  };
+
+  const applyQuick = (r) => {
+    const name = chat?.display_name?.split(' ')[0] || '';
+    ta.value = r.text.replace(/\{nome\}/gi, name);
+    suggest.classList.add('hidden');
+    autosize();
+    ta.focus();
+  };
+
+  ta.addEventListener('input', () => {
+    autosize();
+    sessionStorage.setItem(draftKey, ta.value);
+    updateSuggest();
+    if (Date.now() - lastTyping > 4000) { lastTyping = Date.now(); api('chats:presence', c.jid, 'composing').catch(() => {}); }
+    clearTimeout(typingTimer);
+    typingTimer = setTimeout(() => api('chats:presence', c.jid, 'paused').catch(() => {}), 3000);
+  });
+  ta.addEventListener('keydown', (e) => {
+    if (!suggest.classList.contains('hidden')) {
+      const list = suggest._list || [];
+      if (e.key === 'ArrowDown') { e.preventDefault(); suggestIdx = (suggestIdx + 1) % list.length; updateSuggest(); return; }
+      if (e.key === 'ArrowUp') { e.preventDefault(); suggestIdx = (suggestIdx - 1 + list.length) % list.length; updateSuggest(); return; }
+      if (e.key === 'Enter' || e.key === 'Tab') { e.preventDefault(); applyQuick(list[suggestIdx]); return; }
+      if (e.key === 'Escape') { suggest.classList.add('hidden'); return; }
+    }
+    const enterSends = state.settings.enterToSend !== false;
+    if (e.key === 'Enter' && !e.isComposing && ((enterSends && !e.shiftKey) || (!enterSends && e.ctrlKey))) {
+      e.preventDefault();
+      send();
+    }
+    if (e.key === 'Escape' && replyTo) { replyTo = null; c.composerEl.querySelector('.reply-bar')?.remove(); }
+    if (e.key === 'Escape' && editing) cancelEdit();
+  });
+  ta.addEventListener('paste', (e) => {
+    const files = [...(e.clipboardData?.files || [])];
+    if (!files.length) return;
+    e.preventDefault();
+    confirmSendFiles(files);
+  });
+
+  const emojiBtn = h('button', {
+    class: 'icon-btn', title: 'Emojis',
+    onclick: (e) => {
+      const pop = popupMenu(e.currentTarget, []);
+      pop.classList.add('emoji-pop');
+      pop.append(...EMOJIS.map((em) => h('button', {
+        class: 'emoji',
+        onclick: () => { insertAtCursor(ta, em); ta.focus(); },
+      }, em)));
+    },
+  }, '😊');
+  const attachBtn = h('button', {
+    class: 'icon-btn', title: 'Enviar arquivo, foto ou documento',
+    onclick: async () => {
+      const paths = await api('messages:pickFiles');
+      if (paths.length) confirmSendFiles(paths);
+    },
+  }, '📎');
+  const quickBtn = h('button', {
+    class: 'icon-btn', title: 'Respostas rápidas',
+    onclick: (e) => {
+      if (!state.quickReplies.length) { toast('Cadastre respostas rápidas em Configurações.'); return; }
+      popupMenu(e.currentTarget, state.quickReplies.map((r) => ({ label: `/${r.shortcut} — ${r.text.slice(0, 50)}`, onClick: () => applyQuick(r) })));
+    },
+  }, '⚡');
+  const micBtn = h('button', { class: 'icon-btn mic', title: 'Gravar áudio', onclick: () => startRecording(micBtn) }, '🎤');
+  const sendBtn = h('button', { class: 'send-btn', title: 'Enviar (Enter)', onclick: send }, '➤');
+
+  const bar = h('div', { class: 'composer-bar' }, emojiBtn, attachBtn, quickBtn, h('div', { class: 'composer-input-wrap' }, suggest, ta), micBtn, sendBtn);
+  const replyBar = replyTo ? h('div', { class: 'reply-bar' },
+    h('div', { class: 'quoted' },
+      h('div', { class: 'quoted-who' }, replyTo.from_me ? 'Você' : (replyTo.sender_name || chat?.display_name)),
+      h('div', { class: 'quoted-text' }, (replyTo.text || replyTo.type).slice(0, 160))),
+    h('button', { class: 'icon-btn', onclick: () => { replyTo = null; renderComposer(); } }, '✕')) : null;
+  const editBar = editing ? h('div', { class: 'reply-bar edit-bar' },
+    h('div', { class: 'quoted' },
+      h('div', { class: 'quoted-who' }, '✏️ Editando mensagem'),
+      h('div', { class: 'quoted-text' }, editing.text.slice(0, 160))),
+    h('button', { class: 'icon-btn', title: 'Cancelar edição (Esc)', onclick: cancelEdit }, '✕')) : null;
+  if (editing) { sendBtn.textContent = '✓'; sendBtn.title = 'Salvar edição (Enter)'; }
+  const offline = h('div', { class: `offline-banner ${state.status.state === 'open' ? 'hidden' : ''}` },
+    '⚠ WhatsApp desconectado no momento — as mensagens salvas continuam disponíveis, mas não é possível enviar até reconectar.');
+
+  fill(c.composerEl, offline, replyBar, editBar, bar);
+  setTimeout(() => { autosize(); ta.focus(); }, 0);
+}
+
+function insertAtCursor(ta, text) {
+  const s = ta.selectionStart ?? ta.value.length;
+  const e = ta.selectionEnd ?? ta.value.length;
+  ta.value = ta.value.slice(0, s) + text + ta.value.slice(e);
+  ta.selectionStart = ta.selectionEnd = s + text.length;
+  ta.dispatchEvent(new Event('input'));
+}
+
+function setupDrop(pane) {
+  let depth = 0;
+  pane.addEventListener('dragenter', (e) => {
+    if (!e.dataTransfer?.types?.includes('Files')) return;
+    depth++;
+    pane.classList.add('dropping');
+  });
+  pane.addEventListener('dragleave', () => { depth = Math.max(0, depth - 1); if (!depth) pane.classList.remove('dropping'); });
+  pane.addEventListener('dragover', (e) => { if (e.dataTransfer?.types?.includes('Files')) e.preventDefault(); });
+  pane.addEventListener('drop', (e) => {
+    depth = 0;
+    pane.classList.remove('dropping');
+    const files = [...(e.dataTransfer?.files || [])];
+    if (!files.length) return;
+    e.preventDefault();
+    confirmSendFiles(files);
+  });
+}
+
+/** files: lista de caminhos (string) ou objetos File (colados/arrastados) */
+function confirmSendFiles(files) {
+  const jid = current.jid;
+  const items = files.map((f) => {
+    if (typeof f === 'string') return { path: f, name: f.split(/[\\/]/).pop() };
+    const p = window.api.pathForFile(f);
+    return p ? { path: p, name: f.name } : { file: f, name: f.name || `imagem-${Date.now()}.png` };
+  });
+  const caption = h('textarea', { class: 'input', rows: 2, placeholder: 'Legenda (opcional)' });
+  const previews = h('div', { class: 'send-previews' }, items.map((it) => {
+    const isImg = /\.(png|jpe?g|webp|gif)$/i.test(it.name) || it.file?.type?.startsWith('image/');
+    const src = it.file ? URL.createObjectURL(it.file) : null;
+    return h('div', { class: 'send-preview' },
+      isImg && src ? h('img', { src }) : h('div', { class: 'media-icon' }, isImg ? '🖼' : '📄'),
+      h('div', { class: 'small ellipsis' }, it.name));
+  }));
+  modal({
+    title: `Enviar ${items.length} arquivo(s)`,
+    body: h('div', { class: 'form' }, previews, caption),
+    actions: [
+      { label: 'Cancelar' },
+      {
+        label: 'Enviar',
+        primary: true,
+        onClick: async () => {
+          const quoted = replyTo?.id;
+          replyTo = null;
+          toast('Enviando…');
+          try {
+            const paths = items.filter((i) => i.path).map((i) => i.path);
+            if (paths.length) await api('messages:sendFiles', jid, paths, caption.value.trim() || undefined, quoted);
+            for (const it of items.filter((i) => i.file)) {
+              const bytes = new Uint8Array(await it.file.arrayBuffer());
+              await api('messages:sendBuffer', jid, it.name, bytes, paths.length ? undefined : caption.value.trim() || undefined);
+            }
+          } catch (e) { errToast(e); }
+        },
+      },
+    ],
+  });
+}
+
+// --------------------------------------------------------- gravação de áudio
+
+async function startRecording(btn) {
+  if (recorder) return;
+  let stream;
+  try {
+    stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+  } catch {
+    toast('Não foi possível acessar o microfone.', 'error');
+    return;
+  }
+  const chunks = [];
+  const mr = new MediaRecorder(stream, { mimeType: 'audio/webm;codecs=opus' });
+  const started = Date.now();
+  const jid = current.jid;
+  const timer = h('span', { class: 'rec-timer' }, '0:00');
+  const bar = h('div', { class: 'recording-bar' },
+    h('span', { class: 'rec-dot' }), 'Gravando…', timer,
+    h('button', { class: 'btn btn-sm', onclick: () => stopRecording(true) }, '✕ Cancelar'),
+    h('button', { class: 'btn btn-sm btn-primary', onclick: () => stopRecording(false) }, '➤ Enviar áudio'));
+  recorder = { mr, stream, bar, cancel: false, jid, tick: setInterval(() => { timer.textContent = fmtSeconds((Date.now() - started) / 1000); }, 250) };
+  mr.ondataavailable = (e) => { if (e.data.size) chunks.push(e.data); };
+  mr.onstop = async () => {
+    const rec = recorder;
+    recorder = null;
+    clearInterval(rec.tick);
+    rec.stream.getTracks().forEach((t) => t.stop());
+    rec.bar.remove();
+    if (rec.cancel || !chunks.length) return;
+    try {
+      const bytes = new Uint8Array(await new Blob(chunks).arrayBuffer());
+      await api('messages:sendVoice', rec.jid, bytes);
+    } catch (e) { errToast(e); }
+  };
+  mr.start(250);
+  current.composerEl.prepend(bar);
+  btn?.blur();
+}
+
+function stopRecording(cancel) {
+  if (!recorder) return;
+  recorder.cancel = cancel;
+  try { recorder.mr.stop(); } catch { /* ignore */ }
+}

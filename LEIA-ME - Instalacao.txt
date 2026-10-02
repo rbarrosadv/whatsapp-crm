@@ -1,0 +1,106 @@
+==============================================================
+  WHATSAPP CRM - GUIA DE INSTALACAO
+==============================================================
+
+O QUE PRECISA
+-------------
+- Computador com Windows 10 ou 11.
+- Internet.
+- Node.js (versao LTS). Se nao tiver, o instalador avisa.
+  Baixe em: https://nodejs.org  -> botao verde "LTS" -> instale
+  clicando em "Next" ate o fim.
+- O celular com o WhatsApp, para ler o QR code.
+
+
+1. INSTALAR (primeira vez)
+--------------------------
+1) Clique com o botao direito no arquivo "whatsapp-crm.zip" e
+   escolha "Extrair tudo...".
+2) No local de destino, digite:  C:\
+   e clique em "Extrair". Vai ficar a pasta  C:\whatsapp-crm
+   IMPORTANTE: nao deixe dentro do OneDrive nem da Area de Trabalho.
+3) Abra a pasta C:\whatsapp-crm e de dois cliques em "Instalar.bat".
+   - Se o Windows mostrar "O Windows protegeu o computador",
+     clique em "Mais informacoes" -> "Executar assim mesmo".
+   - Espere terminar (na primeira vez leva alguns minutos).
+4) No final ele cria o atalho "WhatsApp CRM" na Area de Trabalho
+   e no Menu Iniciar, e abre o programa.
+
+
+2. CONECTAR O WHATSAPP (uma unica vez)
+--------------------------------------
+1) No programa vai aparecer um QR code.
+2) No celular, abra o WhatsApp:
+   - Android: toque nos 3 pontinhos -> "Dispositivos conectados"
+   - iPhone: "Configuracoes" -> "Dispositivos conectados"
+3) Toque em "Conectar dispositivo" e aponte a camera para o QR code.
+4) Pronto. As conversas comecam a aparecer. Nas proximas vezes o
+   programa entra direto, sem QR code.
+
+Se a camera nao ler o QR: na tela de conexao use a aba
+"Conectar com numero de telefone" e digite no celular o codigo que aparecer.
+
+
+3. USO DO DIA A DIA
+-------------------
+- Abra pelo atalho "WhatsApp CRM" da Area de Trabalho.
+- Ao fechar a janela no X, ele continua rodando perto do relogio
+  (para receber avisos). Para fechar de verdade: clique com o botao
+  direito no icone perto do relogio -> "Sair".
+- A versao instalada aparece no titulo da janela
+  (ex.: "WhatsApp CRM 4.4.0").
+
+
+4. ATUALIZAR PARA UMA VERSAO NOVA
+---------------------------------
+1) Feche o programa de verdade: botao direito no icone perto do
+   relogio -> "Sair".
+2) Extraia o zip novo em C:\ por cima da pasta C:\whatsapp-crm
+   (se perguntar, escolha "Substituir os arquivos").
+3) De dois cliques em "Instalar.bat" de novo.
+4) Confira a versao nova no titulo da janela.
+
+Suas conversas, clientes, casos e a conexao do WhatsApp NAO se
+perdem na atualizacao: ficam guardados em outra pasta
+(%APPDATA%\WhatsAppCRM).
+
+
+5. BACKUP
+---------
+Configuracoes -> "Dados e backup" -> "Fazer backup do CRM".
+Guarde o arquivo gerado num pendrive ou na nuvem de vez em quando.
+
+ATENCAO: nunca envie a ninguem a pasta "auth" que fica dentro da
+pasta de dados. Ela e a chave de acesso ao seu WhatsApp.
+
+
+6. PROBLEMAS COMUNS
+-------------------
+* "Atalho nao encontrado / electron.exe"
+  -> O Instalar.bat foi aberto de dentro do zip. Extraia primeiro
+     (passo 1) e rode o Instalar.bat da pasta C:\whatsapp-crm.
+
+* "Node.js nao foi encontrado"
+  -> Instale o Node.js (https://nodejs.org, versao LTS) e rode o
+     Instalar.bat de novo.
+
+* Nao conecta / fica em "Reconectando" (codigo 428)
+  -> Configuracoes -> "Testar conexao" mostra se a internet ou o
+     antivirus estao bloqueando.
+  -> Se aparecer o botao "Conectar de novo (QR code)", clique nele.
+     Antes, no celular, em "Dispositivos conectados", desconecte as
+     conexoes antigas do CRM (deixe so o WhatsApp oficial do Windows,
+     se voce usa).
+
+* Precisa de ajuda
+  -> Configuracoes -> "Abrir pasta de dados" -> pasta "logs" ->
+     envie o arquivo "whatsapp.log" para o suporte.
+
+
+7. DESINSTALAR
+--------------
+1) Botao direito no icone perto do relogio -> "Sair".
+2) No celular, em "Dispositivos conectados", desconecte o CRM.
+3) Apague a pasta C:\whatsapp-crm e os atalhos "WhatsApp CRM".
+4) (Opcional, apaga TODOS os dados) Aperte Windows+R, digite
+   %APPDATA%\WhatsAppCRM  e apague essa pasta.
