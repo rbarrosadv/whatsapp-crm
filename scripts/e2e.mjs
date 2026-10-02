@@ -76,6 +76,53 @@ try {
   check(val.startsWith('Olá!'), 'resposta rápida inserida pelo atalho /ola');
   await page.fill('.composer-input', '');
 
+  // editar mensagem enviada
+  await page.fill('.composer-input', 'Reunião amanhã às 14h');
+  await page.keyboard.press('Enter');
+  const sentMsg = page.locator('.msg.out', { hasText: 'Reunião amanhã às 14h' });
+  await sentMsg.waitFor();
+  await sentMsg.hover();
+  await sentMsg.locator('.msg-menu-btn').click();
+  await page.locator('.popup-item', { hasText: 'Editar' }).click();
+  await page.waitForSelector('.edit-bar');
+  check(await page.inputValue('.composer-input') === 'Reunião amanhã às 14h', 'editar coloca o texto na caixa');
+  await page.fill('.composer-input', 'Reunião amanhã às 15h');
+  await page.keyboard.press('Enter');
+  await page.waitForSelector('.msg.out:has-text("Reunião amanhã às 15h") .edited');
+  check(await page.locator('.msg.out:has-text("às 14h")').count() === 0 && await page.locator('.edit-bar').count() === 0,
+    'mensagem editada mostra o texto novo com "Editada"');
+  const inMsg = page.locator('.msg.in').first();
+  await inMsg.hover();
+  await inMsg.locator('.msg-menu-btn').click();
+  check(await page.locator('.popup-item', { hasText: 'Editar' }).count() === 0, 'mensagens recebidas não podem ser editadas');
+  await page.keyboard.press('Escape');
+  await page.mouse.click(5, 5);
+
+  // visualizador de imagens com zoom
+  const jidMari = await page.evaluate(() => document.querySelector('.chat-row.active')?.dataset.jid || null);
+  await page.evaluate(async ({ jid, files }) => {
+    await window.api.call('messages:sendFiles', jid, files);
+  }, { jid: jidMari, files: [path.join(ROOT, 'assets', 'icon.png'), path.join(ROOT, 'assets', 'tray.png')] });
+  await page.waitForSelector('.msg.out img.media-img', { timeout: 8000 });
+  await page.waitForFunction(() => document.querySelectorAll('.msg.out img.media-img').length >= 2);
+  await page.locator('.msg.out img.media-img').last().click();
+  await page.waitForSelector('.iv-overlay .iv-img');
+  check((await page.textContent('.iv-counter')).includes('2 de'), 'visualizador abre na foto clicada');
+  const box = await page.locator('.iv-stage').boundingBox();
+  await page.mouse.move(box.x + box.width / 2 + 40, box.y + box.height / 2);
+  await page.mouse.wheel(0, -400);
+  await page.waitForTimeout(150);
+  const zoom = parseInt(await page.textContent('.iv-zoom'), 10);
+  check(zoom > 150, `zoom com a rodinha do mouse (${zoom}%)`);
+  await page.mouse.down(); await page.mouse.move(box.x + 100, box.y + 100, { steps: 4 }); await page.mouse.up();
+  check((await page.getAttribute('.iv-img', 'style')).includes('translate('), 'arrastar move a imagem ampliada');
+  await shot(page, '03b-visualizador');
+  await page.keyboard.press('ArrowLeft');
+  check((await page.textContent('.iv-counter')).startsWith('1 de') && (await page.textContent('.iv-zoom')) === '100%',
+    'seta ← volta para a foto anterior, ajustada à tela');
+  await page.keyboard.press('Escape');
+  check(await page.locator('.iv-overlay').count() === 0, 'Esc fecha o visualizador');
+
   // 3b) classificação: faixa "Quem é este contato?" e filtros
   await page.waitForSelector('.classify-bar');
   await page.click('.classify-bar button:has-text("Cliente")');

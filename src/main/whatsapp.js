@@ -21,6 +21,9 @@ import makeWASocket, {
   isJidBroadcast,
   isJidNewsletter,
   proto,
+  BufferJSON,
+  decodeMessageNode,
+  getBinaryNodeChild,
 } from '@whiskeysockets/baileys';
 import pino from 'pino';
 import QRCode from 'qrcode';
@@ -109,13 +112,13 @@ export class WhatsAppService extends EventEmitter {
   /** Perfil de navegador desta tentativa: o da sessão salva, ou o próximo da fila no pareamento. */
   browserIndex(registered) {
     if (!registered) return this.failedPairing % BROWSERS.length;
-    let saved = 0; // sessões antigas sem perfil.json: o Chrome é o que o WhatsApp aceita
     try {
       const n = JSON.parse(fs.readFileSync(path.join(this.authDir, 'perfil.json'), 'utf-8')).browser;
-      if (Number.isInteger(n) && n >= 0 && n < BROWSERS.length) saved = n;
+      // perfil gravado = o do pareamento: nunca troca (outro perfil é sempre recusado)
+      if (Number.isInteger(n) && n >= 0 && n < BROWSERS.length) return n;
     } catch { /* sem arquivo */ }
-    // quedas imediatas seguidas: talvez o perfil gravado não seja o do pareamento → tenta os outros
-    return (saved + this.profileShift) % BROWSERS.length;
+    // sessões antigas sem perfil.json: começa pelo Chrome e, se cair logo, tenta os outros
+    return this.profileShift % BROWSERS.length;
   }
 
   saveBrowserIndex(i) {
@@ -174,6 +177,8 @@ export class WhatsAppService extends EventEmitter {
     this.sock = sock;
 
     sock.ev.on('creds.update', saveCreds);
+    // mensagens de visualização única chegam só como aviso e o Baileys as descarta
+    sock.ws.on('CB:message', (node) => this.safe(() => this.onRawMessageNode(node)));
     sock.ev.on('connection.update', (u) => this.onConnectionUpdate(sock, u).catch((e) => this.logger.error(e)));
     sock.ev.on('messaging-history.set', (h) => this.safe(() => this.onHistory(h)));
     sock.ev.on('chats.upsert', (chats) => this.safe(() => this.onChats(chats, true)));
@@ -200,6 +205,18 @@ export class WhatsAppService extends EventEmitter {
     await saveCreds();
     this.logger.warn('rota antiga do servidor descartada');
     return true;
+  }
+
+  /** Aviso de "visualização única" (o conteúdo fica só no celular) vira uma mensagem na conversa. */
+  async onRawMessageNode(node) {
+    const type = getBinaryNodeChild(node, 'unavailable')?.attrs?.type || '';
+    if (!type.startsWith('view_once')) return;
+    const me = this.sock?.user;
+    if (!me?.id) return;
+    let full;
+    try { ({ fullMessage: full } = decodeMessageNode(node, me.id, me.lid || '')); } catch { return; }
+    if (db.getMessage(await this.canonical(full.key.remoteJid, full.key.remoteJidAlt), full.key.id)) return;
+    await this.onMessages([{ ...full, key: { ...full.key, isViewOnce: true } }], 'notify');
   }
 
   async safe(fn) {
@@ -271,9 +288,13 @@ export class WhatsAppService extends EventEmitter {
         this.scheduleReconnect(delay);
       } else {
         this.retry++;
+        // sem internet (ex.: logo depois de acordar o notebook): só espera a rede voltar,
+        // sem contar como recusa do WhatsApp
+        const offline = isOfflineError(lastDisconnect?.error);
+        if (offline) this.retry = 1; // quando a rede voltar, a 1ª tentativa é rápida
         // queda logo após abrir (< 5 s), várias vezes seguidas: algo no caminho
         // derruba a conexão; avisa com uma dica e alterna a versão usada
-        if (Date.now() - (this.startedAt || 0) < 5000) this.fastFails = (this.fastFails || 0) + 1;
+        if (offline) { /* não conta */ } else if (Date.now() - (this.startedAt || 0) < 5000) this.fastFails = (this.fastFails || 0) + 1;
         else this.fastFails = 0;
         // depois de várias quedas imediatas, tenta a próxima versão conhecida
         if (this.fastFails && this.fastFails % 4 === 0) this.versionIndex = (this.versionIndex || 0) + 1;
@@ -286,7 +307,7 @@ export class WhatsAppService extends EventEmitter {
           this.logger.warn({ candidatos: this.versionCache?.list }, 'quedas seguidas logo ao abrir: registro detalhado ligado');
         }
         // quedas rápidas (428/408) são comuns: tenta logo, depois vai espaçando
-        const delay = [500, 2000, 5000, 10000, 20000][this.retry - 1] ?? 30000;
+        const delay = offline ? 3000 : [500, 2000, 5000, 10000, 20000][this.retry - 1] ?? 30000;
         const blocked = this.fastFails >= 3
           ? ' — a conexão cai logo ao abrir; use “Testar conexão” em Configurações' : '';
         // muitas quedas seguidas logo ao abrir com a sessão salva: o WhatsApp
@@ -602,7 +623,7 @@ export class WhatsAppService extends EventEmitter {
       if (r.row && MEDIA_KINDS.has(r.row.type) && type !== 'history') {
         const size = r.row.media_size || 0;
         const small = AUTO_DOWNLOAD[r.row.type] && size <= AUTO_DOWNLOAD[r.row.type];
-        if (small || (size <= CLIENT_MAX_SIZE && db.chatAutoDownload(r.chatJid))) this.queueDownload(r.chatJid, r.id);
+        if (small || (size <= CLIENT_MAX_SIZE && db.chatAutoDownload(r.chatJid))) this.queueDownload(r.chatJid, r.id, { first: true });
       }
       if (r.notify && this.activeChat === r.chatJid && this.windowFocused) {
         this.markRead(r.chatJid).catch(() => {});
@@ -780,6 +801,21 @@ export class WhatsAppService extends EventEmitter {
     this.emit('message', { chatJid, id, isNew: false });
   }
 
+  /** Edita uma mensagem de texto enviada por você (o WhatsApp permite até 15 minutos). */
+  async editMessage(chatJid, id, text) {
+    const sock = this.requireSock();
+    const m = editableCheck(db.getMessage(chatJid, id), text);
+    await sock.sendMessage(chatJid, { text, edit: { remoteJid: chatJid, id, fromMe: true } });
+    this.applyEdit(chatJid, m.id, text);
+  }
+
+  applyEdit(chatJid, id, text) {
+    db.updateMessage(chatJid, id, { text, edited: 1 });
+    this.refreshPreview(chatJid);
+    this.markChanged(chatJid);
+    this.emit('message', { chatJid, id, isNew: false });
+  }
+
   async markRead(chatJid) {
     db.setChatUnread(chatJid, 0);
     this.markChanged(chatJid);
@@ -795,11 +831,12 @@ export class WhatsAppService extends EventEmitter {
   }
 
   /** Fila de downloads automáticos: um por vez, sem repetir. */
-  queueDownload(chatJid, id) {
+  queueDownload(chatJid, id, { first = false } = {}) {
     const key = `${chatJid}|${id}`;
     if (this.dlQueued.has(key)) return;
     this.dlQueued.add(key);
-    this.dlQueue.push([chatJid, id]);
+    // arquivo que acabou de chegar passa na frente dos antigos
+    if (first) this.dlQueue.unshift([chatJid, id]); else this.dlQueue.push([chatJid, id]);
     this.runDownloads();
   }
 
@@ -813,7 +850,9 @@ export class WhatsAppService extends EventEmitter {
           await this.downloadMedia(chatJid, id);
           this.emit('message', { chatJid, id, isNew: false });
         } catch (e) {
-          this.logger.warn({ chatJid, id, err: e?.message }, 'download automático falhou');
+          // não tenta de novo para sempre: depois de 2 falhas fica só no botão "Baixar"
+          db.markDownloadFailed(chatJid, id);
+          this.logger.warn({ chatJid, id, err: String(e?.message || e).slice(0, 120) }, 'download automático falhou');
         } finally {
           this.dlQueued.delete(`${chatJid}|${id}`);
         }
@@ -840,11 +879,27 @@ export class WhatsAppService extends EventEmitter {
     if (m.media_file && fs.existsSync(path.join(this.mediaDir, m.media_file))) return m.media_file;
     if (!m.raw) throw new Error('Esta mídia não está mais disponível.');
     const sock = this.requireSock();
-    const msg = rawToMessage(m.raw);
-    const buf = await downloadMediaMessage(msg, 'buffer', {}, {
-      logger: this.logger,
-      reuploadRequest: (x) => sock.updateMediaMessage(x),
-    });
+    let msg = rawToMessage(m.raw);
+    let buf;
+    try {
+      buf = await downloadMediaMessage(msg, 'buffer', {}, { logger: this.logger, reuploadRequest: (x) => sock.updateMediaMessage(x) });
+    } catch (e) {
+      // link vencido: o Baileys só pede o reenvio quando o erro tem .status, mas o
+      // erro dele vem com output.statusCode — então pedimos aqui ao celular um link novo
+      const status = e?.status ?? e?.output?.statusCode;
+      if (![403, 404, 410].includes(status)) throw e;
+      try {
+        // o celular precisa estar ligado e com internet; não espera mais que 20 s
+        msg = await Promise.race([
+          sock.updateMediaMessage(msg),
+          new Promise((_, rej) => setTimeout(() => rej(new Error('timeout')), 20000)),
+        ]);
+      } catch {
+        throw new Error('O arquivo não está mais disponível no WhatsApp (nem no celular).');
+      }
+      buf = await downloadMediaMessage(msg, 'buffer', {});
+      db.updateMessage(chatJid, id, { raw: JSON.stringify(msg, BufferJSON.replacer) });
+    }
     const rel = path.join(safeName(chatJid), `${safeName(id)}.${extFor(m.media_mime, m.media_name)}`);
     const abs = path.join(this.mediaDir, rel);
     fs.mkdirSync(path.dirname(abs), { recursive: true });
@@ -914,6 +969,24 @@ export class WhatsAppService extends EventEmitter {
     if (!r?.exists) return null;
     return jidNormalizedUser(r.jid);
   }
+}
+
+export const EDIT_WINDOW_MS = 15 * 60 * 1000;
+
+/** Confere se a mensagem ainda pode ser editada; devolve a mensagem. */
+export function editableCheck(m, text) {
+  if (!m || !m.from_me) throw new Error('Só é possível editar mensagens enviadas por você.');
+  if (m.deleted || m.type !== 'text') throw new Error('Só mensagens de texto podem ser editadas.');
+  if (Date.now() - m.ts > EDIT_WINDOW_MS) throw new Error('O WhatsApp só permite editar até 15 minutos depois do envio.');
+  if (!String(text || '').trim()) throw new Error('A mensagem não pode ficar vazia.');
+  return m;
+}
+
+/** Falha de rede local (sem internet / DNS), não uma recusa do WhatsApp. */
+export function isOfflineError(err) {
+  const c = err?.data?.code || err?.code || '';
+  return ['ENOTFOUND', 'EAI_AGAIN', 'ENETUNREACH', 'ENETDOWN', 'EHOSTUNREACH', 'ECONNREFUSED'].includes(c)
+    || /getaddrinfo|ENOTFOUND|EAI_AGAIN|ENETUNREACH/.test(err?.message || '');
 }
 
 function describeError(err, code) {

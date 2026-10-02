@@ -74,6 +74,16 @@ export function parseMessage(msg, { chatJid, senderJid, senderName, keepRaw }) {
     status: msg.status ?? (key.fromMe ? 2 : null),
   };
 
+  // visualização única: o WhatsApp não entrega o conteúdo aos aparelhos conectados,
+  // só ao celular — mostra um aviso no lugar para a mensagem não sumir
+  const vo = viewOnceKind(msg);
+  if (vo) {
+    return {
+      kind: 'message',
+      row: { ...base, type: 'text', text: `👁 ${vo} de visualização única. Abra no celular para ver.`, extra: JSON.stringify({ viewOnce: true }) },
+    };
+  }
+
   if (msg.messageStubType) {
     const stubName = WAMessageStubType[msg.messageStubType];
     if (stubName === 'REVOKE') return { kind: 'revoke', targetId: key.id };
@@ -173,6 +183,19 @@ export function parseMessage(msg, { chatJid, senderJid, senderName, keepRaw }) {
 
   if (keepRaw) row.raw = JSON.stringify(msg, BufferJSON.replacer);
   return { kind: 'message', row };
+}
+
+/** Se for mensagem de visualização única, devolve o tipo ("Foto", "Vídeo", "Áudio", "Mensagem"). */
+export function viewOnceKind(msg) {
+  const m = msg.message || {};
+  const wrapped = m.viewOnceMessage || m.viewOnceMessageV2 || m.viewOnceMessageV2Extension;
+  const content = wrapped ? normalizeMessageContent(m) : null;
+  const inner = content ? content[getContentType(content)] : null;
+  const flagged = Object.values(m).some((v) => v && typeof v === 'object' && v.viewOnce === true);
+  if (!msg.key?.isViewOnce && !wrapped && !flagged) return null;
+  const type = content ? getContentType(content) : Object.keys(m).find((k) => m[k]?.viewOnce);
+  if (inner?.viewOnce === false) return null;
+  return { imageMessage: 'Foto', videoMessage: 'Vídeo', audioMessage: 'Áudio' }[type] || 'Mensagem';
 }
 
 export function describeContent(c) {

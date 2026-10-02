@@ -5,7 +5,7 @@ import fs from 'node:fs';
 import { EventEmitter } from 'node:events';
 import path from 'node:path';
 import QRCode from 'qrcode';
-import { WhatsAppService, guessMime, extFor } from './whatsapp.js';
+import { WhatsAppService, guessMime, extFor, editableCheck } from './whatsapp.js';
 import * as db from './db.js';
 
 const ME = '5511900000000@s.whatsapp.net';
@@ -218,6 +218,12 @@ export class DemoWhatsAppService extends WhatsAppService {
   async react(chatJid, id, emoji) {
     this.requireSock();
     this.applyReaction(chatJid, id, { from: 'me', text: emoji });
+  }
+
+  async editMessage(chatJid, id, text) {
+    this.requireSock();
+    editableCheck(db.getMessage(chatJid, id), text);
+    this.applyEdit(chatJid, id, text);
   }
 
   async deleteForEveryone(chatJid, id) {

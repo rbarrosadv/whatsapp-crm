@@ -211,7 +211,8 @@ export function modal({ title, body, actions = [], wide = false, onClose }) {
   const overlay = h('div', { class: 'overlay', onmousedown: (e) => { if (e.target === overlay) close(); } }, box);
   document.body.append(overlay);
   document.addEventListener('keydown', onKey);
-  setTimeout(() => box.querySelector('input, textarea, select')?.focus(), 30);
+  // foca o 1º campo, mas não rouba o foco de quem já clicou/começou a digitar em outro
+  setTimeout(() => { if (!box.contains(document.activeElement)) box.querySelector('input, textarea, select')?.focus(); }, 30);
   return { close, box };
 }
 

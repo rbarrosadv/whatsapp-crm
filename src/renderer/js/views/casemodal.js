@@ -200,7 +200,7 @@ export async function openCase(id, { tab = 'dados' } = {}) {
         overdue ? h('div', null, h('div', { class: 'muted small' }, 'Vencido'), h('b', { class: 'bad-text' }, fmtMoney(overdue))) : null,
         h('div', { class: 'progress', title: `${pct}% recebido` }, h('div', { style: { width: `${pct}%` } }))),
       h('div', { class: 'row wrap' },
-        h('button', { class: 'btn btn-primary btn-sm', onclick: () => installmentsDialog(k) }, '＋ Gerar parcelas'),
+        h('button', { class: 'btn btn-primary btn-sm', onclick: async () => installmentsDialog((await api('cases:get', id).catch(() => null)) || k) }, '＋ Gerar parcelas'),
         h('button', { class: 'btn btn-sm', onclick: () => paymentDialog({ case_id: id }) }, '＋ Lançar valor avulso'),
         k.fee_success ? h('button', { class: 'btn btn-sm', onclick: () => successDialog(k) }, '🏆 Lançar êxito') : null),
       pays.length

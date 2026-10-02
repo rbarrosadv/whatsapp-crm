@@ -284,8 +284,8 @@ textarea.input { resize: vertical; }
   position: absolute; right: 24px; bottom: 14px; border: 0; background: var(--panel-2); color: var(--accent-2); padding: 8px 14px;
   border-radius: 18px; box-shadow: var(--shadow); cursor: pointer; z-index: 5;
 }
-.image-viewer { text-align: center; }
-.image-viewer img { max-width: 100%; max-height: 70vh; border-radius: 6px; }
+
+
 
 .composer { background: var(--panel-2); padding: 8px 12px; display: flex; flex-direction: column; gap: 6px; }
 .composer-bar { display: flex; align-items: flex-end; gap: 4px; }
@@ -697,3 +697,20 @@ body.discreet-msgs .reply-bar .quoted:hover {
 }
 .rail-btn.on { background: rgba(0, 168, 132, .18); color: var(--accent-2); }
 .rail-btn.on .rail-icon { filter: drop-shadow(0 0 4px var(--accent)); }
+
+/* visualizador de imagens (tela cheia, acima da janela e abaixo das caixas de diálogo) */
+.iv-overlay { position: fixed; inset: 0; z-index: 90; background: rgba(0, 0, 0, .9); display: flex; flex-direction: column; user-select: none; }
+.iv-stage { flex: 1; position: relative; overflow: hidden; display: grid; place-items: center; cursor: zoom-in; touch-action: none; }
+.iv-stage.zoomed { cursor: grab; }
+.iv-stage.zoomed:active { cursor: grabbing; }
+.iv-img { max-width: 94vw; max-height: calc(100vh - 80px); transform-origin: center center; transition: transform .08s ease-out; will-change: transform; }
+.iv-bar { display: flex; align-items: center; justify-content: center; gap: 6px; padding: 10px; background: rgba(0, 0, 0, .6); color: #fff; flex-wrap: wrap; }
+.iv-extra { display: flex; gap: 6px; margin: 0 10px; padding: 0 10px; border-left: 1px solid rgba(255, 255, 255, .2); border-right: 1px solid rgba(255, 255, 255, .2); }
+.iv-btn { background: rgba(255, 255, 255, .12); color: #fff; border: 0; border-radius: 8px; min-width: 36px; height: 34px; padding: 0 10px; font-size: 17px; cursor: pointer; }
+.iv-btn:hover:not(:disabled) { background: rgba(255, 255, 255, .25); }
+.iv-btn:disabled { opacity: .3; cursor: default; }
+.iv-zoom { min-width: 52px; text-align: center; font-variant-numeric: tabular-nums; font-size: 13px; }
+.iv-counter { font-size: 13px; opacity: .8; margin-right: 8px; }
+.iv-nav { position: absolute; top: 50%; transform: translateY(-50%); width: 48px; height: 64px; font-size: 34px; z-index: 1; }
+.iv-prev { left: 12px; }
+.iv-next { right: 12px; }

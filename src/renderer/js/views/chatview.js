@@ -1,4 +1,5 @@
 // Conversa aberta: cabeçalho, mensagens e caixa de envio.
+import { openImageViewer } from './imageviewer.js';
 import {
   h, clear, fill, fmtTime, fmtDay, fmtSize, fmtSeconds, formatWhatsApp, formatPhone, phoneOf, colorFor,
   toast, errToast, modal, confirmDialog, popupMenu, EMOJIS, QUICK_REACTIONS,
@@ -15,6 +16,8 @@ export function mediaUrl(rel) {
 let root;
 let current = null; // { jid, messages: [], els: Map, loadingOlder, noMoreLocal }
 let replyTo = null;
+let editing = null; // mensagem sua sendo editada
+const EDIT_WINDOW_MS = 15 * 60 * 1000;
 let recorder = null;
 
 export function mountChatView(el, { onTogglePanel }) {
@@ -47,6 +50,7 @@ async function open(jid) {
   if (current?.jid === jid) return;
   stopRecording(true);
   replyTo = null;
+  editing = null;
   current = { jid, messages: [], els: new Map(), loadingOlder: false, noMoreLocal: false };
   const headerEl = h('div', { class: 'chat-head' });
   const classifyEl = h('div');
@@ -413,14 +417,16 @@ function mediaBlock(m) {
 }
 
 function viewImage(url, m) {
-  modal({
-    title: 'Imagem',
-    wide: true,
-    body: h('div', { class: 'image-viewer' }, h('img', { src: url })),
-    actions: [
-      { label: 'Salvar como…', onClick: () => api('media:saveAs', m.media_file, m.media_name || `imagem-${m.id}.jpg`) },
-      { label: 'Abrir no visualizador', onClick: () => api('media:open', m.media_file) },
-      { label: 'Fechar', primary: true },
+  const list = (current?.messages || []).filter((x) => x.type === 'image' && x.media_file && !x.deleted);
+  let items = list.map((x) => ({ url: mediaUrl(x.media_file), m: x }));
+  let index = items.findIndex((it) => it.m.id === m.id);
+  if (index < 0) { items = [{ url, m }]; index = 0; }
+  openImageViewer(items, index, {
+    actions: (x) => [
+      { label: '📎', title: 'Anexar ao caso', onClick: (e) => attachToCase(e.currentTarget, x) },
+      { label: '💾', title: 'Salvar como…', onClick: () => api('media:saveAs', x.media_file, x.media_name || `imagem-${x.id}.jpg`) },
+      { label: '📂', title: 'Mostrar na pasta', onClick: () => api('media:showInFolder', x.media_file) },
+      { label: '🖼', title: 'Abrir no visualizador do Windows', onClick: () => api('media:open', x.media_file) },
     ],
   });
 }
@@ -438,6 +444,7 @@ function msgMenu(anchor, m) {
       { icon: '💾', label: 'Salvar arquivo como…', onClick: () => api('media:saveAs', m.media_file, m.media_name) },
       { icon: '📂', label: 'Mostrar na pasta', onClick: () => api('media:showInFolder', m.media_file) },
     ] : []),
+    ...(canEdit(m) ? [{ icon: '✏️', label: 'Editar', onClick: () => startEdit(m) }] : []),
     ...(m.from_me && !m.deleted ? ['-', { icon: '🗑', label: 'Apagar para todos', danger: true, onClick: () => deleteMsg(m) }] : []),
   ];
   popupMenu(anchor, items);
@@ -468,8 +475,31 @@ async function deleteMsg(m) {
 
 function setReply(m) {
   replyTo = m;
+  editing = null;
   renderComposer();
   current.composerEl.querySelector('textarea')?.focus();
+}
+
+function cancelEdit() {
+  if (!editing) return;
+  editing = null;
+  const draftKey = `draft:${current.jid}`;
+  sessionStorage.removeItem(draftKey);
+  renderComposer();
+  const ta = current.composerEl.querySelector('textarea');
+  if (ta) ta.value = '';
+}
+
+function startEdit(m) {
+  editing = m;
+  replyTo = null;
+  renderComposer();
+  const ta = current.composerEl.querySelector('textarea');
+  if (ta) { ta.value = m.text; ta.dispatchEvent(new Event('input')); ta.focus(); ta.setSelectionRange(ta.value.length, ta.value.length); }
+}
+
+export function canEdit(m) {
+  return !!m && m.from_me && !m.deleted && m.type === 'text' && Date.now() - m.ts < EDIT_WINDOW_MS;
 }
 
 function renderComposerState() {
@@ -496,6 +526,15 @@ function renderComposer() {
   const send = async () => {
     const text = ta.value.trim();
     if (!text) return;
+    if (editing) {
+      const m = editing;
+      if (text === m.text) { cancelEdit(); return; }
+      try {
+        await api('messages:edit', c.jid, m.id, text);
+        cancelEdit();
+      } catch (e) { errToast(e); }
+      return;
+    }
     const quoted = replyTo?.id;
     ta.value = '';
     sessionStorage.removeItem(draftKey);
@@ -556,6 +595,7 @@ function renderComposer() {
       send();
     }
     if (e.key === 'Escape' && replyTo) { replyTo = null; c.composerEl.querySelector('.reply-bar')?.remove(); }
+    if (e.key === 'Escape' && editing) cancelEdit();
   });
   ta.addEventListener('paste', (e) => {
     const files = [...(e.clipboardData?.files || [])];
@@ -598,10 +638,16 @@ function renderComposer() {
       h('div', { class: 'quoted-who' }, replyTo.from_me ? 'Você' : (replyTo.sender_name || chat?.display_name)),
       h('div', { class: 'quoted-text' }, (replyTo.text || replyTo.type).slice(0, 160))),
     h('button', { class: 'icon-btn', onclick: () => { replyTo = null; renderComposer(); } }, '✕')) : null;
+  const editBar = editing ? h('div', { class: 'reply-bar edit-bar' },
+    h('div', { class: 'quoted' },
+      h('div', { class: 'quoted-who' }, '✏️ Editando mensagem'),
+      h('div', { class: 'quoted-text' }, editing.text.slice(0, 160))),
+    h('button', { class: 'icon-btn', title: 'Cancelar edição (Esc)', onclick: cancelEdit }, '✕')) : null;
+  if (editing) { sendBtn.textContent = '✓'; sendBtn.title = 'Salvar edição (Enter)'; }
   const offline = h('div', { class: `offline-banner ${state.status.state === 'open' ? 'hidden' : ''}` },
     '⚠ WhatsApp desconectado no momento — as mensagens salvas continuam disponíveis, mas não é possível enviar até reconectar.');
 
-  fill(c.composerEl, offline, replyBar, bar);
+  fill(c.composerEl, offline, replyBar, editBar, bar);
   setTimeout(() => { autosize(); ta.focus(); }, 0);
 }
 

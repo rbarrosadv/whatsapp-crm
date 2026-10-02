@@ -421,3 +421,82 @@ test('contato "Cliente" baixa todos os arquivos automaticamente; os outros só m
   assert.deepEqual(baixados.sort(), ['ANTIGO', 'NOVO'], 'arquivo acima de 100 MB continua sob demanda');
   assert.equal(s.backfillDownloads(), 0, 'nada repetido');
 });
+
+test('sem internet ao acordar não conta como recusa nem troca o perfil gravado', async () => {
+  const { isOfflineError } = await import('../src/main/whatsapp.js');
+  const dns = { message: 'WebSocket Error (getaddrinfo ENOTFOUND web.whatsapp.com)', data: { code: 'ENOTFOUND' }, output: { statusCode: 408 } };
+  assert.ok(isOfflineError(dns));
+  assert.ok(!isOfflineError({ message: 'Connection Terminated', output: { statusCode: 428 } }));
+  const auth = path.join(dir, 'auth');
+  fs.mkdirSync(auth, { recursive: true });
+  fs.writeFileSync(path.join(auth, 'creds.json'), JSON.stringify({ me: { id: '5511@s.whatsapp.net' }, account: {} }));
+  fs.writeFileSync(path.join(auth, 'perfil.json'), JSON.stringify({ browser: 0 }));
+  wa.retry = 0; wa.fastFails = 0; wa.profileShift = 0;
+  for (let i = 0; i < 8; i++) {
+    const f = { end() {} };
+    wa.sock = f; wa.stopped = false; wa.startedAt = Date.now();
+    await wa.onConnectionUpdate(f, { connection: 'close', lastDisconnect: { error: dns } });
+  }
+  await wa.stop();
+  assert.equal(wa.fastFails, 0, 'quedas por falta de internet não contam');
+  assert.equal(wa.getStatus().retryIn, 3000, 'tenta de novo a cada 3 s até a rede voltar');
+  assert.equal(wa.getStatus().suggestRepair, false, 'não sugere ler o QR de novo');
+  wa.profileShift = 5;
+  assert.equal(wa.browserIndex(true), 0, 'perfil gravado nunca é trocado');
+  wa.profileShift = 0; wa.retry = 0;
+});
+
+test('download que falha não é repetido sem parar; link vencido pede reenvio ao celular', async () => {
+  const CLI = '5511955556666@s.whatsapp.net';
+  db.setContactType(CLI, 'cliente');
+  const s = new WhatsAppService({ dataDir: dir, logFile: path.join(dir, 'logs', 'dl2.log') });
+  s.state = { state: 'open' };
+  await s.onMessages([{
+    key: { remoteJid: CLI, fromMe: false, id: 'VENCIDO' },
+    message: { documentMessage: { fileName: 'a.pdf', mimetype: 'application/pdf', fileLength: 10, mediaKey: Buffer.alloc(32, 1), directPath: '/v/t62/x.enc', url: 'https://mmg.whatsapp.net/v/t62/x.enc' } },
+    messageTimestamp: now(),
+  }], 'history');
+  let tentativas = 0;
+  s.downloadMedia = async () => { tentativas++; throw new Error('Failed to fetch stream'); };
+  for (let i = 0; i < 4; i++) { s.backfillDownloads([CLI]); await new Promise((r) => setTimeout(r, 10)); }
+  assert.equal(tentativas, 2, 'para depois de 2 falhas');
+
+  // downloadMedia real: 403/404/410 → pede link novo (updateMediaMessage)
+  const real = new WhatsAppService({ dataDir: dir, logFile: path.join(dir, 'logs', 'dl3.log') });
+  real.state = { state: 'open' };
+  let pediu = 0;
+  real.sock = { updateMediaMessage: async () => { pediu++; throw new Error('sem mídia no celular'); } };
+  const fetchOriginal = globalThis.fetch;
+  globalThis.fetch = async () => ({ ok: false, status: 410 }); // link vencido
+  try {
+    await assert.rejects(real.downloadMedia(CLI, 'VENCIDO'), /não está mais disponível/);
+  } finally { globalThis.fetch = fetchOriginal; }
+  assert.equal(pediu, 1, 'pediu reenvio ao celular');
+});
+
+test('visualização única vira aviso na conversa', async () => {
+  const { parseMessage } = await import('../src/main/parse.js');
+  const ctx = { chatJid: PN };
+  const a = parseMessage({ key: { remoteJid: PN, id: 'VO1', isViewOnce: true }, messageTimestamp: now() }, ctx);
+  assert.equal(a.kind, 'message');
+  assert.match(a.row.text, /visualização única/);
+  const b = parseMessage({
+    key: { remoteJid: PN, id: 'VO2' },
+    message: { viewOnceMessageV2: { message: { imageMessage: { mimetype: 'image/jpeg', viewOnce: true } } } },
+    messageTimestamp: now(),
+  }, ctx);
+  assert.match(b.row.text, /^👁 Foto de visualização única/);
+  assert.equal(b.row.raw, undefined, 'não guarda conteúdo');
+  const c = parseMessage({ key: { remoteJid: PN, id: 'N9' }, message: { imageMessage: { mimetype: 'image/jpeg' } }, messageTimestamp: now() }, ctx);
+  assert.equal(c.row.type, 'image', 'foto normal continua foto');
+});
+
+test('editar: só texto seu e até 15 minutos', async () => {
+  const { editableCheck } = await import('../src/main/whatsapp.js');
+  const base = { from_me: 1, type: 'text', deleted: 0, ts: Date.now() - 60e3, text: 'oi' };
+  assert.ok(editableCheck(base, 'olá'));
+  assert.throws(() => editableCheck({ ...base, from_me: 0 }, 'x'), /enviadas por você/);
+  assert.throws(() => editableCheck({ ...base, type: 'image' }, 'x'), /texto/);
+  assert.throws(() => editableCheck({ ...base, ts: Date.now() - 16 * 60e3 }, 'x'), /15 minutos/);
+  assert.throws(() => editableCheck(base, '   '), /vazia/);
+});

@@ -107,7 +107,9 @@ Interface (`src/renderer`, JS puro em módulos ES, sem build):
   o WhatsApp devolver 428 em loop. Falhas antes do registro trocam o perfil de
   navegador (`BROWSERS`, Chrome primeiro — "Windows Desktop" é recusado com
   428); o perfil que pareou fica em `auth/perfil.json` e é sempre reusado
-  (outro perfil = WhatsApp recusa a sessão salva com 428) e um watchdog de 40 s reinicia se não vier QR.
+  (outro perfil = WhatsApp recusa a sessão salva com 428; só sessões sem
+  `perfil.json` alternam). Falta de internet (`isOfflineError`, ex.: DNS logo
+  após acordar) não conta como queda rápida: tenta de 3 em 3 s e um watchdog de 40 s reinicia se não vier QR.
 - **Tipos de contato** (`contact_types`, `crm.type_id`) e **filtros da
   lista** (`chat_filters`, regras em JSON aplicadas por `chatMatchesRules`
   em `store.js`) são editáveis pelo usuário. Filtros nunca escondem
@@ -140,7 +142,18 @@ Interface (`src/renderer`, JS puro em módulos ES, sem build):
   mídia expirada. Tipos de contato com `autodownload` (Cliente, por padrão)
   baixam tudo até 100 MB, numa fila serial (`queueDownload`); ao classificar,
   ao ligar a opção e ao conectar, `backfillDownloads` busca o que faltou dos
-  últimos 180 dias.
+  últimos 180 dias. Falha conta em `messages.dl_failed` (2 falhas = só
+  manual). Link vencido (403/404/410): o próprio `downloadMedia` pede link
+  novo ao celular (`updateMediaMessage`) — o reenvio automático do Baileys
+  não dispara porque o erro dele não tem `.status`.
+- **Visualização única**: o conteúdo nunca chega aos aparelhos conectados; o
+  Baileys descarta o aviso (`unavailable type=view_once…`), então
+  `onRawMessageNode` escuta `CB:message` no socket e grava um texto
+  "👁 … abra no celular" (`parse.viewOnceKind`, `extra.viewOnce`).
+- **Editar mensagem**: só texto seu, até 15 min (`editableCheck`);
+  `sendMessage(jid, { text, edit: key })`. No composer, `editing` mostra a
+  faixa "Editando" (Esc cancela). Fotos abrem em `views/imageviewer.js`
+  (zoom com rodinha/pinça, arrastar, girar, ← →).
 - Pasta de dados fixa: `%APPDATA%\WhatsAppCRM` (`CRM_DATA_DIR` sobrescreve;
   demo usa `WhatsAppCRM-Demo`). Instância única (`requestSingleInstanceLock`)
   pra não corromper a sessão.

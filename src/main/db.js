@@ -307,6 +307,8 @@ function migrate() {
   addColumn('tasks', 'gcal_synced_at', 'INTEGER');
   // versão 5: baixar arquivos automaticamente por tipo de contato
   addColumn('contact_types', 'autodownload', 'INTEGER NOT NULL DEFAULT 0');
+  // downloads automáticos que falharam (link vencido etc.) — não repete sem parar
+  addColumn('messages', 'dl_failed', 'INTEGER NOT NULL DEFAULT 0');
 
   const version = Number(get('SELECT value FROM meta WHERE key = ?', 'schema')?.value || 0);
   if (version < 1) seedDefaults();
@@ -1030,6 +1032,10 @@ export function chatAutoDownload(jid) {
                 WHERE crm.jid = ? AND t.autodownload = 1`, jid);
 }
 
+export function markDownloadFailed(chatJid, id) {
+  run('UPDATE messages SET dl_failed = dl_failed + 1 WHERE chat_jid = ? AND id = ?', chatJid, id);
+}
+
 /** Conversas cujo tipo baixa arquivos automaticamente (opcionalmente só de um tipo). */
 export function autoDownloadChats(typeId = null) {
   return all(`SELECT crm.jid FROM crm JOIN contact_types t ON t.id = crm.type_id
@@ -1040,7 +1046,7 @@ export function autoDownloadChats(typeId = null) {
 export function pendingMedia(jid, { since = 0, maxSize = Infinity } = {}) {
   return all(`SELECT id, type, media_size FROM messages
               WHERE chat_jid = ? AND type IN ('image', 'video', 'audio', 'ptt', 'document', 'sticker')
-                AND media_file IS NULL AND raw IS NOT NULL AND deleted = 0 AND ts >= ?
+                AND media_file IS NULL AND raw IS NOT NULL AND deleted = 0 AND dl_failed < 2 AND ts >= ?
               ORDER BY ts DESC`, jid, since)
     .filter((m) => (m.media_size || 0) <= maxSize);
 }
