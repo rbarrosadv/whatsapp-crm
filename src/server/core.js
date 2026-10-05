@@ -74,7 +74,7 @@ function fileSafeStorage(dir) {
  * @param {{dataDir: string, demo?: boolean, version?: string, safeStorage?: object,
  *          resolveUpload?: (token: string) => {path: string, name: string}}} opts
  */
-export async function createCore({ dataDir, demo = false, version = '', safeStorage, resolveUpload }) {
+export async function createCore({ dataDir, demo = false, version = '', safeStorage, resolveUpload, features = {} }) {
   const events = new EventEmitter();
   const LEGACY_STATE_FILE = legacyStateFile(process.env.APPDATA || path.join(os.homedir(), '.config'));
 
@@ -317,6 +317,7 @@ export async function createCore({ dataDir, demo = false, version = '', safeStor
       legacyAvailable: !demo && ctx.user.role === 'socio' && fs.existsSync(LEGACY_STATE_FILE),
       legacyPending: db.legacyPendingCount(),
       version,
+      canRestore: !!features.restore && ctx.user.role === 'socio',
       viewers: [...viewers.values()].filter((v) => v.jid).map((v) => ({ jid: v.jid, userId: v.userId, name: v.name })),
     }),
     'wa:logout': () => wa.logout(),
@@ -629,8 +630,7 @@ export async function createCore({ dataDir, demo = false, version = '', safeStor
   }
 
   /** Cópia do banco para o backup (o chamador apaga o arquivo depois). */
-  function backupFile() {
-    const file = path.join(os.tmpdir(), `backup-barros-${Date.now()}.sqlite`);
+  function backupFile(file = path.join(os.tmpdir(), `backup-barros-${Date.now()}.sqlite`)) {
     db.run('VACUUM INTO ?', file);
     return file;
   }

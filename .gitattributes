@@ -3,3 +3,5 @@
 *.png binary
 *.ico binary
 *.txt text eol=crlf
+*.sh text eol=lf
+*.jpg binary

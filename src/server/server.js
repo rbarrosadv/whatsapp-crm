@@ -124,12 +124,27 @@ function failed(ip) {
   failures.set(ip, f);
 }
 
+/** Se há um backup esperando (restaurar.sqlite), ele vira o banco; o atual fica guardado. */
+function applyPendingRestore(dataDir) {
+  const pending = path.join(dataDir, 'restaurar.sqlite');
+  if (!fs.existsSync(pending)) return;
+  const db = path.join(dataDir, 'crm.sqlite');
+  const stamp = new Date().toISOString().slice(0, 19).replace(/[:T]/g, '-');
+  if (fs.existsSync(db)) fs.renameSync(db, path.join(dataDir, `crm-antes-da-restauracao-${stamp}.sqlite`));
+  for (const ext of ['-wal', '-shm']) fs.rmSync(db + ext, { force: true });
+  fs.renameSync(pending, db);
+  console.log('backup restaurado; o banco anterior ficou guardado como', `crm-antes-da-restauracao-${stamp}.sqlite`);
+}
+
 /**
  * Sobe o servidor. Devolve { url, core, close }.
  * @param {{dataDir?: string, demo?: boolean, port?: number, host?: string, safeStorage?: object}} opts
  */
-export async function startServer({ dataDir, demo = false, port = 3210, host = '127.0.0.1', safeStorage, requireSetupCode = false } = {}) {
+export async function startServer({
+  dataDir, demo = false, port = 3210, host = '127.0.0.1', safeStorage, requireSetupCode = false, restartable = false,
+} = {}) {
   dataDir = dataDir || defaultDataDir(demo);
+  applyPendingRestore(dataDir);
   const uploadDir = path.join(dataDir, 'uploads');
   fs.mkdirSync(uploadDir, { recursive: true });
   // envios que ficaram para trás (mais de 1 dia)
@@ -148,7 +163,7 @@ export async function startServer({ dataDir, demo = false, port = 3210, host = '
     return name ? { path: path.join(dir, name), name } : null;
   };
 
-  const core = await createCore({ dataDir, demo, version: VERSION, safeStorage, resolveUpload });
+  const core = await createCore({ dataDir, demo, version: VERSION, safeStorage, resolveUpload, features: { restore: restartable } });
 
   // Num servidor na internet, quem chegasse primeiro criaria o sócio: o primeiro
   // acesso pede um código que só aparece para quem instalou (tela e arquivo).
@@ -296,6 +311,32 @@ export async function startServer({ dataDir, demo = false, port = 3210, host = '
       res.on('close', () => fs.rmSync(file, { force: true }));
       return serveFile(req, res, file, { download: `backup-barros-associados-${new Date().toISOString().slice(0, 10)}.sqlite` });
     }
+    // restaurar um backup (ex.: trazer os dados do computador para o servidor):
+    // guarda o arquivo e reinicia; a troca acontece antes de abrir o banco.
+    if (p === '/admin/restore' && req.method === 'POST' && user.role === 'socio' && restartable) {
+      if (req.headers['x-crm'] !== '1') return sendJson(res, 403, { error: 'requisição recusada' });
+      const tmp = path.join(dataDir, 'restaurar.parcial');
+      await new Promise((resolve, reject) => {
+        const out = fs.createWriteStream(tmp);
+        req.pipe(out);
+        out.on('finish', resolve);
+        out.on('error', reject);
+        req.on('error', reject);
+      });
+      const head = Buffer.alloc(16);
+      const fd = fs.openSync(tmp, 'r');
+      fs.readSync(fd, head, 0, 16, 0);
+      fs.closeSync(fd);
+      if (head.toString('latin1') !== 'SQLite format 3\0') {
+        fs.rmSync(tmp, { force: true });
+        return sendJson(res, 400, { error: 'Este arquivo não é um backup do sistema (.sqlite).' });
+      }
+      fs.renameSync(tmp, path.join(dataDir, 'restaurar.sqlite'));
+      sendJson(res, 200, { ok: true });
+      console.log('backup recebido para restaurar: reiniciando');
+      setTimeout(() => process.exit(0), 500); // o systemd liga de novo
+      return undefined;
+    }
     if (p === '/download/logs' && user.role === 'socio') {
       return serveFile(req, res, core.logFile, { download: 'registro-whatsapp.log' });
     }
@@ -350,6 +391,19 @@ export async function startServer({ dataDir, demo = false, port = 3210, host = '
     }
   }, 30000);
   const cleaner = setInterval(cleanUploads, 3600 * 1000);
+  // backup automático: um por dia em backups/, guarda os últimos 14
+  const dailyBackup = () => {
+    try {
+      const dir = path.join(dataDir, 'backups');
+      fs.mkdirSync(dir, { recursive: true });
+      const file = path.join(dir, `crm-${new Date().toISOString().slice(0, 10)}.sqlite`);
+      if (!fs.existsSync(file)) core.backupFile(file);
+      const old = fs.readdirSync(dir).filter((f) => /^crm-\d{4}-\d{2}-\d{2}\.sqlite$/.test(f)).sort().slice(0, -14);
+      old.forEach((f) => fs.rmSync(path.join(dir, f), { force: true }));
+    } catch (e) { console.error('backup automático:', e.message); }
+  };
+  const backupTimer = demo ? null : setInterval(dailyBackup, 3600 * 1000);
+  if (!demo) setTimeout(dailyBackup, 60 * 1000);
 
   await new Promise((resolve, reject) => {
     server.once('error', reject);
@@ -363,6 +417,7 @@ export async function startServer({ dataDir, demo = false, port = 3210, host = '
     async close() {
       clearInterval(ping);
       clearInterval(cleaner);
+      clearInterval(backupTimer);
       for (const ws of sockets) ws.terminate();
       await new Promise((r) => server.close(r));
       await core.stop();
@@ -383,6 +438,7 @@ if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.me
     port: Number(arg('port', process.env.PORT || 3210)),
     host: arg('host', process.env.HOST || '127.0.0.1'),
     requireSetupCode: !demo,
+    restartable: process.env.CRM_RESTARTABLE === '1',
   });
   console.log(`Barros Associados ${VERSION}${demo ? ' (demonstração)' : ''} — abra ${srv.url}`);
   const stop = async () => { await srv.close().catch(() => {}); process.exit(0); };

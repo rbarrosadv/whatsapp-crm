@@ -54,6 +54,7 @@ export async function bootstrap() {
   state.legacyPending = b.legacyPending;
   state.dataDir = b.dataDir;
   state.version = b.version;
+  state.canRestore = b.canRestore;
   setChats(b.chats);
 
   window.api.on('wa:status', (s) => { state.status = s; emit('status', s); });

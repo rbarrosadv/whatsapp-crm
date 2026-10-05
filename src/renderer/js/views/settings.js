@@ -1,6 +1,6 @@
 // Configurações: conexão, notificações, funis, etiquetas, respostas
 // rápidas, backup e importação do Kanban antigo.
-import { h, fill, modal, toast, errToast, confirmDialog, formatPhone, phoneOf, PALETTE, downloadUrl, fmtDateTime } from '../util.js';
+import { h, fill, modal, toast, errToast, confirmDialog, formatPhone, phoneOf, PALETTE, downloadUrl, fmtDateTime, pickFiles } from '../util.js';
 import { state, on, api, setSetting } from '../store.js';
 
 let root;
@@ -86,6 +86,21 @@ function changePassword() {
       },
     }],
   });
+}
+
+async function restoreBackup() {
+  const [file] = await pickFiles({ multiple: false, accept: '.sqlite' });
+  if (!file) return;
+  const ok = await confirmDialog(`Trocar TODOS os dados do sistema pelos do backup “${file.name}”? `
+    + 'Conversas, casos, financeiro e equipe passam a ser os do backup. O banco atual fica guardado no servidor. '
+    + 'O sistema reinicia e todos precisam entrar de novo.', { okLabel: 'Restaurar', danger: true });
+  if (!ok) return;
+  toast('Enviando o backup…', 'info', 60000);
+  const r = await fetch('/admin/restore', { method: 'POST', headers: { 'X-CRM': '1', 'Content-Type': 'application/octet-stream' }, body: file });
+  const data = await r.json().catch(() => ({}));
+  if (!r.ok) { errToast(new Error(data.error || 'Não foi possível restaurar.')); return; }
+  toast('Backup recebido. O sistema está reiniciando…', 'success', 15000);
+  setTimeout(() => { location.href = '/login.html'; }, 8000);
 }
 
 let usersCache = null;
@@ -266,7 +281,9 @@ function render() {
         h('p', { class: 'muted small' }, 'Tudo fica salvo no servidor do escritório, na pasta:'),
         h('code', { class: 'path' }, state.dataDir),
         h('div', { class: 'row wrap' },
-          h('button', { class: 'btn', onclick: () => downloadUrl('/download/backup') }, '⬇ Baixar backup do sistema')),
+          h('button', { class: 'btn', onclick: () => downloadUrl('/download/backup') }, '⬇ Baixar backup do sistema'),
+          state.canRestore ? h('button', { class: 'btn', onclick: restoreBackup }, '⬆ Restaurar um backup…') : null),
+        h('p', { class: 'muted small' }, 'O servidor também guarda sozinho uma cópia por dia (as últimas 14).'),
         state.legacyAvailable ? h('div', { class: 'legacy' },
           h('p', null, h('b', null, 'Kanban antigo encontrado. '), 'Importe as categorias, colunas, notas e prazos do app anterior.',
             state.legacyPending ? h('span', { class: 'muted small' }, ` (${state.legacyPending} classificação(ões) aguardando a conversa aparecer)`) : null),
