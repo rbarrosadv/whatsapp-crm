@@ -150,6 +150,9 @@ async function openSystem() {
       return;
     }
   } else if (config.mode === 'remote' && config.url) {
+    // passou a usar o servidor do escritório: desliga o servidor deste computador
+    // (senão o WhatsApp ficaria conectado em dois lugares com dados diferentes)
+    if (local) { const srv = local; local = null; await srv.close().catch(() => {}); }
     baseUrl = config.url.replace(/\/+$/, '');
   } else {
     showSetup();
