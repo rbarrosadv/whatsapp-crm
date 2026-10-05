@@ -1,6 +1,10 @@
 // Conversa aberta: cabeçalho, mensagens e caixa de envio.
 import { openImageViewer } from './imageviewer.js';
 import { suggestWords, applyWord, learnWords } from '../wordsuggest.js';
+import { autocorrectBefore, correctWord } from '../autocorrect.js';
+
+// palavras que você desfez a correção (Backspace logo depois): não corrige mais nesta sessão
+const keepAsTyped = new Set();
 import {
   h, clear, fill, fmtTime, fmtDay, fmtSize, fmtSeconds, formatWhatsApp, formatPhone, phoneOf, colorFor,
   toast, errToast, modal, confirmDialog, popupMenu, EMOJIS, QUICK_REACTIONS,
@@ -570,8 +574,47 @@ function renderComposer() {
 
   const autosize = () => { ta.style.height = 'auto'; ta.style.height = `${Math.min(ta.scrollHeight, 180)}px`; };
 
+  // correção automática (pt-BR) ao terminar cada palavra; Backspace logo depois desfaz
+  let lastFix = null;
+  const autocorrectOn = () => state.settings.autocorrect !== false;
+  const runAutocorrect = (e) => {
+    lastFix = null;
+    if (!autocorrectOn() || e?.inputType !== 'insertText' || !/^[\s.,!?;:)]$/.test(e.data || '')) return;
+    if (ta.selectionStart !== ta.selectionEnd) return;
+    const pos = ta.selectionStart;
+    const r = autocorrectBefore(ta.value.slice(0, pos));
+    if (!r || keepAsTyped.has(r.from.toLowerCase())) return;
+    ta.value = r.before + ta.value.slice(pos);
+    ta.setSelectionRange(r.before.length, r.before.length);
+    lastFix = { ...r, pos: r.before.length, value: ta.value };
+    showFix(r);
+  };
+  const showFix = (r) => {
+    fill(wordBar, h('span', { class: 'word-fixed', title: 'Correção automática. Backspace desfaz.' }, `✓ ${r.from} → ${r.to}`),
+      h('span', { class: 'word-hint' }, 'Backspace desfaz'));
+    wordBar.classList.remove('hidden');
+  };
+  const undoFix = () => {
+    const f = lastFix;
+    lastFix = null;
+    const head = f.before.slice(0, f.before.length - f.to.length - f.sep.length) + f.from + f.sep;
+    ta.value = head + ta.value.slice(f.pos);
+    ta.setSelectionRange(head.length, head.length);
+    keepAsTyped.add(f.from.toLowerCase());
+    sessionStorage.setItem(draftKey, ta.value);
+    wordBar.classList.add('hidden');
+  };
+  // a última palavra (sem espaço depois) também é corrigida ao enviar
+  const fixLastWord = (text) => {
+    if (!autocorrectOn()) return text;
+    const m = /([\p{L}]+)([.!?)]*)$/u.exec(text);
+    if (!m || keepAsTyped.has(m[1].toLowerCase()) || /[-\p{L}@/]$/u.test(text.slice(0, m.index))) return text;
+    const to = correctWord(m[1]);
+    return to ? text.slice(0, m.index) + to + m[2] : text;
+  };
+
   const send = async () => {
-    const text = ta.value.trim();
+    const text = fixLastWord(ta.value.trim());
     if (!text) return;
     if (editing) {
       const m = editing;
@@ -622,11 +665,12 @@ function renderComposer() {
     ta.focus();
   };
 
-  ta.addEventListener('input', () => {
+  ta.addEventListener('input', (e) => {
+    runAutocorrect(e);
     autosize();
     sessionStorage.setItem(draftKey, ta.value);
     updateSuggest();
-    updateWords();
+    if (!lastFix) updateWords(); // se acabou de corrigir, a faixa mostra a correção
     if (Date.now() - lastTyping > 4000) {
       lastTyping = Date.now();
       api('chats:presence', c.jid, 'composing').catch(() => {});
@@ -642,6 +686,11 @@ function renderComposer() {
       if (e.key === 'ArrowUp') { e.preventDefault(); suggestIdx = (suggestIdx - 1 + list.length) % list.length; updateSuggest(); return; }
       if (e.key === 'Enter' || e.key === 'Tab') { e.preventDefault(); applyQuick(list[suggestIdx]); return; }
       if (e.key === 'Escape') { suggest.classList.add('hidden'); return; }
+    }
+    if (e.key === 'Backspace' && lastFix && ta.value === lastFix.value && ta.selectionStart === lastFix.pos && ta.selectionEnd === lastFix.pos) {
+      e.preventDefault();
+      undoFix();
+      return;
     }
     if (e.key === 'Tab' && !e.shiftKey && words.length) { e.preventDefault(); acceptWord(words[0]); return; }
     if (e.key === 'Escape' && words.length) { words = []; wordBar.classList.add('hidden'); if (!replyTo && !editing) return; }

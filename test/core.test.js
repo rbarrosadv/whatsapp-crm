@@ -589,3 +589,20 @@ test('sugestão de palavras: aprende com o que você escreve e completa a palavr
   learnWords(vocab, 'audiência marcada');
   assert.deepEqual(suggestWords(vocab, 'aud'), ['audiência'], 'aprende na hora ao enviar');
 });
+
+test('correção automática em português do Brasil', async () => {
+  const { correctWord, autocorrectBefore } = await import('../src/renderer/js/autocorrect.js');
+  const casos = {
+    nao: 'não', Nao: 'Não', voce: 'você', tambem: 'também', procuracao: 'procuração', peticoes: 'petições',
+    decisao: 'decisão', audiencia: 'audiência', possivel: 'possível', honorarios: 'honorários', qeu: 'que', acao: 'ação',
+  };
+  for (const [de, para] of Object.entries(casos)) assert.equal(correctWord(de), para, de);
+  // ambíguas, siglas, palavras certas e números ficam como estão
+  for (const w of ['esta', 'e', 'pais', 'duvida', 'analise', 'OAB', 'STJ', 'casa', 'não', 'processo', 'R2D2']) {
+    assert.equal(correctWord(w), null, w);
+  }
+  assert.deepEqual(autocorrectBefore('eu nao '), { before: 'eu não ', from: 'nao', to: 'não', sep: ' ' });
+  assert.equal(autocorrectBefore('Segue a procuracao.').before, 'Segue a procuração.');
+  assert.equal(autocorrectBefore('vou pega-la '), null, 'pedaço com hífen fica');
+  assert.equal(autocorrectBefore('ok '), null);
+});

@@ -735,3 +735,4 @@ body.discreet-msgs .reply-bar .quoted:hover {
 .word-chip.first { border-color: var(--accent, #00a884); font-weight: 600; }
 .word-chip:hover { background: var(--panel-3); }
 .word-hint { font-size: 11px; opacity: .6; }
+.word-fixed { border: 1px solid var(--border); background: var(--panel); border-radius: 14px; padding: 3px 12px; font-size: 13px; box-shadow: var(--shadow); color: var(--accent); }

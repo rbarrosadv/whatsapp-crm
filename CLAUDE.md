@@ -224,7 +224,12 @@ Interface (`src/renderer`, JS puro em módulos ES, sem build):
   (`setupSpellcheck` em `src/desktop/main.js` monta o menu do botão direito
   com as sugestões — o Chromium só sublinha; no navegador o menu é o nativo);
   preferências por pessoa `spellcheck` (atributo da caixa de texto) e
-  `wordSuggest` (`USER_KEYS`), API `words:vocab`. Sugestão de palavras = `js/wordsuggest.js` (puro, testado no
+  `wordSuggest` (`USER_KEYS`), API `words:vocab`. Correção automática pt-BR
+  (`js/autocorrect.js`, preferência `autocorrect`): ao digitar espaço/pontuação
+  troca acentos esquecidos e erros comuns (lista + terminações -ção/-são/
+  -ência/-ável/-ível); só casos sem ambiguidade; Backspace logo depois desfaz
+  (e a palavra não é mais corrigida na sessão); a última palavra é corrigida
+  ao enviar. Sugestão de palavras = `js/wordsuggest.js` (puro, testado no
   Node) sobre `db.vocabulary()` — palavras das SUAS mensagens enviadas e
   respostas rápidas, por frequência (≥2 usos), aprende na hora ao enviar;
   Tab ou clique completa.

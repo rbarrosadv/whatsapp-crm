@@ -196,6 +196,7 @@ function render() {
         toggle('sendReadReceipts', 'Marcar como lida no celular ao abrir a conversa', 'Envia a confirmação de leitura (tique azul), se ela estiver ativa no seu WhatsApp.'),
         toggle('enterToSend', 'Enter envia a mensagem', 'Desligado: use Ctrl+Enter para enviar e Enter para pular linha.'),
         toggle('spellcheck', 'Corretor ortográfico', 'Sublinha palavras erradas; clique com o botão direito na palavra para ver as correções.'),
+        toggle('autocorrect', 'Correção automática (português do Brasil)', 'Ao terminar a palavra, corrige acentos esquecidos e erros comuns: nao → não, voce → você, procuracao → procuração. Backspace logo depois desfaz.'),
         toggle('wordSuggest', 'Sugerir palavras ao digitar', 'Completa a palavra com as que você mais usa nas suas mensagens. Tab (ou clique) aceita a sugestão.'),
         h('label', { class: 'toggle-row' }, h('div', null, 'Tema'),
           h('select', { class: 'input select-sm', onchange: (e) => setSetting('theme', e.target.value).then(applyTheme) },

@@ -149,6 +149,19 @@ try {
   check(await page.getAttribute('.composer-input', 'spellcheck') !== 'false', 'corretor ortográfico ligado na caixa de mensagem');
   await page.fill('.composer-input', '');
 
+  // correção automática (pt-BR) ao terminar a palavra; Backspace desfaz
+  await page.click('.composer-input');
+  await page.keyboard.type('voce nao ');
+  check(await page.inputValue('.composer-input') === 'você não ', 'corrige acentos ao digitar (voce nao → você não)');
+  await page.waitForSelector('.word-suggest:not(.hidden) .word-fixed');
+  await shot(page, '03b-correcao');
+  await page.keyboard.press('Backspace');
+  check(await page.inputValue('.composer-input') === 'você nao ', 'Backspace logo depois desfaz a correção');
+  await page.keyboard.type('procuracao');
+  await page.keyboard.press('Enter');
+  await page.waitForSelector('.msg.out:has-text("você nao procuração")');
+  check(true, 'última palavra é corrigida ao enviar (e a desfeita fica como digitada)');
+
   // visualizador de imagens com zoom
   const jidMari = await page.evaluate(() => document.querySelector('.chat-row.active')?.dataset.jid || null);
   await page.evaluate(async ({ jid, files }) => {
