@@ -75,6 +75,7 @@ function createWindow() {
   });
   if (settings.windowMaximized) win.maximize();
   // só o microfone (gravar áudio) e notificações são permitidos
+  setupSpellcheck();
   win.webContents.session.setPermissionRequestHandler((_wc, permission, cb) => {
     cb(['media', 'notifications', 'clipboard-sanitized-write'].includes(permission));
   });
@@ -588,6 +589,7 @@ const api = {
   'quick:save': (q) => { const id = db.saveQuickReply(q); broadcastConfig(); return id; },
   'quick:delete': (id) => { db.deleteQuickReply(id); broadcastConfig(); },
   stats: () => db.stats(),
+  'words:vocab': () => db.vocabulary(),
 
   // configurações
   'settings:set': (key, value) => {
@@ -595,7 +597,7 @@ const api = {
       'theme', 'lastView', 'lastPipeline', 'enterToSend', 'forgottenHours', 'lastFilter',
       'chargeTemplate', 'pixKey', 'paymentNoticeDays', 'staleCaseDays',
       'googleSync', 'googleCalendarId', 'agendaHidden', 'agendaView', 'agendaHours',
-      'discreet', 'discreetMessages'];
+      'discreet', 'discreetMessages', 'spellcheck', 'wordSuggest', 'autocorrect'];
     if (!allowed.includes(key)) throw new Error('configuração desconhecida');
     settings[key] = value;
     db.setSetting(key, value);
@@ -690,8 +692,40 @@ function publicSettings() {
   return rest;
 }
 
+// Corretor ortográfico em português e menu do botão direito com as sugestões
+// (o Chromium sublinha as palavras, mas o menu com sugestões é a gente que monta).
+function setupSpellcheck() {
+  const ses = win.webContents.session;
+  try {
+    const langs = ses.availableSpellCheckerLanguages || [];
+    const pt = ['pt-BR', 'pt'].find((l) => langs.includes(l)) || 'pt-BR';
+    ses.setSpellCheckerLanguages([pt]);
+  } catch (e) { console.warn('corretor:', e.message); }
+  try { ses.setSpellCheckerEnabled(settings.spellcheck !== false); } catch { /* ignore */ }
+  win.webContents.on('context-menu', (_e, p) => {
+    const items = [];
+    if (p.misspelledWord) {
+      const sug = (p.dictionarySuggestions || []).slice(0, 6);
+      sug.forEach((w) => items.push({ label: w, click: () => win.webContents.replaceMisspelling(w) }));
+      if (!sug.length) items.push({ label: 'Sem sugestões', enabled: false });
+      items.push({ label: `Adicionar “${p.misspelledWord}” ao dicionário`, click: () => ses.addWordToSpellCheckerDictionary(p.misspelledWord) });
+      items.push({ type: 'separator' });
+    }
+    if (p.isEditable) {
+      items.push({ role: 'cut', label: 'Recortar', enabled: p.editFlags.canCut });
+      items.push({ role: 'copy', label: 'Copiar', enabled: p.editFlags.canCopy });
+      items.push({ role: 'paste', label: 'Colar', enabled: p.editFlags.canPaste });
+      items.push({ type: 'separator' }, { role: 'selectAll', label: 'Selecionar tudo' });
+    } else if (p.selectionText) {
+      items.push({ role: 'copy', label: 'Copiar' });
+    }
+    if (items.length) Menu.buildFromTemplate(items).popup({ window: win });
+  });
+}
+
 function applySettings() {
   wa.sendReadReceipts = settings.sendReadReceipts !== false;
+  try { win?.webContents.session.setSpellCheckerEnabled(settings.spellcheck !== false); } catch { /* ignore */ }
   if (app.isPackaged || process.platform === 'win32') {
     try {
       app.setLoginItemSettings({

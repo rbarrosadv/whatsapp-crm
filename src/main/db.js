@@ -1032,6 +1032,34 @@ export function chatAutoDownload(jid) {
                 WHERE crm.jid = ? AND t.autodownload = 1`, jid);
 }
 
+/**
+ * Palavras que você mais usa (das suas mensagens enviadas e respostas rápidas),
+ * para sugerir o resto da palavra enquanto digita. Mais usadas primeiro.
+ */
+export function vocabulary({ messages = 6000, max = 4000 } = {}) {
+  const freq = new Map();
+  const add = (text, w = 1) => {
+    for (const m of String(text || '').matchAll(/[\p{L}][\p{L}'-]{3,}/gu)) {
+      const word = m[0].replace(/[-']+$/, '');
+      if (word.length < 4 || /^https?/i.test(word)) continue;
+      const k = word.toLowerCase();
+      const e = freq.get(k) || { word: k, n: 0, caps: 0 };
+      e.n += w;
+      // nomes próprios / siglas: guarda a forma com maiúscula se ela é a mais comum
+      if (word[0] !== word[0].toLowerCase() && m.index > 0) e.caps += w;
+      freq.set(k, e);
+    }
+  };
+  all(`SELECT text FROM messages WHERE from_me = 1 AND type = 'text' AND deleted = 0 AND text != ''
+       ORDER BY ts DESC LIMIT ?`, messages).forEach((r) => add(r.text));
+  all('SELECT text FROM quick_replies').forEach((r) => add(r.text, 3));
+  return [...freq.values()]
+    .filter((e) => e.n >= 2)
+    .sort((a, b) => b.n - a.n)
+    .slice(0, max)
+    .map((e) => (e.caps > e.n / 2 ? e.word[0].toUpperCase() + e.word.slice(1) : e.word));
+}
+
 export function markDownloadFailed(chatJid, id) {
   run('UPDATE messages SET dl_failed = dl_failed + 1 WHERE chat_jid = ? AND id = ?', chatJid, id);
 }

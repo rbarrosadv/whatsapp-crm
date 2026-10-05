@@ -98,6 +98,32 @@ try {
   await page.keyboard.press('Escape');
   await page.mouse.click(5, 5);
 
+  // sugestão de palavras ao digitar (aprende com o que você enviou)
+  await page.fill('.composer-input', 'Preciso da procuração assinada');
+  await page.keyboard.press('Enter');
+  await page.waitForSelector('.msg.out:has-text("procuração assinada")');
+  await page.click('.composer-input');
+  await page.keyboard.type('Segue a proc');
+  await page.waitForSelector('.word-suggest:not(.hidden) .word-chip.first:has-text("procuração")');
+  await shot(page, '03a-sugestao-palavra');
+  await page.keyboard.press('Tab');
+  check(await page.inputValue('.composer-input') === 'Segue a procuração ', 'Tab completa a palavra sugerida');
+  check(await page.getAttribute('.composer-input', 'spellcheck') !== 'false', 'corretor ortográfico ligado na caixa de mensagem');
+  await page.fill('.composer-input', '');
+
+  // correção automática (pt-BR) ao terminar a palavra; Backspace desfaz
+  await page.click('.composer-input');
+  await page.keyboard.type('voce nao ');
+  check(await page.inputValue('.composer-input') === 'você não ', 'corrige acentos ao digitar (voce nao → você não)');
+  await page.waitForSelector('.word-suggest:not(.hidden) .word-fixed');
+  await shot(page, '03b-correcao');
+  await page.keyboard.press('Backspace');
+  check(await page.inputValue('.composer-input') === 'você nao ', 'Backspace logo depois desfaz a correção');
+  await page.keyboard.type('procuracao');
+  await page.keyboard.press('Enter');
+  await page.waitForSelector('.msg.out:has-text("você nao procuração")');
+  check(true, 'última palavra é corrigida ao enviar (e a desfeita fica como digitada)');
+
   // visualizador de imagens com zoom
   const jidMari = await page.evaluate(() => document.querySelector('.chat-row.active')?.dataset.jid || null);
   await page.evaluate(async ({ jid, files }) => {

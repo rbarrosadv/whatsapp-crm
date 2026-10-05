@@ -1,5 +1,10 @@
 // Conversa aberta: cabeçalho, mensagens e caixa de envio.
 import { openImageViewer } from './imageviewer.js';
+import { suggestWords, applyWord, learnWords } from '../wordsuggest.js';
+import { autocorrectBefore, correctWord } from '../autocorrect.js';
+
+// palavras que você desfez a correção (Backspace logo depois): não corrige mais nesta sessão
+const keepAsTyped = new Set();
 import {
   h, clear, fill, fmtTime, fmtDay, fmtSize, fmtSeconds, formatWhatsApp, formatPhone, phoneOf, colorFor,
   toast, errToast, modal, confirmDialog, popupMenu, EMOJIS, QUICK_REACTIONS,
@@ -17,6 +22,8 @@ let root;
 let current = null; // { jid, messages: [], els: Map, loadingOlder, noMoreLocal }
 let replyTo = null;
 let editing = null; // mensagem sua sendo editada
+let vocab = null; // palavras que você mais usa (sugestão ao digitar)
+const loadVocab = () => { if (!vocab) { vocab = []; api('words:vocab').then((v) => { vocab = v || []; }).catch(() => {}); } };
 const EDIT_WINDOW_MS = 15 * 60 * 1000;
 let recorder = null;
 
@@ -517,14 +524,79 @@ function renderComposer() {
     value: sessionStorage.getItem(draftKey) || '',
   });
   const suggest = h('div', { class: 'quick-suggest hidden' });
+  // sugestões de palavras (como no teclado do celular): Tab ou clique completa
+  const wordBar = h('div', { class: 'word-suggest hidden' });
+  let words = [];
+  if (state.settings.wordSuggest !== false) loadVocab();
+  const updateWords = () => {
+    words = [];
+    if (state.settings.wordSuggest !== false && ta.selectionStart === ta.selectionEnd && !ta.value.startsWith('/')) {
+      const after = ta.value.slice(ta.selectionEnd);
+      // só no fim de uma palavra (não no meio dela)
+      if (!/^[\p{L}]/u.test(after)) words = suggestWords(vocab || [], ta.value.slice(0, ta.selectionStart));
+    }
+    fill(wordBar, ...words.map((w, i) => h('button', {
+      class: `word-chip ${i === 0 ? 'first' : ''}`, title: i === 0 ? 'Tab para completar' : 'Clique para completar',
+      onmousedown: (e) => { e.preventDefault(); acceptWord(w); },
+    }, w)), words.length ? h('span', { class: 'word-hint' }, 'Tab') : null);
+    wordBar.classList.toggle('hidden', !words.length);
+  };
+  const acceptWord = (w) => {
+    const r = applyWord(ta.value.slice(0, ta.selectionStart), ta.value.slice(ta.selectionEnd), w);
+    ta.value = r.value;
+    ta.setSelectionRange(r.cursor, r.cursor);
+    sessionStorage.setItem(draftKey, ta.value);
+    autosize();
+    updateWords();
+    ta.focus();
+  };
   let suggestIdx = 0;
   let typingTimer = null;
   let lastTyping = 0;
 
   const autosize = () => { ta.style.height = 'auto'; ta.style.height = `${Math.min(ta.scrollHeight, 180)}px`; };
 
+  // correção automática (pt-BR) ao terminar cada palavra; Backspace logo depois desfaz
+  let lastFix = null;
+  const autocorrectOn = () => state.settings.autocorrect !== false;
+  const runAutocorrect = (e) => {
+    lastFix = null;
+    if (!autocorrectOn() || e?.inputType !== 'insertText' || !/^[\s.,!?;:)]$/.test(e.data || '')) return;
+    if (ta.selectionStart !== ta.selectionEnd) return;
+    const pos = ta.selectionStart;
+    const r = autocorrectBefore(ta.value.slice(0, pos));
+    if (!r || keepAsTyped.has(r.from.toLowerCase())) return;
+    ta.value = r.before + ta.value.slice(pos);
+    ta.setSelectionRange(r.before.length, r.before.length);
+    lastFix = { ...r, pos: r.before.length, value: ta.value };
+    showFix(r);
+  };
+  const showFix = (r) => {
+    fill(wordBar, h('span', { class: 'word-fixed', title: 'Correção automática. Backspace desfaz.' }, `✓ ${r.from} → ${r.to}`),
+      h('span', { class: 'word-hint' }, 'Backspace desfaz'));
+    wordBar.classList.remove('hidden');
+  };
+  const undoFix = () => {
+    const f = lastFix;
+    lastFix = null;
+    const head = f.before.slice(0, f.before.length - f.to.length - f.sep.length) + f.from + f.sep;
+    ta.value = head + ta.value.slice(f.pos);
+    ta.setSelectionRange(head.length, head.length);
+    keepAsTyped.add(f.from.toLowerCase());
+    sessionStorage.setItem(draftKey, ta.value);
+    wordBar.classList.add('hidden');
+  };
+  // a última palavra (sem espaço depois) também é corrigida ao enviar
+  const fixLastWord = (text) => {
+    if (!autocorrectOn()) return text;
+    const m = /([\p{L}]+)([.!?)]*)$/u.exec(text);
+    if (!m || keepAsTyped.has(m[1].toLowerCase()) || /[-\p{L}@/]$/u.test(text.slice(0, m.index))) return text;
+    const to = correctWord(m[1]);
+    return to ? text.slice(0, m.index) + to + m[2] : text;
+  };
+
   const send = async () => {
-    const text = ta.value.trim();
+    const text = fixLastWord(ta.value.trim());
     if (!text) return;
     if (editing) {
       const m = editing;
@@ -536,7 +608,9 @@ function renderComposer() {
       return;
     }
     const quoted = replyTo?.id;
+    if (vocab) learnWords(vocab, text);
     ta.value = '';
+    updateWords();
     sessionStorage.removeItem(draftKey);
     autosize();
     replyTo = null;
@@ -573,10 +647,12 @@ function renderComposer() {
     ta.focus();
   };
 
-  ta.addEventListener('input', () => {
+  ta.addEventListener('input', (e) => {
+    runAutocorrect(e);
     autosize();
     sessionStorage.setItem(draftKey, ta.value);
     updateSuggest();
+    if (!lastFix) updateWords(); // se acabou de corrigir, a faixa mostra a correção
     if (Date.now() - lastTyping > 4000) { lastTyping = Date.now(); api('chats:presence', c.jid, 'composing').catch(() => {}); }
     clearTimeout(typingTimer);
     typingTimer = setTimeout(() => api('chats:presence', c.jid, 'paused').catch(() => {}), 3000);
@@ -589,6 +665,13 @@ function renderComposer() {
       if (e.key === 'Enter' || e.key === 'Tab') { e.preventDefault(); applyQuick(list[suggestIdx]); return; }
       if (e.key === 'Escape') { suggest.classList.add('hidden'); return; }
     }
+    if (e.key === 'Backspace' && lastFix && ta.value === lastFix.value && ta.selectionStart === lastFix.pos && ta.selectionEnd === lastFix.pos) {
+      e.preventDefault();
+      undoFix();
+      return;
+    }
+    if (e.key === 'Tab' && !e.shiftKey && words.length) { e.preventDefault(); acceptWord(words[0]); return; }
+    if (e.key === 'Escape' && words.length) { words = []; wordBar.classList.add('hidden'); if (!replyTo && !editing) return; }
     const enterSends = state.settings.enterToSend !== false;
     if (e.key === 'Enter' && !e.isComposing && ((enterSends && !e.shiftKey) || (!enterSends && e.ctrlKey))) {
       e.preventDefault();
@@ -597,6 +680,10 @@ function renderComposer() {
     if (e.key === 'Escape' && replyTo) { replyTo = null; c.composerEl.querySelector('.reply-bar')?.remove(); }
     if (e.key === 'Escape' && editing) cancelEdit();
   });
+  // cursor mudou de lugar (setas/clique): recalcula a sugestão
+  ta.addEventListener('keyup', (e) => { if (e.key.startsWith('Arrow') || e.key === 'Home' || e.key === 'End') updateWords(); });
+  ta.addEventListener('click', updateWords);
+  ta.addEventListener('blur', () => wordBar.classList.add('hidden'));
   ta.addEventListener('paste', (e) => {
     const files = [...(e.clipboardData?.files || [])];
     if (!files.length) return;
@@ -632,7 +719,7 @@ function renderComposer() {
   const micBtn = h('button', { class: 'icon-btn mic', title: 'Gravar áudio', onclick: () => startRecording(micBtn) }, '🎤');
   const sendBtn = h('button', { class: 'send-btn', title: 'Enviar (Enter)', onclick: send }, '➤');
 
-  const bar = h('div', { class: 'composer-bar' }, emojiBtn, attachBtn, quickBtn, h('div', { class: 'composer-input-wrap' }, suggest, ta), micBtn, sendBtn);
+  const bar = h('div', { class: 'composer-bar' }, emojiBtn, attachBtn, quickBtn, h('div', { class: 'composer-input-wrap' }, suggest, wordBar, ta), micBtn, sendBtn);
   const replyBar = replyTo ? h('div', { class: 'reply-bar' },
     h('div', { class: 'quoted' },
       h('div', { class: 'quoted-who' }, replyTo.from_me ? 'Você' : (replyTo.sender_name || chat?.display_name)),
