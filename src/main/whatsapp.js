@@ -133,15 +133,26 @@ export class WhatsAppService extends EventEmitter {
   async start() {
     this.stopped = false;
     clearTimeout(this.reconnectTimer);
+    // cada start() tem um número; se outro começar no meio (ex.: o notebook acordou e
+    // o timer de reconexão e o aviso de "voltou da suspensão" chegaram juntos), este
+    // desiste — duas conexões com a mesma sessão se atrapalham e as mensagens param
+    const gen = this.startGen = (this.startGen || 0) + 1;
+    const superseded = () => gen !== this.startGen || this.stopped;
     const registered = this.hasSession();
     // sessão incompleta (QR nunca lido): começa do zero pra gerar QR novo
     if (!registered) this.clearAuth();
     this.setStatus({ state: registered ? 'connecting' : 'starting', registered, qr: null, pairingCode: null, error: registered ? null : this.state.error });
 
     const { state, saveCreds } = await useMultiFileAuthState(this.authDir);
+    if (superseded()) return;
     await this.forgetRoute(state.creds, saveCreds);
     // versão do WhatsApp Web anunciada na conexão; nunca pode ficar vazia
     const version = await this.pickVersion();
+    if (superseded()) return;
+    // garante que não sobra nenhuma conexão anterior aberta
+    const prev = this.sock;
+    this.sock = null;
+    try { prev?.end(undefined); } catch { /* ignore */ }
     this.lastVersion = version;
     this.startedAt = Date.now();
     const browserIndex = this.browserIndex(registered);
@@ -164,7 +175,7 @@ export class WhatsAppService extends EventEmitter {
       this.scheduleReconnect(3000);
     }, 40000);
 
-    const sock = makeWASocket({
+    const sock = this.createSocket({
       version,
       auth: { creds: state.creds, keys: makeCacheableSignalKeyStore(state.keys, this.logger) },
       logger: this.logger,
@@ -188,6 +199,7 @@ export class WhatsAppService extends EventEmitter {
     sock.ev.on('contacts.upsert', (cs) => this.safe(() => this.onContacts(cs)));
     sock.ev.on('contacts.update', (cs) => this.safe(() => this.onContacts(cs)));
     sock.ev.on('lid-mapping.update', (m) => this.safe(() => this.onLidMapping([m])));
+    sock.ev.on('call', (calls) => this.safe(() => this.onCalls(calls)));
     sock.ev.on('messages.upsert', (u) => this.safe(() => this.onMessages(u.messages, u.type)));
     sock.ev.on('messages.update', (list) => this.safe(() => this.onMessageUpdates(list)));
     sock.ev.on('messages.reaction', (list) => this.safe(() => this.onReactions(list)));
@@ -206,6 +218,48 @@ export class WhatsAppService extends EventEmitter {
     await saveCreds();
     this.logger.warn('rota antiga do servidor descartada');
     return true;
+  }
+
+  createSocket(opts) { return makeWASocket(opts); }
+
+  /**
+   * Ligações de voz/vídeo: o Baileys só registra as perdidas. Aqui cada ligação vira
+   * uma linha na conversa ("recebida" → "atendida"/"recusada"/"perdida"), atualizada
+   * a cada mudança de situação (mesmo id da chamada).
+   */
+  async onCalls(calls) {
+    this.callState = this.callState || new Map();
+    for (const c of calls || []) {
+      if (!c?.id || !['offer', 'ringing', 'accept', 'reject', 'timeout', 'terminate'].includes(c.status)) continue;
+      const chatJid = await this.canonical(c.isGroup && c.groupJid ? c.groupJid : c.chatId, c.isGroup ? null : c.callerPn);
+      if (!chatJid || WhatsAppService.skipJid(chatJid)) continue;
+      const st = this.callState.get(c.id) || { accepted: false };
+      if (c.status === 'accept') st.accepted = true;
+      this.callState.set(c.id, st);
+      if (this.callState.size > 200) this.callState.delete(this.callState.keys().next().value);
+      const kind = `Chamada de ${c.isVideo ? 'vídeo' : 'voz'}${c.isGroup ? ' em grupo' : ''}`;
+      const text = {
+        offer: `${kind} recebida`,
+        ringing: `${kind} recebida`,
+        accept: `${kind} atendida`,
+        reject: `${kind} recusada`,
+        timeout: `${kind} perdida`,
+        terminate: st.accepted ? `${kind} atendida` : `${kind} perdida`,
+      }[c.status];
+      const ts = c.date ? new Date(c.date).getTime() : Date.now();
+      const existing = db.getMessage(chatJid, c.id);
+      if (existing && existing.text === text) continue;
+      const row = { chat_jid: chatJid, id: c.id, from_me: 0, sender: c.from || null, ts: existing?.ts || ts, type: 'call', text };
+      let isNew = false;
+      db.tx(() => {
+        isNew = db.saveMessage(row);
+        const unread = isNew && !this.isViewing(chatJid);
+        db.bumpChat(chatJid, row, { incrementUnread: unread, isGroup: !!c.isGroup });
+        if (!isNew) this.refreshPreview(chatJid);
+      });
+      this.markChanged(chatJid);
+      this.emit('message', { chatJid, id: c.id, isNew, notify: isNew && !c.offline });
+    }
   }
 
   /** Aviso de "visualização única" (o conteúdo fica só no celular) vira uma mensagem na conversa. */
@@ -434,6 +488,7 @@ export class WhatsAppService extends EventEmitter {
 
   async stop() {
     this.stopped = true;
+    this.startGen = (this.startGen || 0) + 1;
     clearTimeout(this.watchdog);
     clearTimeout(this.reconnectTimer);
     try { this.sock?.end(undefined); } catch { /* ignore */ }
@@ -610,10 +665,13 @@ export class WhatsAppService extends EventEmitter {
         }
         const row = parsed.row;
         const isNew = db.saveMessage(row);
-        const unreadInc = isNotify && isNew && !row.from_me && row.type !== 'system'
+        // mensagens que chegaram com o app fechado/suspenso vêm como 'append' (offline):
+        // também contam como não lidas, só não geram um aviso para cada uma
+        const unreadInc = (isNotify || type === 'append') && isNew && !row.from_me && row.type !== 'system'
           && !this.isViewing(chatJid);
         db.bumpChat(chatJid, row, { incrementUnread: unreadInc, isGroup });
-        if (isNotify && row.from_me) db.setChatUnread(chatJid, 0);
+        // você respondeu (pelo celular ou aqui): a conversa fica lida
+        if (row.from_me && (isNotify || (type === 'append' && isNew))) db.setChatUnread(chatJid, 0);
         results.push({ chatJid, id: row.id, isNew, row, notify: isNotify && isNew && !row.from_me, msg });
       }
     });

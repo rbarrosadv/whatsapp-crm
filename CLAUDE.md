@@ -155,7 +155,9 @@ Interface (`src/renderer`, JS puro em módulos ES, sem build):
   (`@s.whatsapp.net`) ou LID (`@lid`); o id principal é o número quando
   conhecido. `aliases` guarda lid → número e `db.addAlias` mescla
   mensagens/CRM/notas/tarefas se a conversa já existia pelo lid.
-- **Não lidas**: contadas por nós (`messages.upsert` tipo `notify`), não
+- **Não lidas**: contadas por nós (`messages.upsert` tipo `notify`, e também
+  `append` recebida — é assim que chegam as mensagens de quando o app estava
+  fechado/suspenso, sem aviso individual), não
   pelo `unreadCount` incremental do Baileys; `chats.update` com 0 zera,
   -1 marca como não lida; no histórico usamos o valor absoluto.
 - **Mensagem crua** (`messages.raw`, BufferJSON) só é guardada para mídia,
@@ -171,7 +173,10 @@ Interface (`src/renderer`, JS puro em módulos ES, sem build):
   428); o perfil que pareou fica em `auth/perfil.json` e é sempre reusado
   (outro perfil = WhatsApp recusa a sessão salva com 428; só sessões sem
   `perfil.json` alternam). Falta de internet (`isOfflineError`, ex.: DNS logo
-  após acordar) não conta como queda rápida: tenta de 3 em 3 s e um watchdog de 40 s reinicia se não vier QR.
+  após acordar) não conta como queda rápida: tenta de 3 em 3 s. Só existe
+  uma conexão por vez: `start()` tem um número (`startGen`) e desiste se
+  outro começou no meio (timer de reconexão + `powerMonitor.resume` juntos
+  abriam duas conexões com a mesma sessão e as mensagens paravam) e um watchdog de 40 s reinicia se não vier QR.
 - **Tipos de contato** (`contact_types`, `crm.type_id`) e **filtros da
   lista** (`chat_filters`, regras em JSON aplicadas por `chatMatchesRules`
   em `store.js`) são editáveis pelo usuário. Filtros nunca escondem
@@ -212,6 +217,9 @@ Interface (`src/renderer`, JS puro em módulos ES, sem build):
   Baileys descarta o aviso (`unavailable type=view_once…`), então
   `onRawMessageNode` escuta `CB:message` no socket e grava um texto
   "👁 … abra no celular" (`parse.viewOnceKind`, `extra.viewOnce`).
+- **Ligações**: o Baileys só grava as perdidas; `onCalls` (evento `call`)
+  grava/atualiza uma linha `type='call'` com o id da chamada (recebida →
+  atendida/recusada/perdida) e avisa a ligação recebida.
 - **Editar mensagem**: só texto seu, até 15 min (`editableCheck`);
   `sendMessage(jid, { text, edit: key })`. No composer, `editing` mostra a
   faixa "Editando" (Esc cancela). Fotos abrem em `views/imageviewer.js`
