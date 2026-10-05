@@ -1,0 +1,27 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+  <meta charset="utf-8">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self'">
+  <title>Barros Associados</title>
+  <link rel="stylesheet" href="../renderer/styles.css">
+</head>
+<body data-theme="dark">
+  <main class="login-page">
+    <form class="login-card" id="form">
+      <img class="login-logo" src="../../assets/logo-barros.jpg" alt="Barros Associados">
+      <h1>Onde está o sistema do escritório?</h1>
+      <label class="toggle-row"><div><b>No servidor do escritório</b><div class="muted small">O endereço que o sócio passou (ex.: sistema.barrosassociados.adv.br).</div></div>
+        <input type="radio" name="mode" value="remote" checked></label>
+      <label id="url-row">Endereço do servidor
+        <input class="input" id="url" placeholder="sistema.barrosassociados.adv.br" autocapitalize="none" spellcheck="false">
+      </label>
+      <label class="toggle-row"><div><b>Neste computador</b><div class="muted small">O sistema roda aqui mesmo (como o app antigo). Use só no computador principal.</div></div>
+        <input type="radio" name="mode" value="local"></label>
+      <div class="login-error" id="error" role="alert"></div>
+      <button class="btn btn-primary" type="submit">Continuar</button>
+    </form>
+  </main>
+  <script src="setup.js"></script>
+</body>
+</html>

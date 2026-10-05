@@ -8,8 +8,8 @@
   --border: #2a3942;
   --text: #e9edef;
   --muted: #8696a0;
-  --accent: #00a884;
-  --accent-2: #06cf9c;
+  --accent: #4b7590;
+  --accent-2: #6d97b1;
   --danger: #ef4444;
   --warn: #f59e0b;
   --bubble-in: #202c33;
@@ -30,8 +30,8 @@
   --border: #e2e6e9;
   --text: #111b21;
   --muted: #667781;
-  --accent: #008069;
-  --accent-2: #00a884;
+  --accent: #3d5a6c;
+  --accent-2: #557a90;
   --bubble-in: #ffffff;
   --bubble-out: #d9fdd3;
   --chat-bg: #efeae2;
@@ -714,3 +714,17 @@ body.discreet-msgs .reply-bar .quoted:hover {
 .iv-nav { position: absolute; top: 50%; transform: translateY(-50%); width: 48px; height: 64px; font-size: 34px; z-index: 1; }
 .iv-prev { left: 12px; }
 .iv-next { right: 12px; }
+
+/* ------------------------------------------------------------ login */
+.login-page { display: flex; align-items: center; justify-content: center; min-height: 100%; padding: 24px 16px; background: var(--bg); }
+.login-card { width: 100%; max-width: 400px; background: var(--panel); border: 1px solid var(--border); border-radius: 14px; padding: 28px 24px; box-shadow: var(--shadow); display: flex; flex-direction: column; gap: 14px; }
+.login-logo { display: block; width: 100%; max-width: 300px; margin: 0 auto 4px; border-radius: 10px; background: #fff; padding: 10px 14px; }
+.login-card h1 { font-size: 20px; margin: 0; text-align: center; }
+.login-card p { margin: 0; text-align: center; }
+.login-card label { display: flex; flex-direction: column; gap: 6px; font-size: 14px; }
+.login-card .input { height: 44px; font-size: 16px; }
+.login-card .btn { height: 46px; font-size: 16px; justify-content: center; }
+.login-error { color: var(--danger); min-height: 20px; text-align: center; font-size: 14px; }
+.team-presence { font-size: 12px; color: var(--accent-2); padding-top: 2px; }
+.login-card label.toggle-row { flex-direction: row; align-items: center; justify-content: space-between; gap: 12px; cursor: pointer; }
+.login-card label.toggle-row input[type=radio] { width: 20px; height: 20px; flex: none; }

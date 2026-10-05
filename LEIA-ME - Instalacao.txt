@@ -1,6 +1,17 @@
 ==============================================================
-  WHATSAPP CRM - GUIA DE INSTALACAO
+  BARROS ASSOCIADOS - GUIA DE INSTALACAO
 ==============================================================
+
+NOVIDADE DA VERSAO 5
+--------------------
+- O programa agora se chama "Barros Associados" (o atalho antigo
+  "WhatsApp CRM" e trocado sozinho pelo novo).
+- Cada pessoa entra com login e senha. Na primeira vez que abrir,
+  o programa pede para criar a conta do socio administrador
+  (nome, login e senha). Depois, em Configuracoes -> Equipe, voce
+  cadastra os advogados e a estagiaria.
+- Neste computador nada muda nos dados: as conversas, casos e a
+  conexao do WhatsApp continuam os mesmos.
 
 O QUE PRECISA
 -------------
@@ -23,7 +34,7 @@ O QUE PRECISA
    - Se o Windows mostrar "O Windows protegeu o computador",
      clique em "Mais informacoes" -> "Executar assim mesmo".
    - Espere terminar (na primeira vez leva alguns minutos).
-4) No final ele cria o atalho "WhatsApp CRM" na Area de Trabalho
+4) No final ele cria o atalho "Barros Associados" na Area de Trabalho
    e no Menu Iniciar, e abre o programa.
 
 
@@ -43,12 +54,12 @@ Se a camera nao ler o QR: na tela de conexao use a aba
 
 3. USO DO DIA A DIA
 -------------------
-- Abra pelo atalho "WhatsApp CRM" da Area de Trabalho.
+- Abra pelo atalho "Barros Associados" da Area de Trabalho.
 - Ao fechar a janela no X, ele continua rodando perto do relogio
   (para receber avisos). Para fechar de verdade: clique com o botao
   direito no icone perto do relogio -> "Sair".
-- A versao instalada aparece no titulo da janela
-  (ex.: "WhatsApp CRM 4.4.0").
+- A versao instalada aparece em Configuracoes
+  (em Configuracoes, no fim da pagina).
 
 
 4. ATUALIZAR PARA UMA VERSAO NOVA
@@ -101,6 +112,6 @@ pasta de dados. Ela e a chave de acesso ao seu WhatsApp.
 --------------
 1) Botao direito no icone perto do relogio -> "Sair".
 2) No celular, em "Dispositivos conectados", desconecte o CRM.
-3) Apague a pasta C:\whatsapp-crm e os atalhos "WhatsApp CRM".
+3) Apague a pasta C:\whatsapp-crm e os atalhos "Barros Associados".
 4) (Opcional, apaga TODOS os dados) Aperte Windows+R, digite
    %APPDATA%\WhatsAppCRM  e apague essa pasta.

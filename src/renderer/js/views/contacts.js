@@ -1,5 +1,5 @@
 // Lista de contatos em tabela, com filtros e exportação para planilha (CSV).
-import { h, clear, fill, fmtMoney, fmtListTime, formatPhone, phoneOf, normalize, debounce, toast, errToast } from '../util.js';
+import { h, clear, fill, fmtMoney, fmtListTime, formatPhone, phoneOf, normalize, debounce, toast, errToast, downloadBlob } from '../util.js';
 import { state, on, api, openChat, stageById, tagById, typeById } from '../store.js';
 import { avatarEl, stagePill, tagDots, typePill } from '../components.js';
 
@@ -92,8 +92,7 @@ async function exportCsv() {
       c.tag_ids.map((t) => tagById(t)?.name).filter(Boolean).join(', '), c.value ?? '',
       c.last_ts ? new Date(c.last_ts).toLocaleString('pt-BR') : '']);
   }
-  try {
-    const file = await api('contacts:exportCsv', rows);
-    if (file) toast(`Planilha salva em ${file}`, 'success', 6000);
-  } catch (e) { errToast(e); }
+  const esc = (v) => `"${String(v ?? '').replace(/"/g, '""')}"`;
+  const csv = `\ufeff${rows.map((row) => row.map(esc).join(';')).join('\r\n')}`;
+  downloadBlob(new Blob([csv], { type: 'text/csv;charset=utf-8' }), 'contatos-crm.csv');
 }

@@ -1,0 +1,40 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#1c2830">
+  <title>Barros Associados — Entrar</title>
+  <link rel="manifest" href="/manifest.webmanifest">
+  <link rel="icon" href="/assets/icon.png">
+  <link rel="apple-touch-icon" href="/assets/icon.png">
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <main class="login-page">
+    <form class="login-card" id="form" autocomplete="on">
+      <img class="login-logo" src="/assets/logo-barros.jpg" alt="Barros Associados">
+      <h1 id="title">Entrar</h1>
+      <p class="muted small" id="hint">Use o login e a senha que o escritório passou para você.</p>
+      <label id="code-row" hidden>Código de primeiro acesso
+        <input class="input" id="code" inputmode="numeric" autocomplete="one-time-code">
+      </label>
+      <label id="name-row" hidden>Seu nome completo
+        <input class="input" id="name" autocomplete="name">
+      </label>
+      <label>Login
+        <input class="input" id="login" autocomplete="username" autocapitalize="none" spellcheck="false" required>
+      </label>
+      <label>Senha
+        <input class="input" id="password" type="password" autocomplete="current-password" required>
+      </label>
+      <label id="again-row" hidden>Repita a senha
+        <input class="input" id="again" type="password" autocomplete="new-password">
+      </label>
+      <div class="login-error" id="error" role="alert"></div>
+      <button class="btn btn-primary" id="go" type="submit">Entrar</button>
+    </form>
+  </main>
+  <script type="module" src="login.js"></script>
+</body>
+</html>

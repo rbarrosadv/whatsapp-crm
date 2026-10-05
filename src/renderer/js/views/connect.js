@@ -1,5 +1,5 @@
 // Tela de conexão (QR code ou código pelo número) e faixa de status.
-import { h, fill, errToast, confirmDialog } from '../util.js';
+import { h, fill, errToast, confirmDialog, downloadUrl } from '../util.js';
 import { state, on, api } from '../store.js';
 import { statusLabel, runDiagnosis } from './settings.js';
 
@@ -79,11 +79,11 @@ function renderOverlay(el, s) {
       tabs,
       errorBox(s),
       steps,
-      h('p', { class: 'muted small' }, '🔒 Você só precisa fazer isso uma vez. A sessão fica salva neste computador e as conversas ficam armazenadas aqui mesmo.'),
+      h('p', { class: 'muted small' }, '🔒 Você só precisa fazer isso uma vez. A sessão fica salva no servidor do escritório e as conversas ficam armazenadas lá, para toda a equipe.'),
       h('div', { class: 'row wrap' },
         h('button', { class: 'btn', onclick: () => { api('wa:reset').catch(errToast); } }, '⟳ Gerar novo código'),
         h('button', { class: 'btn', onclick: runDiagnosis }, '🩺 Testar conexão'),
-        h('button', { class: 'btn', onclick: () => api('app:openLogs').catch(errToast) }, '📄 Abrir registros de erro')),
+        state.can.admin ? h('button', { class: 'btn', onclick: () => downloadUrl('/download/logs', 'registro-whatsapp.log') }, '📄 Baixar registros de erro') : null),
       state.demo ? h('p', { class: 'alert info' }, 'Modo demonstração: o código é fictício e a conexão acontece sozinha.') : null),
     right));
 }

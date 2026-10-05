@@ -2,7 +2,7 @@
 // prazos/audiências, documentos e notas — tudo numa janela com abas.
 import {
   h, fill, modal, toast, errToast, confirmDialog, promptDialog, popupMenu, fmtMoney, fmtDateTime, fmtDuration,
-  fmtSize, toLocalInput, fromLocalInput, normalize,
+  fmtSize, toLocalInput, fromLocalInput, normalize, openMedia, saveMedia, pickFiles, uploadFiles,
 } from '../util.js';
 import { state, on, api, stageById, openChat } from '../store.js';
 import { avatarEl, caseStageMenu, stagePicker } from '../components.js';
@@ -116,11 +116,12 @@ export async function openCase(id, { tab = 'dados' } = {}) {
 
     const tabs = [
       ['dados', '📋 Dados'],
-      ['honorarios', `💰 Honorários${k.overdue_payments ? ` ⚠${k.overdue_payments}` : ''}`],
+      state.can.finance ? ['honorarios', `💰 Honorários${k.overdue_payments ? ` ⚠${k.overdue_payments}` : ''}`] : null,
       ['prazos', `📅 Prazos${k.open_tasks ? ` (${k.open_tasks})` : ''}`],
       ['docs', `📎 Documentos${k.docs_count ? ` (${k.docs_count})` : ''}`],
       ['notas', '📝 Notas'],
-    ];
+    ].filter(Boolean);
+    if (current === 'honorarios' && !state.can.finance) current = 'dados';
     const content = h('div', { class: 'case-content' });
     fill(body,
       h('div', { class: 'case-head' },
@@ -226,14 +227,17 @@ export async function openCase(id, { tab = 'dados' } = {}) {
     const docs = await api('cases:docs', id);
     fill(el,
       h('div', { class: 'row wrap' },
-        h('button', { class: 'btn btn-sm btn-primary', onclick: () => api('cases:addFiles', id).catch(errToast) }, '＋ Adicionar do computador'),
+        h('button', { class: 'btn btn-sm btn-primary', onclick: async () => {
+          const files = await pickFiles();
+          if (!files.length) return;
+          try { toast('Enviando…'); await api('cases:addFiles', id, await uploadFiles(files)); } catch (e) { errToast(e); }
+        } }, '＋ Adicionar do computador'),
         h('span', { class: 'muted small' }, 'Para guardar um arquivo que o cliente mandou no WhatsApp: na conversa, clique em ▾ na mensagem → “Anexar ao caso”.')),
       docs.length ? h('div', { class: 'doc-list' }, docs.map((d) => h('div', { class: 'doc-row' },
         h('span', { class: 'doc-icon' }, /image/.test(d.mime || d.name) || /\.(jpe?g|png|webp)$/i.test(d.name) ? '🖼' : /pdf/i.test(d.mime || d.name) ? '📕' : /audio|ogg|mp3/i.test(d.mime || '') ? '🎤' : '📄'),
         h('div', { class: 'grow' }, h('div', { class: 'ellipsis' }, d.name), h('div', { class: 'muted small' }, [fmtDateTime(d.created_at), fmtSize(d.size), d.msg_id ? 'do WhatsApp' : 'do computador'].filter(Boolean).join(' · '))),
-        h('button', { class: 'btn btn-sm', onclick: () => api('media:open', d.file).catch(errToast) }, 'Abrir'),
-        h('button', { class: 'btn btn-sm', onclick: () => api('media:saveAs', d.file, d.name).catch(errToast) }, 'Salvar como…'),
-        h('button', { class: 'icon-btn small', title: 'Mostrar na pasta', onclick: () => api('media:showInFolder', d.file) }, '📂'),
+        h('button', { class: 'btn btn-sm', onclick: () => openMedia(d.file, d.name).catch(errToast) }, 'Abrir'),
+        h('button', { class: 'btn btn-sm', onclick: () => saveMedia(d.file, d.name) }, 'Salvar como…'),
         h('button', {
           class: 'icon-btn small', title: 'Tirar da lista do caso',
           onclick: async () => { if (await confirmDialog(`Tirar “${d.name}” dos documentos do caso?`, { okLabel: 'Tirar', danger: true })) api('cases:deleteDoc', d.id); },

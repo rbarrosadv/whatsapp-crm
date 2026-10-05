@@ -1,6 +1,6 @@
 // Configurações: conexão, notificações, funis, etiquetas, respostas
 // rápidas, backup e importação do Kanban antigo.
-import { h, fill, modal, toast, errToast, confirmDialog, formatPhone, phoneOf, PALETTE } from '../util.js';
+import { h, fill, modal, toast, errToast, confirmDialog, formatPhone, phoneOf, PALETTE, downloadUrl, fmtDateTime } from '../util.js';
 import { state, on, api, setSetting } from '../store.js';
 
 let root;
@@ -11,13 +11,131 @@ export function mountSettings(el) {
   on('config', () => state.view === 'settings' && render());
   on('status', () => state.view === 'settings' && render());
   on('settings', () => state.view === 'settings' && render());
+  on('me', () => state.view === 'settings' && render());
+  on('users', () => state.view === 'settings' && render());
 }
+
+// configurações que valem para o escritório todo (só sócio muda)
+const OFFICE_KEYS = ['sendReadReceipts', 'forgottenHours', 'chargeTemplate', 'pixKey', 'paymentNoticeDays',
+  'staleCaseDays', 'googleSync', 'googleCalendarId', 'signMessages'];
 
 function toggle(key, label, hint, def = true) {
   const val = state.settings[key] ?? def;
-  return h('label', { class: 'toggle-row' },
+  const locked = OFFICE_KEYS.includes(key) && !state.can.admin;
+  return h('label', { class: 'toggle-row', title: locked ? 'Só um sócio pode mudar esta configuração do escritório.' : null },
     h('div', null, h('div', null, label), hint ? h('div', { class: 'muted small' }, hint) : null),
-    h('input', { type: 'checkbox', class: 'switch', checked: !!val, onchange: (e) => setSetting(key, e.target.checked).catch(errToast) }));
+    h('input', { type: 'checkbox', class: 'switch', checked: !!val, disabled: locked, onchange: (e) => setSetting(key, e.target.checked).catch(errToast) }));
+}
+
+/** Opção deste computador (só no app de desktop). */
+function desktopToggle(key, label, hint, def) {
+  if (!window.desktop?.getSetting) return null;
+  const input = h('input', {
+    type: 'checkbox', class: 'switch', checked: !!def,
+    onchange: (e) => window.desktop.setSetting(key, e.target.checked).catch(errToast),
+  });
+  window.desktop.getSetting(key).then((v) => { input.checked = !!(v ?? def); }).catch(() => {});
+  return h('label', { class: 'toggle-row' },
+    h('div', null, h('div', null, label), hint ? h('div', { class: 'muted small' }, hint) : null), input);
+}
+
+// ------------------------------------------------------------ minha conta e equipe
+
+function accountSection() {
+  const me = state.me;
+  return section('👤 Minha conta',
+    h('div', { class: 'conn-info' },
+      h('div', null, h('b', null, me.name), h('div', { class: 'muted small' }, `${me.roleLabel} · login: ${me.login}`))),
+    h('p', { class: 'muted small' }, `No WhatsApp do escritório, suas mensagens saem assinadas como “*${me.signature}:*”.`),
+    h('div', { class: 'row wrap' },
+      h('button', { class: 'btn', onclick: editMe }, '✏️ Nome e assinatura'),
+      h('button', { class: 'btn', onclick: changePassword }, '🔑 Trocar senha'),
+      h('button', { class: 'btn btn-danger', onclick: () => window.api.logout() }, 'Sair')));
+}
+
+function editMe() {
+  const name = h('input', { class: 'input', value: state.me.name });
+  const sig = h('input', { class: 'input', value: state.me.signature, placeholder: 'Ex.: Dr. Barros' });
+  modal({
+    title: 'Nome e assinatura',
+    body: h('div', { class: 'form' },
+      h('label', null, 'Nome', name),
+      h('label', null, 'Assinatura no WhatsApp', sig),
+      h('p', { class: 'muted small' }, 'Vai no começo de cada mensagem que você enviar, em negrito.')),
+    actions: [{ label: 'Cancelar' }, {
+      label: 'Salvar', primary: true,
+      onClick: async () => { await api('me:update', { name: name.value, signature: sig.value }); toast('Salvo', 'success'); },
+    }],
+  });
+}
+
+function changePassword() {
+  const cur = h('input', { class: 'input', type: 'password', autocomplete: 'current-password' });
+  const next = h('input', { class: 'input', type: 'password', autocomplete: 'new-password' });
+  const again = h('input', { class: 'input', type: 'password', autocomplete: 'new-password' });
+  modal({
+    title: 'Trocar senha',
+    body: h('div', { class: 'form' },
+      h('label', null, 'Senha atual', cur), h('label', null, 'Nova senha (mínimo 6 caracteres)', next), h('label', null, 'Repita a nova senha', again)),
+    actions: [{ label: 'Cancelar' }, {
+      label: 'Trocar', primary: true,
+      onClick: async () => {
+        if (next.value !== again.value) throw new Error('As duas senhas novas não são iguais.');
+        await api('me:password', cur.value, next.value);
+        toast('Senha trocada', 'success');
+      },
+    }],
+  });
+}
+
+let usersCache = null;
+function teamSection() {
+  if (!state.can.admin) return null;
+  if (!usersCache) {
+    api('users:list').then((u) => { usersCache = u; render(); }).catch(errToast);
+    return section('👥 Equipe', h('p', { class: 'muted small' }, 'Carregando…'));
+  }
+  return section('👥 Equipe',
+    h('p', { class: 'muted small' }, 'Cada pessoa entra com o próprio login. Estagiário(a) não vê o financeiro; só sócio muda as configurações do escritório e a equipe.'),
+    ...usersCache.map((u) => h('div', { class: `list-row ${u.active ? '' : 'muted'}` },
+      h('div', { class: 'grow' }, h('b', null, u.name), h('div', { class: 'muted small' },
+        [u.roleLabel, `login: ${u.login}`, `assina “${u.signature}”`, u.active ? (u.last_login ? `último acesso ${fmtDateTime(u.last_login)}` : 'nunca entrou') : 'desativado'].join(' · '))),
+      h('button', { class: 'btn btn-sm', onclick: () => userEditor(u) }, 'Editar'))),
+    h('button', { class: 'btn', onclick: () => userEditor() }, '＋ Adicionar pessoa'),
+    toggle('signMessages', 'Assinar as mensagens com o nome de quem enviou', 'Ex.: “*Dr. Barros:*” no começo de cada mensagem do WhatsApp do escritório.'));
+}
+
+async function userEditor(u = {}) {
+  const roles = await api('users:roles');
+  const name = h('input', { class: 'input', value: u.name || '' });
+  const login = h('input', { class: 'input', value: u.login || '', placeholder: 'ex.: isabella' });
+  const sig = h('input', { class: 'input', value: u.id ? u.signature : '', placeholder: 'Ex.: Dra. Lima (vazio = primeiro nome)' });
+  const role = h('select', { class: 'input' }, Object.entries(roles).map(([v, l]) => h('option', { value: v, selected: (u.role || 'advogado') === v }, l)));
+  const pass = h('input', { class: 'input', type: 'password', autocomplete: 'new-password', placeholder: u.id ? 'deixe vazio para manter' : 'mínimo 6 caracteres' });
+  const active = h('input', { type: 'checkbox', class: 'switch', checked: u.id ? u.active : true });
+  modal({
+    title: u.id ? `Editar ${u.name}` : 'Adicionar pessoa à equipe',
+    body: h('div', { class: 'form' },
+      h('label', null, 'Nome', name),
+      h('label', null, 'Login (para entrar no sistema)', login),
+      h('label', null, 'Perfil', role),
+      h('label', null, 'Assinatura no WhatsApp', sig),
+      h('label', null, u.id ? 'Nova senha' : 'Senha inicial', pass),
+      u.id ? h('label', { class: 'toggle-row' }, h('div', null, 'Ativo (pode entrar no sistema)'), active) : null,
+      h('p', { class: 'muted small' }, 'Passe o login e a senha inicial para a pessoa; ela pode trocar a senha em Configurações → Minha conta.')),
+    actions: [{ label: 'Cancelar' }, {
+      label: 'Salvar', primary: true,
+      onClick: async () => {
+        await api('users:save', {
+          id: u.id, name: name.value, login: login.value, role: role.value, signature: sig.value,
+          password: pass.value || undefined, active: active.checked,
+        });
+        usersCache = null;
+        toast('Salvo', 'success');
+        render();
+      },
+    }],
+  });
 }
 
 function section(title, ...children) {
@@ -31,17 +149,19 @@ function render() {
   fill(root, 
     h('div', { class: 'page-head' }, h('h2', null, 'Configurações')),
     h('div', { class: 'settings-grid' },
+      accountSection(),
+      teamSection(),
       section('📱 Conexão com o WhatsApp',
         h('div', { class: 'conn-info' },
           h('span', { class: `status-dot ${connected ? 'ok' : 'warn'}` }),
           connected ? h('div', null, h('b', null, 'Conectado'), me ? h('div', { class: 'muted' }, `${me.name || ''} ${formatPhone(phoneOf(me.jid))}`) : null)
             : h('div', null, h('b', null, statusLabel(st.state)), st.error ? h('div', { class: 'muted small' }, st.error) : null)),
-        h('p', { class: 'muted small' }, 'A sessão fica salva neste computador: você não precisa ler o QR code de novo ao abrir o app. Para trocar de número, desconecte aqui.'),
+        h('p', { class: 'muted small' }, 'A sessão fica salva no servidor do escritório: ninguém precisa ler o QR code de novo. Para trocar de número, um sócio desconecta aqui.'),
         h('div', { class: 'row' },
           !connected ? h('button', { class: 'btn', onclick: () => api('wa:reconnect').catch(errToast) }, '⟳ Tentar reconectar') : null,
           !st.registered ? h('button', { class: 'btn btn-primary', onclick: () => api('wa:reset').catch(errToast) }, '📱 Mostrar QR code') : null,
           h('button', { class: 'btn', onclick: runDiagnosis }, '🩺 Testar conexão'),
-          h('button', {
+          state.can.admin && h('button', {
             class: 'btn btn-danger',
             onclick: async () => {
               if (!await confirmDialog('Desconectar este WhatsApp do CRM? As conversas e dados do CRM continuam salvos no computador. Para usar de novo será preciso ler o QR code.', { okLabel: 'Desconectar', danger: true })) return;
@@ -50,14 +170,14 @@ function render() {
           }, 'Desconectar WhatsApp'))),
 
       section('🔔 Notificações e comportamento',
-        toggle('notifications', 'Avisos de novas mensagens', 'Mostra um aviso do Windows quando chega mensagem.'),
+        toggle('notifications', 'Avisos de novas mensagens', 'Mostra um aviso no computador ou no celular quando chega mensagem (vale só para você).'),
         toggle('notificationPreview', 'Mostrar o texto da mensagem no aviso'),
         h('div', { class: 'row wrap' },
           h('button', { class: 'btn btn-sm', onclick: () => api('app:testNotification').catch(errToast) }, '🔔 Testar notificação'),
-          h('button', { class: 'btn btn-sm', onclick: () => api('app:openNotificationSettings').catch(errToast) }, 'Abrir notificações do Windows')),
-        h('p', { class: 'muted small' }, 'Se o teste não aparecer: em Configurações do Windows → Sistema → Notificações, confira se “WhatsApp CRM” está ligado e se o “Não perturbe” / “Assistente de foco” está desligado.'),
-        toggle('minimizeToTray', 'Continuar rodando ao fechar a janela', 'O app fica perto do relógio e segue recebendo mensagens e lembretes.'),
-        toggle('openAtLogin', 'Abrir junto com o Windows', null, false),
+          window.desktop?.openNotificationSettings ? h('button', { class: 'btn btn-sm', onclick: () => window.desktop.openNotificationSettings() }, 'Abrir notificações do Windows') : null),
+        h('p', { class: 'muted small' }, 'Se o teste não aparecer: em Configurações do Windows → Sistema → Notificações, confira se “Barros Associados” está ligado e se o “Não perturbe” / “Assistente de foco” está desligado.'),
+        desktopToggle('minimizeToTray', 'Continuar rodando ao fechar a janela', 'O app fica perto do relógio e segue avisando de mensagens e lembretes.', true),
+        desktopToggle('openAtLogin', 'Abrir junto com o Windows', 'Vale só para este computador.', false),
         toggle('sendReadReceipts', 'Marcar como lida no celular ao abrir a conversa', 'Envia a confirmação de leitura (tique azul), se ela estiver ativa no seu WhatsApp.'),
         toggle('enterToSend', 'Enter envia a mensagem', 'Desligado: use Ctrl+Enter para enviar e Enter para pular linha.'),
         h('label', { class: 'toggle-row' }, h('div', null, 'Tema'),
@@ -74,7 +194,7 @@ function render() {
         toggle('discreet', 'Modo discreto ligado', null, false),
         toggle('discreetMessages', 'Embaçar também as mensagens da conversa aberta', 'Útil se for mostrar a tela com uma conversa aberta.', false)),
 
-      section('👥 Tipos de contato',
+      state.can.configure && section('👥 Tipos de contato',
         h('p', { class: 'muted small' }, 'Classifique cada conversa (ex.: Pessoal, Cliente, Empresa). Tipos marcados como pessoais não entram em "Aguardando resposta" nem nos avisos de conversa esquecida.'),
         ...state.contactTypes.map((t, i) => h('div', { class: 'list-row' },
           h('span', { class: 'tag-chip', style: { '--c': t.color } }, `${t.icon || ''} ${t.name}`),
@@ -85,7 +205,7 @@ function render() {
             h('button', { class: 'btn btn-sm', onclick: () => typeEditor(t) }, 'Editar')))),
         h('button', { class: 'btn', onclick: () => typeEditor() }, '＋ Novo tipo')),
 
-      section('🔎 Filtros das conversas',
+      state.can.configure && section('🔎 Filtros das conversas',
         h('p', { class: 'muted small' }, 'Os botões no topo da lista de conversas. Crie os seus combinando tipo de contato, etiquetas, etapas, não lidas, aguardando resposta… Nada some: é só uma forma de ver a lista.'),
         ...state.filters.map((f, i) => h('div', { class: 'list-row' },
           h('span', null, `${f.icon || ''} ${f.name}`),
@@ -96,7 +216,7 @@ function render() {
             h('button', { class: 'btn btn-sm', onclick: () => filterEditor(f) }, 'Editar')))),
         h('button', { class: 'btn', onclick: () => filterEditor() }, '＋ Novo filtro')),
 
-      section('💰 Honorários e cobrança',
+      state.can.finance && section('💰 Honorários e cobrança',
         h('label', { class: 'field' }, h('span', null, 'Chave PIX / dados para pagamento'),
           h('input', { class: 'input', value: state.settings.pixKey || '', placeholder: 'Ex.: CNPJ, e-mail ou celular', onchange: (e) => setSetting('pixKey', e.target.value.trim()).catch(errToast) })),
         h('label', { class: 'field' }, h('span', null, 'Mensagem de cobrança'),
@@ -111,7 +231,7 @@ function render() {
             [[0, 'Nunca'], [7, '7 dias'], [15, '15 dias'], [30, '30 dias'], [60, '60 dias']].map(([v, l]) =>
               h('option', { value: v, selected: Number(state.settings.staleCaseDays ?? 15) === v }, l))))),
 
-      section('📊 Funis e etapas',
+      state.can.configure && section('📊 Funis e etapas',
         h('p', { class: 'muted small' }, 'Cada funil tem suas etapas (colunas do quadro). Ex.: Atendimento → Novo, Proposta, Fechado.'),
         ...state.pipelines.map((p, i) => h('div', { class: 'list-row' },
           h('span', null, `${p.icon || ''} ${p.name}`),
@@ -122,7 +242,7 @@ function render() {
             h('button', { class: 'btn btn-sm', onclick: () => pipelineEditor(p) }, 'Editar')))),
         h('button', { class: 'btn', onclick: () => pipelineEditor() }, '＋ Novo funil')),
 
-      section('🏷 Etiquetas',
+      state.can.configure && section('🏷 Etiquetas',
         ...state.tags.map((t) => h('div', { class: 'list-row' },
           h('span', { class: 'tag-chip', style: { '--c': t.color } }, t.name),
           h('div', { class: 'row' },
@@ -142,15 +262,11 @@ function render() {
             h('button', { class: 'btn btn-sm btn-danger', onclick: () => api('quick:delete', r.id).catch(errToast) }, 'Excluir')))),
         h('button', { class: 'btn', onclick: () => quickEditor() }, '＋ Nova resposta rápida')),
 
-      section('💾 Dados e backup',
-        h('p', { class: 'muted small' }, 'Tudo fica salvo neste computador, na pasta:'),
+      state.can.admin && section('💾 Dados e backup',
+        h('p', { class: 'muted small' }, 'Tudo fica salvo no servidor do escritório, na pasta:'),
         h('code', { class: 'path' }, state.dataDir),
         h('div', { class: 'row wrap' },
-          h('button', {
-            class: 'btn',
-            onclick: async () => { try { const f = await api('backup:export'); if (f) toast(`Backup salvo em ${f}`, 'success', 6000); } catch (e) { errToast(e); } },
-          }, '⬇ Fazer backup do CRM'),
-          h('button', { class: 'btn', onclick: () => api('app:openDataDir') }, '📂 Abrir pasta de dados')),
+          h('button', { class: 'btn', onclick: () => downloadUrl('/download/backup') }, '⬇ Baixar backup do sistema')),
         state.legacyAvailable ? h('div', { class: 'legacy' },
           h('p', null, h('b', null, 'Kanban antigo encontrado. '), 'Importe as categorias, colunas, notas e prazos do app anterior.',
             state.legacyPending ? h('span', { class: 'muted small' }, ` (${state.legacyPending} classificação(ões) aguardando a conversa aparecer)`) : null),
@@ -198,6 +314,7 @@ export function applyTheme() {
   const t = state.settings.theme || 'system';
   const dark = t === 'dark' || (t === 'system' && window.matchMedia('(prefers-color-scheme: dark)').matches);
   document.documentElement.dataset.theme = dark ? 'dark' : 'light';
+  try { localStorage.setItem('theme', t); } catch { /* ignore */ } // a tela de login usa o mesmo tema
 }
 
 async function movePipeline(i, dir) {

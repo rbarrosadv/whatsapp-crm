@@ -1,4 +1,4 @@
-// Estado compartilhado da interface + ponte com o processo principal.
+// Estado compartilhado da interface + ponte com o servidor (bridge.js).
 
 export const api = (method, ...args) => window.api.call(method, ...args);
 
@@ -30,11 +30,19 @@ export const state = {
   legacyAvailable: false,
   legacyPending: 0,
   dataDir: '',
+  me: null, // quem está usando: { id, name, role, roleLabel, signature }
+  can: {}, // o que o perfil pode: { finance, admin, configure, deleteCases }
+  viewers: [], // equipe com conversa aberta: [{ jid, userId, name }]
+  typing: new Map(), // jid → { name, until } (alguém da equipe escrevendo)
 };
 
 export async function bootstrap() {
+  await window.api.ready;
   const b = await api('bootstrap');
   state.demo = b.demo;
+  state.me = b.me;
+  state.can = b.can;
+  state.viewers = b.viewers || [];
   state.status = b.status;
   state.pipelines = b.pipelines;
   state.tags = b.tags;
@@ -73,6 +81,53 @@ export async function bootstrap() {
   window.api.on('ui:open-chat', (jid) => openChat(jid));
   window.api.on('ui:open-view', (v) => setView(v));
   window.api.on('ui:open-filter', (kind) => { setView('inbox'); emit('open-filter', kind); });
+
+  // equipe
+  window.api.on('me:changed', (me) => { state.me = me; emit('me', me); });
+  window.api.on('users:changed', () => emit('users'));
+  window.api.on('settings:office', async () => {
+    state.settings = await api('settings:get');
+    emit('settings', state.settings);
+  });
+  window.api.on('viewers', (list) => { state.viewers = list; emit('viewers', list); });
+  window.api.on('chats:typing', ({ jid, userId, name }) => {
+    if (userId === state.me?.id) return;
+    state.typing.set(jid, { name, until: Date.now() + 6000 });
+    emit('typing', jid);
+    setTimeout(() => emit('typing', jid), 6100);
+  });
+
+  // a janela está em foco? (conversa aberta + foco = mensagens lidas)
+  const sendFocus = () => api('app:focus', document.hasFocus() && !document.hidden).catch(() => {});
+  window.addEventListener('focus', sendFocus);
+  window.addEventListener('blur', sendFocus);
+  document.addEventListener('visibilitychange', sendFocus);
+
+  // servidor reiniciou ou a internet voltou: atualiza tudo
+  window.api.on('bridge:reconnected', async () => {
+    try {
+      const fresh = await api('bootstrap');
+      state.status = fresh.status;
+      state.viewers = fresh.viewers || [];
+      setChats(fresh.chats);
+      emit('status', state.status);
+      emit('chats', { changed: null });
+      if (state.activeJid) api('chats:setActive', state.activeJid).catch(() => {});
+      sendFocus();
+    } catch { /* tenta de novo na próxima */ }
+  });
+  window.api.on('bridge:online', (online) => emit('online', online));
+}
+
+/** Outras pessoas da equipe com esta conversa aberta. */
+export function othersViewing(jid) {
+  return state.viewers.filter((v) => v.jid === jid && v.userId !== state.me?.id).map((v) => v.name);
+}
+
+/** Alguém da equipe escrevendo nesta conversa agora (nome) ou null. */
+export function someoneTyping(jid) {
+  const t = state.typing.get(jid);
+  return t && t.until > Date.now() ? t.name : null;
 }
 
 function setChats(list) {

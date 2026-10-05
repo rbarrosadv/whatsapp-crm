@@ -3,15 +3,14 @@ import { openImageViewer } from './imageviewer.js';
 import {
   h, clear, fill, fmtTime, fmtDay, fmtSize, fmtSeconds, formatWhatsApp, formatPhone, phoneOf, colorFor,
   toast, errToast, modal, confirmDialog, popupMenu, EMOJIS, QUICK_REACTIONS,
+  mediaUrl, openMedia, saveMedia, pickFiles,
 } from '../util.js';
-import { state, on, emit, api, stageById, openChat, typeById } from '../store.js';
+import { state, on, emit, api, stageById, openChat, typeById, othersViewing, someoneTyping } from '../store.js';
 import { avatarEl, ticks, emptyState, typeMenu, classifyBar } from '../components.js';
 import { openCase, newCaseDialog } from './casemodal.js';
 import { newChatDialog } from './chatlist.js';
 
-export function mediaUrl(rel) {
-  return `crm-media://file/${String(rel).split(/[\\/]/).map(encodeURIComponent).join('/')}`;
-}
+export { mediaUrl };
 
 let root;
 let current = null; // { jid, messages: [], els: Map, loadingOlder, noMoreLocal }
@@ -34,13 +33,15 @@ export function mountChatView(el, { onTogglePanel }) {
   on('status', () => current && renderComposerState());
   on('config', () => current && renderHeader());
   on('cases', (j) => { if (current && (!j || j === current.jid)) renderHeader(); });
+  on('viewers', () => current && renderHeader());
+  on('typing', (j) => { if (current?.jid === j) renderHeader(); });
   root._togglePanel = onTogglePanel;
   renderEmpty();
 }
 
 function renderEmpty() {
   current = null;
-  fill(root, emptyState('💬', 'WhatsApp CRM',
+  fill(root, emptyState('💬', 'Barros Associados',
     'Escolha uma conversa na lista para ver as mensagens e a ficha do contato.',
     h('button', { class: 'btn btn-primary', onclick: newChatDialog }, '＋ Nova conversa')));
 }
@@ -98,12 +99,22 @@ function renderHeader() {
     avatarEl(chat, 40),
     h('div', { class: 'chat-head-info', onclick: () => root._togglePanel?.(true) },
       h('div', { class: 'chat-head-name' }, chat.display_name),
-      h('div', { class: 'chat-head-sub' }, sub, chat.company ? ` · ${chat.company}` : '')),
+      h('div', { class: 'chat-head-sub' }, sub, chat.company ? ` · ${chat.company}` : ''),
+      teamPresence(chat.jid)),
     typeBtn,
     stageBtn,
     h('button', { class: 'icon-btn', title: 'Marcar como não lida', onclick: () => api('chats:markUnread', chat.jid) }, '●'),
     h('button', { class: 'icon-btn', title: 'Ficha do contato (CRM)', onclick: () => root._togglePanel?.() }, '☰'),
   );
+}
+
+/** Outras pessoas da equipe nesta conversa (evita duas respostas ao mesmo cliente). */
+function teamPresence(jid) {
+  const writer = someoneTyping(jid);
+  if (writer) return h('div', { class: 'team-presence' }, `✍ ${writer} está respondendo…`);
+  const others = othersViewing(jid);
+  if (!others.length) return null;
+  return h('div', { class: 'team-presence' }, `👀 ${others.join(', ')} também ${others.length > 1 ? 'estão' : 'está'} com esta conversa aberta`);
 }
 
 async function casesMenu(anchor, chat) {
@@ -379,8 +390,8 @@ function mediaBlock(m) {
           h('div', { class: 'muted small' }, [fmtSize(m.media_size), (m.media_mime || '').split('/')[1]].filter(Boolean).join(' · '))),
         url
           ? h('div', { class: 'doc-actions' },
-            h('button', { class: 'btn btn-sm', onclick: () => api('media:open', m.media_file).catch(errToast) }, 'Abrir'),
-            h('button', { class: 'btn btn-sm', onclick: () => api('media:saveAs', m.media_file, m.media_name).catch(errToast) }, 'Salvar como…'))
+            h('button', { class: 'btn btn-sm', onclick: () => Promise.resolve().then(() => openMedia(m.media_file, m.media_name)).catch(errToast) }, 'Abrir'),
+            h('button', { class: 'btn btn-sm', onclick: () => saveMedia(m.media_file, m.media_name) }, 'Salvar como…'))
           : downloadBtn(m, '⬇ Baixar'));
     case 'location': {
       const loc = parseJson(m.extra, {});
@@ -424,9 +435,8 @@ function viewImage(url, m) {
   openImageViewer(items, index, {
     actions: (x) => [
       { label: '📎', title: 'Anexar ao caso', onClick: (e) => attachToCase(e.currentTarget, x) },
-      { label: '💾', title: 'Salvar como…', onClick: () => api('media:saveAs', x.media_file, x.media_name || `imagem-${x.id}.jpg`) },
-      { label: '📂', title: 'Mostrar na pasta', onClick: () => api('media:showInFolder', x.media_file) },
-      { label: '🖼', title: 'Abrir no visualizador do Windows', onClick: () => api('media:open', x.media_file) },
+      { label: '💾', title: 'Salvar como…', onClick: () => saveMedia(x.media_file, x.media_name || `imagem-${x.id}.jpg`) },
+      { label: '🖼', title: 'Abrir em outro programa', onClick: () => openMedia(x.media_file, x.media_name || `imagem-${x.id}.jpg`).catch(errToast) },
     ],
   });
 }
@@ -441,8 +451,7 @@ function msgMenu(anchor, m) {
     ...(['image', 'video', 'audio', 'ptt', 'document', 'sticker'].includes(m.type) && !m.deleted
       ? [{ icon: '📎', label: 'Anexar ao caso…', onClick: () => attachToCase(anchor, m) }] : []),
     ...(m.media_file ? [
-      { icon: '💾', label: 'Salvar arquivo como…', onClick: () => api('media:saveAs', m.media_file, m.media_name) },
-      { icon: '📂', label: 'Mostrar na pasta', onClick: () => api('media:showInFolder', m.media_file) },
+      { icon: '💾', label: 'Salvar arquivo como…', onClick: () => saveMedia(m.media_file, m.media_name) },
     ] : []),
     ...(canEdit(m) ? [{ icon: '✏️', label: 'Editar', onClick: () => startEdit(m) }] : []),
     ...(m.from_me && !m.deleted ? ['-', { icon: '🗑', label: 'Apagar para todos', danger: true, onClick: () => deleteMsg(m) }] : []),
@@ -495,7 +504,13 @@ function startEdit(m) {
   replyTo = null;
   renderComposer();
   const ta = current.composerEl.querySelector('textarea');
-  if (ta) { ta.value = m.text; ta.dispatchEvent(new Event('input')); ta.focus(); ta.setSelectionRange(ta.value.length, ta.value.length); }
+  if (ta) { ta.value = splitSignature(m.text).body; ta.dispatchEvent(new Event('input')); ta.focus(); ta.setSelectionRange(ta.value.length, ta.value.length); }
+}
+
+/** Separa a assinatura da equipe ("*Nome:*" na 1ª linha) do texto da mensagem. */
+function splitSignature(text) {
+  const mt = /^(\*[^*\n]{1,60}:\*\n)([\s\S]*)$/.exec(text || '');
+  return mt ? { sig: mt[1], body: mt[2] } : { sig: '', body: text || '' };
 }
 
 export function canEdit(m) {
@@ -513,7 +528,9 @@ function renderComposer() {
   const chat = state.chats.get(c.jid);
   const draftKey = `draft:${c.jid}`;
   const ta = h('textarea', {
-    class: 'composer-input', rows: 1, placeholder: 'Digite uma mensagem  ( / para respostas rápidas )',
+    class: 'composer-input', rows: 1, placeholder: state.settings.signMessages === false || !state.me
+      ? 'Digite uma mensagem  ( / para respostas rápidas )'
+      : `Mensagem — sai assinada como “${state.me.signature}”  ( / para respostas rápidas )`,
     value: sessionStorage.getItem(draftKey) || '',
   });
   const suggest = h('div', { class: 'quick-suggest hidden' });
@@ -528,9 +545,9 @@ function renderComposer() {
     if (!text) return;
     if (editing) {
       const m = editing;
-      if (text === m.text) { cancelEdit(); return; }
+      if (text === splitSignature(m.text).body) { cancelEdit(); return; }
       try {
-        await api('messages:edit', c.jid, m.id, text);
+        await api('messages:edit', c.jid, m.id, splitSignature(m.text).sig + text); // mantém a assinatura original
         cancelEdit();
       } catch (e) { errToast(e); }
       return;
@@ -577,7 +594,11 @@ function renderComposer() {
     autosize();
     sessionStorage.setItem(draftKey, ta.value);
     updateSuggest();
-    if (Date.now() - lastTyping > 4000) { lastTyping = Date.now(); api('chats:presence', c.jid, 'composing').catch(() => {}); }
+    if (Date.now() - lastTyping > 4000) {
+      lastTyping = Date.now();
+      api('chats:presence', c.jid, 'composing').catch(() => {});
+      api('chats:typing', c.jid).catch(() => {}); // avisa a equipe
+    }
     clearTimeout(typingTimer);
     typingTimer = setTimeout(() => api('chats:presence', c.jid, 'paused').catch(() => {}), 3000);
   });
@@ -618,8 +639,8 @@ function renderComposer() {
   const attachBtn = h('button', {
     class: 'icon-btn', title: 'Enviar arquivo, foto ou documento',
     onclick: async () => {
-      const paths = await api('messages:pickFiles');
-      if (paths.length) confirmSendFiles(paths);
+      const files = await pickFiles();
+      if (files.length) confirmSendFiles(files);
     },
   }, '📎');
   const quickBtn = h('button', {
@@ -678,14 +699,10 @@ function setupDrop(pane) {
   });
 }
 
-/** files: lista de caminhos (string) ou objetos File (colados/arrastados) */
+/** files: objetos File (escolhidos, colados ou arrastados) */
 function confirmSendFiles(files) {
   const jid = current.jid;
-  const items = files.map((f) => {
-    if (typeof f === 'string') return { path: f, name: f.split(/[\\/]/).pop() };
-    const p = window.api.pathForFile(f);
-    return p ? { path: p, name: f.name } : { file: f, name: f.name || `imagem-${Date.now()}.png` };
-  });
+  const items = files.map((f) => ({ file: f, name: f.name || `imagem-${Date.now()}.png` }));
   const caption = h('textarea', { class: 'input', rows: 2, placeholder: 'Legenda (opcional)' });
   const previews = h('div', { class: 'send-previews' }, items.map((it) => {
     const isImg = /\.(png|jpe?g|webp|gif)$/i.test(it.name) || it.file?.type?.startsWith('image/');
@@ -707,12 +724,9 @@ function confirmSendFiles(files) {
           replyTo = null;
           toast('Enviando…');
           try {
-            const paths = items.filter((i) => i.path).map((i) => i.path);
-            if (paths.length) await api('messages:sendFiles', jid, paths, caption.value.trim() || undefined, quoted);
-            for (const it of items.filter((i) => i.file)) {
-              const bytes = new Uint8Array(await it.file.arrayBuffer());
-              await api('messages:sendBuffer', jid, it.name, bytes, paths.length ? undefined : caption.value.trim() || undefined);
-            }
+            const tokens = [];
+            for (const it of items) tokens.push(await window.api.upload(it.file, it.name));
+            await api('messages:sendFiles', jid, tokens, caption.value.trim() || undefined, quoted);
           } catch (e) { errToast(e); }
         },
       },
@@ -750,8 +764,8 @@ async function startRecording(btn) {
     rec.bar.remove();
     if (rec.cancel || !chunks.length) return;
     try {
-      const bytes = new Uint8Array(await new Blob(chunks).arrayBuffer());
-      await api('messages:sendVoice', rec.jid, bytes);
+      const token = await window.api.upload(new Blob(chunks, { type: 'audio/webm' }), `audio-${Date.now()}.webm`);
+      await api('messages:sendVoice', rec.jid, token);
     } catch (e) { errToast(e); }
   };
   mr.start(250);

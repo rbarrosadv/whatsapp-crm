@@ -1,15 +1,15 @@
 @echo off
 if /I "%~1"=="RELAUNCHED" goto :main
-start "WhatsApp CRM - Instalacao" cmd /k call "%~f0" RELAUNCHED
+start "Barros Associados - Instalacao" cmd /k call "%~f0" RELAUNCHED
 exit /b
 
 :main
 chcp 65001 >nul
-title WhatsApp CRM - Instalacao
+title Barros Associados - Instalacao
 cd /d "%~dp0"
 
 echo ============================================
-echo   WhatsApp CRM - Instalacao
+echo   Barros Associados - Instalacao
 echo ============================================
 echo.
 echo Pasta atual:
@@ -92,10 +92,10 @@ echo ============================================
 echo   Instalacao concluida com sucesso!
 echo ============================================
 echo.
-echo Da proxima vez, abra pelo atalho "WhatsApp CRM" na Area de Trabalho
-echo (ou pelo arquivo "Iniciar WhatsApp CRM.bat" desta pasta).
+echo Da proxima vez, abra pelo atalho "Barros Associados" na Area de Trabalho
+echo (ou pelo arquivo "Iniciar Barros Associados.bat" desta pasta).
 echo.
-echo Abrindo o WhatsApp CRM agora...
+echo Abrindo o Barros Associados agora...
 start "" "%~dp0node_modules\electron\dist\electron.exe" "%~dp0."
 
 :end

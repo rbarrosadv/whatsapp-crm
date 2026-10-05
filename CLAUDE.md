@@ -1,37 +1,67 @@
-# WhatsApp CRM — contexto do projeto
+# Barros Associados — contexto do projeto
 
-App de desktop (Electron) que é um CRM com WhatsApp integrado. Sucessor
-do "Kanban CRM" v3, que abria o WhatsApp Web numa janela e fazia scraping
-do DOM. Agora a conexão é direta pelo protocolo multi-device do WhatsApp
-via **Baileys** (`@whiskeysockets/baileys`, não oficial): QR code uma vez,
-sessão salva em disco, mensagens gravadas num SQLite local e interface
-própria (não é mais o WhatsApp Web).
+Sistema de gestão do escritório Barros Associados (sucessor do "WhatsApp
+CRM" v4, que por sua vez sucedeu o "Kanban CRM" v3). CRM com WhatsApp
+integrado pelo protocolo multi-device via **Baileys**
+(`@whiskeysockets/baileys`, não oficial): QR code uma vez, sessão salva em
+disco, mensagens num SQLite, interface própria.
+
+Desde a v5 é **cliente-servidor, para a equipe toda** (sócios, advogados,
+estagiária): um **servidor** (Node, `src/server`) guarda banco, sessão do
+WhatsApp e mídia; cada pessoa entra com login e usa pelo **app de desktop**
+(Electron, só uma "moldura"), pelo **navegador** ou pelo **celular** (PWA).
+Projeto/decisões com o usuário: documento "Barros Associados — Projeto do
+Sistema de Gestão" (claude.ai) e protótipo visual das telas.
 
 ## Como rodar
 
 ```
 npm install
-npm start        # real
-npm run demo     # conta simulada (src/main/demo.js), pasta de dados separada
-npm test         # node --test: banco + processamento de mensagens (sem Electron)
-npm i --no-save playwright-core && npm run test:e2e   # Playwright + Electron no modo demo
+npm start            # app de desktop (1ª vez: escolhe servidor do escritório ou "neste computador")
+npm run demo         # app de desktop + servidor local com conta simulada (dados separados)
+npm run server       # só o servidor (http://127.0.0.1:3210); --host 0.0.0.0 --port N; CRM_DATA_DIR
+npm run server:demo  # servidor no modo demonstração (abre no navegador)
+npm test             # node --test: banco, mensagens, login/permissões e API HTTP (sem navegador)
+npm i --no-save playwright-core && npm run test:e2e   # servidor demo + Chromium (Playwright)
 ```
 
 O ambiente de desenvolvimento na nuvem **não alcança web.whatsapp.com**
 (bloqueado pelo proxy), então mudanças na interface devem ser validadas
-com `npm run test:e2e` (usa o modo demo) e mudanças no processamento das
-mensagens com `npm test`, que alimenta o `WhatsAppService` com objetos no
-mesmo formato que o Baileys entrega.
+com `npm run test:e2e` (servidor demo + navegador) e mudanças no
+processamento das mensagens com `npm test`, que alimenta o
+`WhatsAppService` com objetos no mesmo formato que o Baileys entrega. O app
+de desktop roda aqui com `xvfb-run` (Playwright `_electron`) se precisar.
 
 ## Arquitetura
 
-Processo principal (`src/main`, ESM):
+Servidor (`src/server`, ESM, Node ≥ 22.13 — usa `node:sqlite`):
 
-- `index.js` — janela, bandeja, menu, notificações, lembretes de tarefas,
-  protocolo `crm-media://file/<caminho>` (serve arquivos de `media/` pro
-  renderer), e a tabela `api` de métodos chamados via IPC
-  (`ipcMain.handle('api', method, args)`). Eventos pro renderer saem por
-  `send(channel, payload)` → `window.api.on(channel)`.
+- `server.js` — `startServer()`: HTTP sem framework. Entrega a interface
+  (`src/renderer`) e `/assets`; `/auth/state|login|logout|setup` (cookie
+  `bsess`, HttpOnly, SameSite=Lax); `POST /api/<método>` `{args}` → `{ok,result}`
+  (exige cabeçalho `X-CRM: 1` contra CSRF; `X-Conn` = id da janela);
+  WebSocket `/events` (mesma origem; 1ª mensagem `hello {conn}`; depois
+  `{ch, data}`); `GET /media/<rel>` (Range, `?download=nome`, CSP sandbox);
+  `POST /upload` (corpo cru + `X-File-Name`, até 100 MB → `token`, usado
+  nos métodos da API); `/download/backup|logs` (só sócio). Linha de comando
+  pede **código de primeiro acesso** (console + `codigo-primeiro-acesso.txt`)
+  para criar o sócio num servidor público (`requireSetupCode`).
+- `core.js` — `createCore()`: o antigo processo principal sem Electron.
+  Tabela `api` (todo método recebe `ctx` = `{user, conn}` + argumentos),
+  `call()` confere a permissão do perfil, lembretes/avisos periódicos,
+  Google Agenda (token cifrado com chave em `google/secret.key` quando não há
+  `safeStorage`), quem está vendo cada conversa (`viewers` por janela →
+  `wa.isViewing(jid)` para não contar como não lida / marcar lida).
+  Eventos para as janelas: `core.events.emit('event', canal, dados, destino)`
+  (`{conn}` | `{user}` | todos). Avisos = evento `notify` `{kind, title, body,
+  discreet, action, audience?}`; cada janela decide se mostra (`notify.js`).
+- `auth.js` — usuários (`users`), sessões (`sessions`, token só em hash),
+  senhas scrypt, perfis `socio`/`advogado`/`estagiario`, `can(role, método)`
+  (lista do que cada perfil NÃO pode), `stripMoney` (estagiário não recebe
+  valores dos casos).
+
+Motor (`src/main`, sem Electron apesar do nome da pasta):
+
 - `whatsapp.js` — `WhatsAppService` (EventEmitter): conexão Baileys,
   reconexão com backoff, logout (401 apaga `auth/` e volta ao QR),
   tradução dos eventos do Baileys para o banco, envio (texto, arquivos,
@@ -40,54 +70,86 @@ Processo principal (`src/main`, ESM):
   `history`, `chat-merged`.
 - `demo.js` — `DemoWhatsAppService` (subclasse) que simula tudo; os
   métodos de envio geram mensagens no formato do Baileys e passam pelo
-  mesmo `onMessages`, então o caminho de parse/gravação é o real.
+  mesmo `onMessages`, então o caminho de parse/gravação é o real. Timers
+  via `this.later()` (cancelados no `stop()`).
 - `parse.js` — WAMessage (protobuf) → linha da tabela `messages`, ou
   `reaction` / `revoke` / `edit` / `ignore`.
-- `db.js` — `node:sqlite` (embutido no Electron 44, sem módulo nativo).
-  Tabelas: `chats`, `contacts`, `aliases`, `messages`, `pipelines`,
-  `stages`, `crm`, `tags`, `chat_tags`, `notes`, `tasks`, `activity`,
-  `quick_replies`, `settings`, `legacy_pending`, `meta`, `contact_types`,
-  `chat_filters`, `cases`, `payments`, `case_docs` (migrações por versão
-  em `migrate()`; `meta.schema` guarda a versão atual).
-- `ogg.js` — remux WebM/Opus (MediaRecorder do Chromium) → OGG/Opus, que
-  é o que o WhatsApp aceita como mensagem de voz.
+- `db.js` — `node:sqlite`. Tabelas: `chats`, `contacts`, `aliases`,
+  `messages`, `pipelines`, `stages`, `crm`, `tags`, `chat_tags`, `notes`,
+  `tasks`, `activity` (com `user_name`), `quick_replies`, `settings`,
+  `legacy_pending`, `meta`, `contact_types`, `chat_filters`, `cases`,
+  `payments`, `case_docs`, `users`, `sessions` (migrações por versão em
+  `migrate()`; `meta.schema` guarda a versão atual).
+- `ogg.js` — remux WebM/Opus (MediaRecorder) → OGG/Opus (mensagem de voz).
 - `google.js` — `GoogleService`: Google Agenda pela API oficial com a chave
   (client_secret JSON, tipo "App para computador") do próprio usuário;
-  login no navegador com retorno em `http://127.0.0.1:<porta>` + PKCE;
-  refresh token criptografado (`safeStorage`) em `google/token.bin`;
-  `invalid_grant` (modo de teste do Google vence em 7 dias) → `needsReconnect`.
+  login no navegador com retorno em `http://127.0.0.1:<porta>` + PKCE (só
+  funciona com o servidor no mesmo computador — num servidor remoto vai
+  precisar de cliente "Aplicativo da Web" com redirect no domínio);
+  `invalid_grant` → `needsReconnect`.
 - `calendar-sync.js` — `CalendarSync`: tarefas/prazos/audiências/reuniões do
   CRM viram eventos no Google (`tasks.gcal_event_id`, marcados com
   `extendedProperties.private.crmTaskId`); horário mudado no Google volta
   para o CRM (`pullChanges`); `agenda()` junta eventos do Google + tarefas
   ainda não sincronizadas. No demo, `DemoGoogleService` (em `demo.js`).
-- `legacy.js` — importa `%APPDATA%\KanbanCRMWhatsApp\kanban-state.json`
-  do app v3.
+- `legacy.js` — importa `%APPDATA%\KanbanCRMWhatsApp\kanban-state.json`.
 
-Preload: `src/preload/preload.cjs` (sandbox + contextIsolation) expõe
-`window.api.call(method, ...args)`, `window.api.on(evt, cb)` e
-`pathForFile(file)`.
+App de desktop (`src/desktop`, Electron 44): `main.js` abre uma janela
+própria com o sistema. Modo **remote** (endereço do servidor) ou **local**
+(liga `startServer` no próprio processo com os dados de
+`%APPDATA%\WhatsAppCRM`, porta 3210 — continuidade com o app antigo; a 1ª
+vez escolhe sozinho se já há `crm.sqlite`). Config em
+`%APPDATA%\BarrosAssociados\desktop.json` (modo, url, bandeja, abrir com o
+Windows, janela). `setup.html`/`offline.html` = telas de escolher servidor e
+"sem conexão". Abrir/salvar arquivos do servidor: `session.downloadURL` +
+`will-download` (abrir = baixa no temp e `shell.openPath`). Bandeja,
+AppUserModelID `com.barrosassociados.sistema` + atalho no Menu Iniciar
+(`ensureStartMenuShortcut`). `preload.cjs` expõe só `window.desktop`
+(openUrl, saveUrl, openExternal, focus, flash, setBadge, get/setSetting,
+setup.*); a página funciona igual sem ele.
 
 Interface (`src/renderer`, JS puro em módulos ES, sem build):
 
-- `js/store.js` — estado (`state.chats` é um Map jid → conversa já com
-  campos do CRM), event bus `on/emit`, `api()`.
+- `js/bridge.js` — define `window.api` (`call` por fetch, `on` pelo
+  WebSocket com reconexão, `upload`, `logout`, `ready`). 401 → `/login.html`.
+  Evento `bridge:reconnected` → `store` recarrega conversas.
+- `login.html`/`login.js` — entrar, ou primeiro acesso (cria o sócio).
+- `js/store.js` — estado (`state.chats` Map jid → conversa com campos do CRM;
+  `state.me`, `state.can` {finance, admin, configure, deleteCases},
+  `state.viewers`, `state.typing`), event bus `on/emit`, `api()`; manda
+  `app:focus` em foco/blur.
+- `js/notify.js` — avisos (Notification do navegador/Electron, respeitando as
+  preferências da pessoa e o modo discreto) e contador no título.
 - `js/util.js` — `h()` pra criar elementos, `fill()` (limpa e preenche
   ignorando null — **não use `el.append(null)`**, imprime "null"),
-  formatação, modais, menus, toasts.
-- `js/views/*` — `chatlist`, `chatview` (mensagens + composer + gravação),
+  formatação, modais, menus, toasts, e arquivos: `mediaUrl`, `openMedia`,
+  `saveMedia`, `pickFiles`, `uploadFiles`, `downloadUrl/Blob`, `openExternal`.
+- `js/views/*` — `chatlist`, `chatview` (mensagens + composer + gravação;
+  faixa "Fulano está respondendo / também está com esta conversa aberta"),
   `crmpanel` (ficha do contato, com a lista de casos), `casemodal` (ficha do
-  caso em abas: dados, honorários/parcelas/cobrança, prazos, documentos,
-  notas), `finance` (todas as parcelas), `agenda` (dia/semana/mês com todas
-  as agendas do Google + compromissos do CRM), `board` (kanban de CASOS com
-  drag-and-drop HTML5),
-  `contacts`, `tasks`, `dashboard`, `settings`, `connect` (QR + faixa de
-  status).
-- Estilos em `styles.css` com variáveis e `[data-theme=light|dark]`. Cores
-  por item (etapa/etiqueta) via variável `--c` (o `h()` usa
-  `style.setProperty` para chaves `--*`).
+  caso em abas; Honorários só com `can.finance`), `finance`, `agenda`,
+  `board` (kanban de CASOS), `contacts`, `tasks`, `dashboard`, `settings`
+  (Minha conta, Equipe — só sócio —, conexão, notificações…), `connect`.
+- Estilos em `styles.css` com variáveis e `[data-theme=light|dark]`; cor da
+  marca em `--accent` (azul-ardósia da logo). Cores por item via `--c`.
+- `manifest.webmanifest` — instalar no celular como app.
 
 ## Decisões importantes
+
+- **Equipe e perfis**: sócio (tudo, inclusive equipe, configurações do
+  escritório, backup, desconectar WhatsApp, excluir casos/parcelas),
+  advogado (tudo menos isso), estagiário (sem financeiro/painel, sem
+  configurar funis/tipos/filtros/etiquetas, sem apagar mensagem). A regra
+  vale no servidor (`auth.can`); a interface só esconde. Preferências de
+  cada pessoa (`core.USER_KEYS`: tema, avisos, modo discreto…) ficam em
+  `users.prefs`; as do escritório (`OFFICE_KEYS`) em `settings`, só sócio muda.
+  Opções do computador (bandeja, abrir com o Windows) ficam no app de desktop.
+- **Assinatura**: mensagens enviadas pela equipe saem com `*Assinatura:*` na
+  1ª linha (`users.signature`, padrão = primeiro nome; `signMessages` desliga).
+  Ao editar, a interface tira e recoloca a assinatura original.
+- **Arquivos**: a interface nunca passa caminhos do disco; envia por
+  `/upload` e passa os tokens (`messages:sendFiles`, `messages:sendVoice`,
+  `cases:addFiles`, `google:importClient`).
 
 - **Id das conversas**: jid do WhatsApp. Contatos podem chegar como número
   (`@s.whatsapp.net`) ou LID (`@lid`); o id principal é o número quando
@@ -116,7 +178,7 @@ Interface (`src/renderer`, JS puro em módulos ES, sem build):
   mensagens de verdade: a lista "Tudo" existe por padrão e os chips mostram
   quantas não lidas há em cada filtro. `personal` no tipo = fora de
   "Aguardando resposta" e do aviso de conversa esquecida (`checkForgotten`
-  em `index.js`, configurável em horas; `chats.alerted_ts` evita repetir).
+  em `server/core.js`, configurável em horas; `chats.alerted_ts` evita repetir).
 - **Casos**: o funil é de casos, não de contatos — um contato pode ter
   vários (`cases.jid`). `listChats` traz `stage_ids`/`pipeline_ids` dos casos
   abertos; `stage_id`/`pipeline_id` da conversa = caso mais recente (compat.).
@@ -126,12 +188,12 @@ Interface (`src/renderer`, JS puro em módulos ES, sem build):
   variáveis `{nome}` `{valor}` …) revisado e enviado pelo usuário; nada é
   enviado sozinho. `cases.last_update_at` ("último retorno ao cliente") é
   atualizado quando você manda mensagem ao contato; avisos de parcelas e de
-  casos sem retorno em `checkFinanceAndCases` (`index.js`).
-- **Notificações no Windows**: AppUserModelID fixo (`com.whatsappcrm.desktop`)
-  + atalho no Menu Iniciar com o mesmo id, recriado pelo próprio app
-  (`ensureStartMenuShortcut`, via `shell.writeShortcutLink`). As
-  `Notification` ficam guardadas em `liveNotifications` para o clique não
-  se perder.
+  casos sem retorno em `checkFinanceAndCases` (`server/core.js`).
+- **Notificações**: o servidor manda `notify` para as janelas; a página
+  mostra com a `Notification` da web (no app de desktop vira aviso do Windows
+  pelo AppUserModelID `com.barrosassociados.sistema` + atalho no Menu
+  Iniciar). Avisos de dinheiro (`audience: 'finance'`) só vão a quem vê o
+  financeiro.
 - **Modo discreto**: configurações `discreet`/`discreetMessages` → classes
   `body.discreet`/`body.discreet-msgs` com `filter: blur` nos valores e
   prévias (hover mostra; ao criar tela com valor em R$, use as classes
@@ -154,11 +216,13 @@ Interface (`src/renderer`, JS puro em módulos ES, sem build):
   `sendMessage(jid, { text, edit: key })`. No composer, `editing` mostra a
   faixa "Editando" (Esc cancela). Fotos abrem em `views/imageviewer.js`
   (zoom com rodinha/pinça, arrastar, girar, ← →).
-- Pasta de dados fixa: `%APPDATA%\WhatsAppCRM` (`CRM_DATA_DIR` sobrescreve;
-  demo usa `WhatsAppCRM-Demo`). Instância única (`requestSingleInstanceLock`)
-  pra não corromper a sessão.
+- Pasta de dados do servidor: `CRM_DATA_DIR` ou `%APPDATA%\WhatsAppCRM`
+  (`~/.config/WhatsAppCRM` no Linux; demo usa `WhatsAppCRM-Demo`). Só um
+  servidor por pasta de dados (senão corrompe a sessão do WhatsApp); o app de
+  desktop é instância única.
 - Usuário final é leigo em terminal: instalação por `Instalar.bat`
-  (npm install + atalhos via `scripts/criar-atalho.ps1`), abertura por
-  atalho que chama `electron.exe` direto (sem janela de console). Qualquer
-  mudança que exija passo manual deve vir com instrução simples.
+  (npm install + atalhos "Barros Associados" via `scripts/criar-atalho.ps1`,
+  que apaga o atalho antigo "WhatsApp CRM"), abertura por atalho que chama
+  `electron.exe` direto (sem janela de console). Qualquer mudança que exija
+  passo manual deve vir com instrução simples.
 - Textos da interface e comentários em português.

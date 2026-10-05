@@ -1,0 +1,14 @@
+{
+  "name": "Barros Associados",
+  "short_name": "Barros",
+  "description": "Gestão do escritório Barros Associados",
+  "start_url": "/",
+  "scope": "/",
+  "display": "standalone",
+  "background_color": "#0b141a",
+  "theme_color": "#1c2830",
+  "lang": "pt-BR",
+  "icons": [
+    { "src": "/assets/icon.png", "sizes": "256x256", "type": "image/png", "purpose": "any" }
+  ]
+}

@@ -1,8 +1,9 @@
-// Teste de ponta a ponta no modo demonstração (sem WhatsApp real).
+// Teste de ponta a ponta no modo demonstração (sem WhatsApp real): sobe o
+// servidor e usa o sistema pelo navegador (Chromium), como a equipe usaria.
 // Uso: npm i --no-save playwright-core && npm run test:e2e
 // Salva capturas de tela em test-results/.
 import { createRequire } from 'node:module';
-import { execSync } from 'node:child_process';
+import { execSync, spawn } from 'node:child_process';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -18,24 +19,59 @@ function loadPlaywright() {
   }
   throw new Error('Instale o playwright-core: npm i --no-save playwright-core');
 }
-const { _electron: electron } = loadPlaywright();
+const { chromium } = loadPlaywright();
 
 const ROOT = path.resolve(path.dirname(new URL(import.meta.url).pathname), '..');
 const OUT = path.join(ROOT, 'test-results');
 fs.mkdirSync(OUT, { recursive: true });
 const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'crm-e2e-'));
 const errors = [];
+let nextPort = 3400 + Math.floor(Math.random() * 400);
+const browser = await chromium.launch(fs.existsSync('/opt/pw-browsers/chromium')
+  ? { executablePath: fs.readdirSync('/opt/pw-browsers').filter((d) => d.startsWith('chromium-')).map((d) => path.join('/opt/pw-browsers', d, 'chrome-linux', 'chrome')).find((f) => fs.existsSync(f)) }
+  : {});
 
-async function launch(extraEnv = {}, dir = dataDir) {
-  const app = await electron.launch({
-    executablePath: require(path.join(ROOT, 'node_modules', 'electron')),
-    args: [ROOT, '--demo', '--no-sandbox'],
-    env: { ...process.env, CRM_DATA_DIR: dir, CRM_DEMO_QR_MS: '1500', ...extraEnv },
+const SOCIO = { name: 'Rafael Barros', login: 'barros', password: 'segredo1' };
+
+async function startServer(extraEnv, dir) {
+  const port = nextPort++;
+  const srv = spawn(process.execPath, ['src/server/server.js', '--demo', '--port', String(port)], {
+    cwd: ROOT, env: { ...process.env, CRM_DATA_DIR: dir, CRM_DEMO_QR_MS: '1500', ...extraEnv },
   });
-  const page = await app.firstWindow();
+  srv.stderr.on('data', (d) => { const t = String(d); if (/Error|erro/i.test(t) && !/Experimental/.test(t)) errors.push(`servidor: ${t.trim()}`); });
+  for (let i = 0; i < 60; i++) {
+    try { await fetch(`http://127.0.0.1:${port}/auth/state`); return { srv, url: `http://127.0.0.1:${port}` }; } catch { await new Promise((r) => setTimeout(r, 250)); }
+  }
+  throw new Error('servidor não subiu');
+}
+
+async function newPage(url) {
+  const context = await browser.newContext({ viewport: { width: 1400, height: 860 } });
+  const page = await context.newPage();
   page.on('pageerror', (e) => errors.push(`pageerror: ${e.message}`));
   page.on('console', (m) => { if (m.type() === 'error') errors.push(`console: ${m.text()}`); });
-  await page.setViewportSize({ width: 1400, height: 860 }).catch(() => {});
+  await page.goto(`${url}/`);
+  return { context, page };
+}
+
+/** Entra no sistema (no primeiro acesso, cria o sócio). */
+async function login(page, who = SOCIO) {
+  await page.waitForSelector('#login');
+  if (await page.locator('#name-row:not([hidden])').count()) {
+    await page.fill('#name', who.name);
+    await page.fill('#again', who.password);
+  }
+  await page.fill('#login', who.login);
+  await page.fill('#password', who.password);
+  await page.click('#go');
+  await page.waitForURL((u) => !u.pathname.endsWith('login.html'));
+}
+
+async function launch(extraEnv = {}, dir = dataDir) {
+  const { srv, url } = await startServer(extraEnv, dir);
+  const { context, page } = await newPage(url);
+  await login(page);
+  const app = { url, close: async () => { await context.close(); srv.kill(); await new Promise((r) => srv.once('exit', r)); } };
   return { app, page };
 }
 
@@ -67,6 +103,8 @@ try {
   check(true, 'mensagem enviada e confirmada como lida');
   await page.waitForSelector('.msg.in:has-text("Perfeito, obrigado")', { timeout: 6000 });
   check(true, 'resposta recebida aparece na conversa');
+  check((await page.locator('.msg.out', { hasText: '10% mais barato' }).innerText()).includes('Rafael:'),
+    'mensagem sai assinada com o nome de quem enviou');
 
   // resposta rápida com "/"
   await page.fill('.composer-input', '/ola');
@@ -101,8 +139,10 @@ try {
   // visualizador de imagens com zoom
   const jidMari = await page.evaluate(() => document.querySelector('.chat-row.active')?.dataset.jid || null);
   await page.evaluate(async ({ jid, files }) => {
-    await window.api.call('messages:sendFiles', jid, files);
-  }, { jid: jidMari, files: [path.join(ROOT, 'assets', 'icon.png'), path.join(ROOT, 'assets', 'tray.png')] });
+    const tokens = [];
+    for (const f of files) tokens.push(await window.api.upload(await (await fetch(f)).blob(), f.split('/').pop()));
+    await window.api.call('messages:sendFiles', jid, tokens);
+  }, { jid: jidMari, files: ['/assets/icon.png', '/assets/tray.png'] });
   await page.waitForSelector('.msg.out img.media-img', { timeout: 8000 });
   await page.waitForFunction(() => document.querySelectorAll('.msg.out img.media-img').length >= 2);
   await page.locator('.msg.out img.media-img').last().click();
@@ -350,6 +390,38 @@ try {
   await page.click('.modal button:has-text("Abrir conversa")');
   await page.waitForSelector('.chat-head-name:has-text("Paulo Novo")');
   check(true, 'nova conversa aberta pelo número');
+
+  // 8b) equipe: o sócio cadastra a estagiária; ela entra e não vê o financeiro
+  await page.click('.rail-btn[title="Configurações"]');
+  await page.click('.settings-grid button:has-text("Adicionar pessoa")');
+  const form = page.locator('.modal');
+  await form.locator('label:has-text("Nome") input').fill('Isabella Costa');
+  await form.locator('label:has-text("Login") input').fill('isabella');
+  await form.locator('label:has-text("Perfil") select').selectOption('estagiario');
+  await form.locator('label:has-text("Senha inicial") input').fill('estagio1');
+  await form.locator('button:has-text("Salvar")').click();
+  await page.waitForSelector('.settings-grid .list-row:has-text("Isabella Costa")');
+  check(true, 'sócio cadastra a estagiária na equipe');
+  await shot(page, '15-equipe');
+  const est = await newPage(app.url);
+  await login(est.page, { login: 'isabella', password: 'estagio1' });
+  await est.page.waitForSelector('.chat-row');
+  check(await est.page.locator('.rail-btn[title="Financeiro"]').count() === 0, 'estagiária não vê o Financeiro');
+  const denied = await est.page.evaluate(() => window.api.call('finance:list').then(() => 'ok', (e) => e.message));
+  check(/permissão/.test(denied), 'servidor recusa o financeiro para a estagiária');
+  await page.click('.rail-btn[title="Conversas"]');
+  await page.locator('.chat-row', { hasText: 'Mariana Souza' }).click();
+  await est.page.locator('.chat-row', { hasText: 'Mariana Souza' }).click();
+  await page.waitForSelector('.team-presence:has-text("Isabella Costa")', { timeout: 8000 });
+  check(true, 'sócio vê que a estagiária está com a mesma conversa aberta');
+  await est.page.fill('.composer-input', 'Bom dia, Mariana!');
+  await page.waitForSelector('.team-presence:has-text("está respondendo")', { timeout: 8000 });
+  check(true, 'aviso "está respondendo" para não responderem em dobro');
+  await est.page.keyboard.press('Enter');
+  await page.waitForSelector('.msg.out:has-text("Isabella:")', { timeout: 8000 });
+  check(true, 'mensagem da estagiária aparece assinada para o sócio');
+  await shot(est.page, '16-estagiaria');
+  await est.context.close();
 } catch (e) {
   await shot(page, 'zz-failure').catch(() => {});
   await app.close();
@@ -409,10 +481,12 @@ try {
   await shot(page, 'zz-failure-pair').catch(() => {});
   await app.close();
   console.error(e);
+  console.error(errors.join('\n'));
   process.exit(1);
 }
 await app.close();
 fs.rmSync(dir2, { recursive: true, force: true });
+await browser.close();
 
 const relevant = errors.filter((e) => !/Autofill|DevTools|favicon/i.test(e));
 if (relevant.length) {

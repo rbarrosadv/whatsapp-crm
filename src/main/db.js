@@ -8,7 +8,7 @@ import fs from 'node:fs';
 
 let db;
 
-const SCHEMA_VERSION = 5;
+const SCHEMA_VERSION = 6;
 
 const DEFAULT_PIPELINES = [
   {
@@ -309,6 +309,29 @@ function migrate() {
   addColumn('contact_types', 'autodownload', 'INTEGER NOT NULL DEFAULT 0');
   // downloads automáticos que falharam (link vencido etc.) — não repete sem parar
   addColumn('messages', 'dl_failed', 'INTEGER NOT NULL DEFAULT 0');
+  // versão 6: equipe (vários usuários com login) — quem fez cada coisa
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS users (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      name TEXT NOT NULL,
+      login TEXT NOT NULL UNIQUE COLLATE NOCASE,
+      role TEXT NOT NULL DEFAULT 'advogado',
+      signature TEXT,
+      pass_hash TEXT NOT NULL,
+      prefs TEXT NOT NULL DEFAULT '{}',
+      active INTEGER NOT NULL DEFAULT 1,
+      created_at INTEGER NOT NULL,
+      last_login INTEGER
+    );
+    CREATE TABLE IF NOT EXISTS sessions (
+      token_hash TEXT PRIMARY KEY,
+      user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      created_at INTEGER NOT NULL,
+      last_seen INTEGER NOT NULL,
+      agent TEXT
+    );
+  `);
+  addColumn('activity', 'user_name', 'TEXT');
 
   const version = Number(get('SELECT value FROM meta WHERE key = ?', 'schema')?.value || 0);
   if (version < 1) seedDefaults();
@@ -1093,8 +1116,8 @@ export function markChatsAlerted(jids) {
   tx(() => jids.forEach((j) => run('UPDATE chats SET alerted_ts = ? WHERE jid = ?', now(), j)));
 }
 
-export function logActivity(jid, kind, detail) {
-  run('INSERT INTO activity (jid, ts, kind, detail) VALUES (?, ?, ?, ?)', jid, now(), kind, detail);
+export function logActivity(jid, kind, detail, userName = null) {
+  run('INSERT INTO activity (jid, ts, kind, detail, user_name) VALUES (?, ?, ?, ?, ?)', jid, now(), kind, detail, userName);
 }
 
 export function listActivity(jid) {

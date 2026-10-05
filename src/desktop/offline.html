@@ -1,0 +1,22 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+  <meta charset="utf-8">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self'">
+  <title>Barros Associados</title>
+  <link rel="stylesheet" href="../renderer/styles.css">
+</head>
+<body data-theme="dark">
+  <main class="login-page">
+    <div class="login-card">
+      <img class="login-logo" src="../../assets/logo-barros.jpg" alt="Barros Associados">
+      <h1>Sem conexão com o servidor</h1>
+      <p class="muted">Verifique a internet deste computador. Se a internet está funcionando, o servidor do escritório pode estar fora do ar — avise o sócio responsável.</p>
+      <p class="muted small" id="detail"></p>
+      <button class="btn btn-primary" id="retry">Tentar de novo</button>
+      <button class="btn" id="change">Trocar o endereço do servidor</button>
+    </div>
+  </main>
+  <script src="offline.js"></script>
+</body>
+</html>

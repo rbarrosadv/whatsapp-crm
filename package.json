@@ -1,16 +1,17 @@
 {
   "name": "whatsapp-crm",
-  "productName": "WhatsApp CRM",
-  "version": "4.5.0",
-  "description": "CRM de desktop com WhatsApp integrado (conexão por QR code, sessão salva e conversas armazenadas localmente)",
-  "main": "src/main/index.js",
+  "productName": "Barros Associados",
+  "version": "5.0.0",
+  "description": "Sistema de gestão do escritório Barros Associados: WhatsApp integrado, casos, financeiro e agenda, para a equipe toda (servidor + app de desktop + navegador/celular)",
+  "main": "src/desktop/main.js",
   "type": "module",
   "scripts": {
     "start": "electron .",
     "demo": "electron . --demo",
+    "server": "node src/server/server.js",
+    "server:demo": "node src/server/server.js --demo",
     "test": "node --test test/*.test.js",
-    "test:e2e": "node scripts/e2e.mjs",
-    "icons": "electron scripts/make-icons.mjs"
+    "test:e2e": "node scripts/e2e.mjs"
   },
   "dependencies": {
     "@whiskeysockets/baileys": "7.0.0-rc14",
@@ -20,7 +21,7 @@
     "ws": "^8.18.0"
   },
   "engines": {
-    "node": ">=20"
+    "node": ">=22.13"
   },
   "author": "",
   "license": "ISC"

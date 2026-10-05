@@ -56,7 +56,7 @@ export class DemoWhatsAppService extends WhatsAppService {
     if (this.state.state !== 'qr') throw new Error('Aguarde o QR code aparecer e tente de novo.');
     clearTimeout(this.qrTimer);
     this.setStatus({ pairingCode: 'DEMO-1234', pairingPhone: String(phone).replace(/\D/g, '') });
-    this.qrTimer = setTimeout(() => this.connected(true), 2500);
+    this.qrTimer = this.later(() => this.connected(true), 2500);
     return 'DEMO-1234';
   }
 
@@ -76,14 +76,14 @@ export class DemoWhatsAppService extends WhatsAppService {
     this.stopped = false;
     if (this.hasSession()) {
       this.setStatus({ state: 'connecting', registered: true, qr: null });
-      setTimeout(() => this.connected(false), 600);
+      this.later(() => this.connected(false), 600);
       return;
     }
     const qr = await QRCode.toDataURL('demo-whatsapp-crm', { margin: 1, width: 320 });
     this.setStatus({ state: 'qr', qr, registered: false, pairingCode: null });
     // no modo demo, "escaneia" sozinho depois de alguns segundos
     const ms = Number(process.env.CRM_DEMO_QR_MS ?? 4000);
-    if (ms > 0) this.qrTimer = setTimeout(() => this.connected(true), ms);
+    if (ms > 0) this.qrTimer = this.later(() => this.connected(true), ms);
   }
 
   async connected(firstTime) {
@@ -144,7 +144,19 @@ export class DemoWhatsAppService extends WhatsAppService {
     await this.start();
   }
 
-  async stop() { clearTimeout(this.qrTimer); this.stopped = true; }
+  async stop() {
+    this.stopped = true;
+    for (const t of this.timers || []) clearTimeout(t);
+    this.timers?.clear();
+  }
+
+  /** setTimeout que é cancelado no stop() (nada roda com o banco já fechado). */
+  later(fn, ms) {
+    this.timers ||= new Set();
+    const t = setTimeout(() => { this.timers.delete(t); if (!this.stopped) fn(); }, ms);
+    this.timers.add(t);
+    return t;
+  }
 
   async sendText(chatJid, text, quotedId) {
     this.requireSock();
@@ -165,10 +177,10 @@ export class DemoWhatsAppService extends WhatsAppService {
   }
 
   simulateDelivery(chatJid, key) {
-    setTimeout(() => this.onMessageUpdates([{ key, update: { status: 3 } }]), 700);
-    setTimeout(() => this.onMessageUpdates([{ key, update: { status: 4 } }]), 1600);
+    this.later(() => this.onMessageUpdates([{ key, update: { status: 3 } }]), 700);
+    this.later(() => this.onMessageUpdates([{ key, update: { status: 4 } }]), 1600);
     if (chatJid.endsWith('@g.us') || process.env.CRM_DEMO_NO_REPLY) return;
-    setTimeout(() => {
+    this.later(() => {
       const name = db.contactName(chatJid) || undefined;
       this.onMessages([textMsg(chatJid, false, 'Perfeito, obrigado! 👍', Math.floor(Date.now() / 1000), name)], 'notify');
     }, 2500);

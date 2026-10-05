@@ -1,5 +1,7 @@
 // Ponto de entrada da interface.
+import './bridge.js';
 import { h, debounce } from './util.js';
+import { setupNotifications } from './notify.js';
 import { state, on, bootstrap, setView, openChat, forgetAvatar, setSetting } from './store.js';
 import { mountChatList } from './views/chatlist.js';
 import { mountChatView } from './views/chatview.js';
@@ -25,6 +27,7 @@ const NAV = [
 
 async function main() {
   await bootstrap();
+  setupNotifications();
   applyTheme();
   window.matchMedia('(prefers-color-scheme: dark)').addEventListener('change', applyTheme);
 
@@ -39,13 +42,15 @@ async function main() {
     settings: h('div', { class: 'view view-page' }),
   };
 
+  // estagiário(a) não vê dinheiro: sem Financeiro e sem Painel de números
+  const nav_ = NAV.filter(([id]) => state.can.finance || !['finance', 'dashboard'].includes(id));
   const navBtns = {};
   let discreetBtn;
   const unreadBadge = h('span', { class: 'nav-badge hidden' });
   const statusDot = h('span', { class: 'status-dot' });
   const nav = h('nav', { class: 'rail' },
-    h('img', { class: 'rail-logo', src: '../../assets/icon.png', alt: 'WhatsApp CRM', title: state.demo ? 'WhatsApp CRM — demonstração' : 'WhatsApp CRM' }),
-    ...NAV.map(([id, icon, label]) => {
+    h('img', { class: 'rail-logo', src: '/assets/icon.png', alt: 'Barros Associados', title: `Barros Associados${state.demo ? ' — demonstração' : ''} · ${state.me.name}` }),
+    ...nav_.map(([id, icon, label]) => {
       navBtns[id] = h('button', { class: 'rail-btn', title: label, onclick: () => setView(id) },
         h('span', { class: 'rail-icon' }, icon), h('span', { class: 'rail-label' }, label), id === 'inbox' ? unreadBadge : null);
       return navBtns[id];
@@ -128,7 +133,8 @@ async function main() {
     }
     if (e.ctrlKey && !e.shiftKey && !e.altKey && /^[1-8]$/.test(e.key)) {
       e.preventDefault();
-      setView([...NAV.map((n) => n[0]), 'settings'][Number(e.key) - 1]);
+      const target = [...nav_.map((n) => n[0]), 'settings'][Number(e.key) - 1];
+      if (target) setView(target);
     }
     if (e.ctrlKey && e.key.toLowerCase() === 'f' && state.view === 'inbox') {
       e.preventDefault();
@@ -136,7 +142,7 @@ async function main() {
     }
   });
 
-  const initial = ['inbox', 'board', 'contacts', 'agenda', 'tasks', 'finance', 'dashboard'].includes(state.settings.lastView) ? state.settings.lastView : 'inbox';
+  const initial = nav_.some(([id]) => id === state.settings.lastView) ? state.settings.lastView : 'inbox';
   state.view = null;
   setView(initial);
   showView(initial);

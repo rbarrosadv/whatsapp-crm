@@ -282,3 +282,72 @@ export const QUICK_REACTIONS = ['👍', '❤️', '😂', '😮', '😢', '🙏'
 
 export const PALETTE = ['#94a3b8', '#3b82f6', '#06b6d4', '#22c55e', '#84cc16', '#f59e0b', '#f97316', '#ef4444',
   '#ec4899', '#a855f7', '#6366f1', '#14b8a6'];
+
+// ------------------------------------------------------------ arquivos
+// No app de desktop, `window.desktop` abre/salva com os programas do Windows;
+// no navegador e no celular, o próprio navegador abre ou baixa.
+
+/** Endereço de um arquivo de mídia guardado no servidor. */
+export function mediaUrl(rel, download) {
+  const base = `/media/${String(rel).split(/[\\/]/).map(encodeURIComponent).join('/')}`;
+  return download ? `${base}?download=${encodeURIComponent(download)}` : base;
+}
+
+const RISKY = /\.(exe|bat|cmd|com|scr|msi|msp|ps1|vbs|vbe|js|jse|wsf|wsh|lnk|hta|jar|reg|pif|cpl|msc|dll|appx|msix|url|scf|inf|sys)$/i;
+
+/** Abre o arquivo com o programa padrão (desktop) ou numa aba nova (navegador). */
+export async function openMedia(rel, name) {
+  const fileName = name || String(rel).split(/[\\/]/).pop();
+  if (RISKY.test(fileName) || RISKY.test(String(rel))) {
+    throw new Error('Por segurança, arquivos executáveis não são abertos direto. Use "Salvar como…" se confiar no remetente.');
+  }
+  if (window.desktop?.openUrl) return window.desktop.openUrl(mediaUrl(rel, fileName), fileName);
+  window.open(mediaUrl(rel), '_blank', 'noopener');
+}
+
+/** Salva uma cópia do arquivo no computador (o desktop pergunta onde; o navegador baixa). */
+export function saveMedia(rel, name) {
+  const fileName = name || String(rel).split(/[\\/]/).pop();
+  if (window.desktop?.saveUrl) return window.desktop.saveUrl(mediaUrl(rel, fileName), fileName);
+  downloadUrl(mediaUrl(rel, fileName), fileName);
+}
+
+/** Baixa um endereço do servidor (backup, registros…). */
+export function downloadUrl(url, name) {
+  const a = h('a', { href: url, download: name || '' });
+  document.body.append(a);
+  a.click();
+  a.remove();
+}
+
+/** Baixa um conteúdo gerado aqui mesmo (ex.: planilha CSV). */
+export function downloadBlob(blob, name) {
+  const url = URL.createObjectURL(blob);
+  downloadUrl(url, name);
+  setTimeout(() => URL.revokeObjectURL(url), 10000);
+}
+
+/** Abre a janela de escolher arquivos do sistema; devolve a lista de File. */
+export function pickFiles({ multiple = true, accept } = {}) {
+  return new Promise((resolve) => {
+    const input = h('input', { type: 'file', multiple, accept, style: 'display:none' });
+    input.addEventListener('change', () => { resolve([...input.files]); input.remove(); });
+    input.addEventListener('cancel', () => { resolve([]); input.remove(); });
+    document.body.append(input);
+    input.click();
+  });
+}
+
+/** Envia arquivos ao servidor (um de cada vez); devolve os tokens. */
+export async function uploadFiles(files) {
+  const tokens = [];
+  for (const f of files) tokens.push(await window.api.upload(f, f.name || `arquivo-${Date.now()}`));
+  return tokens;
+}
+
+/** Abre um link externo (site) fora do sistema. */
+export function openExternal(url) {
+  if (!/^https?:/i.test(url)) return;
+  if (window.desktop?.openExternal) window.desktop.openExternal(url);
+  else window.open(url, '_blank', 'noopener');
+}

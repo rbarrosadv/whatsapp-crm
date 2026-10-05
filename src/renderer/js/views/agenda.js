@@ -1,7 +1,7 @@
 // Agenda: todas as agendas do Google + prazos/audiências/reuniões do CRM,
 // em dia, semana ou mês — para enxergar os horários livres.
 import {
-  h, fill, modal, toast, errToast, confirmDialog, fmtTime, toLocalInput, fromLocalInput, debounce,
+  h, fill, modal, toast, errToast, confirmDialog, fmtTime, toLocalInput, fromLocalInput, debounce, pickFiles, openExternal,
 } from '../util.js';
 import { state, on, api, openChat, setSetting } from '../store.js';
 import { openCase, TASK_KINDS } from './casemodal.js';
@@ -122,13 +122,22 @@ function nextSlot() {
 
 // ------------------------------------------------------------ Google
 
+async function importKey() {
+  const [file] = await pickFiles({ multiple: false, accept: '.json,application/json' });
+  if (!file) return;
+  try {
+    gstatus = await api('google:importClient', await window.api.upload(file, file.name));
+    render();
+  } catch (e) { errToast(e); }
+}
+
 function googleCard() {
   const st = gstatus;
   if (!st.configured) {
     return h('div', { class: 'gcard' },
       h('b', null, '📅 Google Agenda'),
       h('p', { class: 'muted small' }, 'Conecte para ver todas as suas agendas aqui e enviar prazos e audiências para o Google automaticamente.'),
-      h('button', { class: 'btn btn-sm wide', onclick: () => api('google:importClient').then((s) => { gstatus = s; render(); }).catch(errToast) }, '1. Escolher a chave (.json)'),
+      h('button', { class: 'btn btn-sm wide', onclick: importKey }, '1. Escolher a chave (.json)'),
       h('button', { class: 'btn btn-sm wide', disabled: true }, '2. Entrar com o Google'),
       h('p', { class: 'muted small' }, 'A chave é o arquivo client_secret….json que você baixou no Google Cloud.'));
   }
@@ -146,7 +155,7 @@ function googleCard() {
           connecting = false; load(true);
         },
       }, connecting ? 'Aguardando o navegador…' : st.needsReconnect ? '🔄 Reconectar Google' : '2. Entrar com o Google'),
-      h('button', { class: 'btn btn-sm wide', onclick: () => api('google:importClient').then((s) => { gstatus = s; render(); }).catch(errToast) }, 'Trocar arquivo da chave'));
+      h('button', { class: 'btn btn-sm wide', onclick: importKey }, 'Trocar arquivo da chave'));
   }
   const writable = calendars.filter((c) => c.writable);
   return h('div', { class: 'gcard ok' },
@@ -317,7 +326,7 @@ function eventDetails(e) {
       h('div', { class: 'row wrap' },
         chat ? h('button', { class: 'btn btn-sm', onclick: () => { m.close(); openChat(chat.jid); } }, `💬 ${chat.display_name}`) : null,
         e.caseId ? h('button', { class: 'btn btn-sm', onclick: () => { m.close(); openCase(e.caseId, { tab: 'prazos' }); } }, '📁 Abrir caso') : null,
-        e.htmlLink ? h('button', { class: 'btn btn-sm', onclick: () => api('app:openExternal', e.htmlLink) }, 'Abrir no Google') : null)),
+        e.htmlLink ? h('button', { class: 'btn btn-sm', onclick: () => openExternal(e.htmlLink) }, 'Abrir no Google') : null)),
     actions: [
       ...(e.writable ? [{
         label: 'Excluir', danger: true,

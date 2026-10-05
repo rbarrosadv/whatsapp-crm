@@ -1,9 +1,19 @@
-# WhatsApp CRM (v4)
+# Barros Associados — sistema de gestão do escritório (v5)
 
-CRM de desktop para Windows com o **WhatsApp integrado de verdade**: você
-lê o QR code **uma única vez**, o app fica conectado como um "aparelho
-conectado" (igual ao WhatsApp Web) e **todas as conversas ficam guardadas
-no seu computador**. Ao abrir de novo, ele entra direto, sem pedir login.
+Sistema do escritório com o **WhatsApp integrado de verdade**, casos,
+honorários, agenda e tarefas — agora **para a equipe toda**:
+
+- um **servidor** guarda tudo (banco, sessão do WhatsApp, arquivos);
+- cada pessoa entra com **o próprio login** (sócio, advogado, estagiário),
+  pelo **app instalado** no computador, pelo **navegador** ou pelo **celular**;
+- o WhatsApp do escritório é um só: cada mensagem sai **assinada** com o nome
+  de quem escreveu, e o sistema avisa quando outra pessoa está com a mesma
+  conversa aberta ou respondendo;
+- quem não é sócio não muda as configurações do escritório; estagiário não
+  vê o financeiro.
+
+O app de desktop pode também rodar o servidor **no próprio computador**
+("modo local", como a v4 fazia), com os mesmos dados de antes.
 
 > ⚠️ Usa uma conexão **não oficial** com o WhatsApp (biblioteca
 > [Baileys](https://github.com/WhiskeySockets/Baileys)). É o mesmo

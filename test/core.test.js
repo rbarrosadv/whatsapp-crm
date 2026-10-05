@@ -105,10 +105,10 @@ test('mensagens novas: contagem de não lidas, reação, edição e apagada', as
   assert.ok(events.some((e) => e.id === 'N1' && e.notify));
 
   // conversa aberta e janela em foco: já fica como lida
-  wa.activeChat = PN;
+  wa.isViewing = (j) => j === PN; // alguém da equipe com a conversa aberta
   await wa.onMessages([{ key: { remoteJid: PN, fromMe: false, id: 'N2' }, message: { conversation: 'oi?' }, messageTimestamp: now() }], 'notify');
   assert.equal(db.getChat(PN).unread, 0);
-  wa.activeChat = null;
+  wa.isViewing = () => false;
 
   // resposta pelo celular zera
   db.setChatUnread(PN, 3);

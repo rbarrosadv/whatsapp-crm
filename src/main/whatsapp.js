@@ -75,8 +75,9 @@ export class WhatsAppService extends EventEmitter {
     this.sock = null;
     this.state = { state: 'idle' };
     this.retry = 0;
-    this.activeChat = null;
-    this.windowFocused = true;
+    // alguém da equipe está com a conversa aberta e a janela em foco?
+    // (o servidor troca por uma função que olha todas as janelas abertas)
+    this.isViewing = () => false;
     this.sendReadReceipts = true;
     this.changedChats = new Set();
     this.flushTimer = null;
@@ -610,7 +611,7 @@ export class WhatsAppService extends EventEmitter {
         const row = parsed.row;
         const isNew = db.saveMessage(row);
         const unreadInc = isNotify && isNew && !row.from_me && row.type !== 'system'
-          && !(this.activeChat === chatJid && this.windowFocused);
+          && !this.isViewing(chatJid);
         db.bumpChat(chatJid, row, { incrementUnread: unreadInc, isGroup });
         if (isNotify && row.from_me) db.setChatUnread(chatJid, 0);
         results.push({ chatJid, id: row.id, isNew, row, notify: isNotify && isNew && !row.from_me, msg });
@@ -625,7 +626,7 @@ export class WhatsAppService extends EventEmitter {
         const small = AUTO_DOWNLOAD[r.row.type] && size <= AUTO_DOWNLOAD[r.row.type];
         if (small || (size <= CLIENT_MAX_SIZE && db.chatAutoDownload(r.chatJid))) this.queueDownload(r.chatJid, r.id, { first: true });
       }
-      if (r.notify && this.activeChat === r.chatJid && this.windowFocused) {
+      if (r.notify && this.isViewing(r.chatJid)) {
         this.markRead(r.chatJid).catch(() => {});
       }
     }
