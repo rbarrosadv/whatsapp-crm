@@ -563,3 +563,29 @@ test('ligações aparecem na conversa: recebida → atendida / perdida', async (
   assert.equal(db.listMessages(J).filter((m) => m.type === 'call').length, 2);
   wa.off('message', h);
 });
+
+test('sugestão de palavras: aprende com o que você escreve e completa a palavra', async () => {
+  const { suggestWords, applyWord, learnWords, currentWord } = await import('../src/renderer/js/wordsuggest.js');
+  const J = '5511944443333@s.whatsapp.net';
+  const t = now();
+  const enviar = (id, text, i) => wa.onMessages([{ key: { remoteJid: J, fromMe: true, id }, message: { conversation: text }, messageTimestamp: t + i }], 'append');
+  await enviar('V1', 'Preciso da procuração assinada até sexta', 1);
+  await enviar('V2', 'A procuração e o contrato de honorários', 2);
+  await enviar('V3', 'Mandei a procuração para o Fórum de Cuiabá', 3);
+  await enviar('V4', 'O processo está no Fórum de Cuiabá', 4);
+  const vocab = db.vocabulary();
+  assert.ok(vocab.indexOf('procuração') < vocab.indexOf('Fórum'), 'mais usada primeiro');
+  assert.ok(vocab.includes('Cuiabá') && vocab.includes('Fórum'), 'nome próprio mantém maiúscula');
+  assert.ok(!vocab.includes('contrato'), 'palavra usada só 1 vez fica de fora');
+
+  assert.equal(currentWord('Segue a proc'), 'proc');
+  assert.deepEqual(suggestWords(vocab, 'Segue a proc'), ['procuração']);
+  assert.deepEqual(suggestWords(vocab, 'Segue a Proc'), ['Procuração'], 'acompanha a maiúscula');
+  assert.deepEqual(suggestWords(vocab, 'no foru'), ['Fórum'], 'ignora acento ao comparar e mantém a forma salva');
+  assert.deepEqual(suggestWords(vocab, 'Segue a procuração'), [], 'palavra já completa: nada');
+  assert.deepEqual(suggestWords(vocab, 'Segue a p'), [], 'precisa de 2 letras');
+  assert.deepEqual(applyWord('Segue a proc', '', 'procuração'), { value: 'Segue a procuração ', cursor: 19 });
+  assert.deepEqual(applyWord('a proc', ' hoje', 'procuração'), { value: 'a procuração hoje', cursor: 13 });
+  learnWords(vocab, 'audiência marcada');
+  assert.deepEqual(suggestWords(vocab, 'aud'), ['audiência'], 'aprende na hora ao enviar');
+});

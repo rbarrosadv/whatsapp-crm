@@ -195,6 +195,8 @@ function render() {
         desktopToggle('openAtLogin', 'Abrir junto com o Windows', 'Vale só para este computador.', false),
         toggle('sendReadReceipts', 'Marcar como lida no celular ao abrir a conversa', 'Envia a confirmação de leitura (tique azul), se ela estiver ativa no seu WhatsApp.'),
         toggle('enterToSend', 'Enter envia a mensagem', 'Desligado: use Ctrl+Enter para enviar e Enter para pular linha.'),
+        toggle('spellcheck', 'Corretor ortográfico', 'Sublinha palavras erradas; clique com o botão direito na palavra para ver as correções.'),
+        toggle('wordSuggest', 'Sugerir palavras ao digitar', 'Completa a palavra com as que você mais usa nas suas mensagens. Tab (ou clique) aceita a sugestão.'),
         h('label', { class: 'toggle-row' }, h('div', null, 'Tema'),
           h('select', { class: 'input select-sm', onchange: (e) => setSetting('theme', e.target.value).then(applyTheme) },
             [['system', 'Automático'], ['dark', 'Escuro'], ['light', 'Claro']].map(([v, l]) => h('option', { value: v, selected: (state.settings.theme || 'system') === v }, l)))),

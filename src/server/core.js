@@ -24,7 +24,7 @@ const dateBR = (ts) => (ts ? new Date(ts).toLocaleDateString('pt-BR') : 'sem dat
 
 // Preferências de cada pessoa (ficam no usuário) × configurações do escritório (valem para todos).
 export const USER_KEYS = ['notifications', 'notificationPreview', 'theme', 'lastView', 'lastPipeline', 'enterToSend',
-  'lastFilter', 'agendaHidden', 'agendaView', 'agendaHours', 'discreet', 'discreetMessages'];
+  'lastFilter', 'agendaHidden', 'agendaView', 'agendaHours', 'discreet', 'discreetMessages', 'spellcheck', 'wordSuggest'];
 export const OFFICE_KEYS = ['sendReadReceipts', 'forgottenHours', 'chargeTemplate', 'pixKey', 'paymentNoticeDays',
   'staleCaseDays', 'googleSync', 'googleCalendarId', 'signMessages'];
 
@@ -557,6 +557,8 @@ export async function createCore({ dataDir, demo = false, version = '', safeStor
     'quick:save': (_c, q) => { const id = db.saveQuickReply(q); broadcastConfig(); return id; },
     'quick:delete': (_c, id) => { db.deleteQuickReply(id); broadcastConfig(); },
     stats: () => db.stats(),
+    // palavras mais usadas nas mensagens enviadas (sugestão ao digitar)
+    'words:vocab': () => db.vocabulary(),
 
     'settings:set': (ctx, key, value) => {
       if (USER_KEYS.includes(key)) {

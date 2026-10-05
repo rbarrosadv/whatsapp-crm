@@ -55,6 +55,36 @@ function saveConfig() {
 
 // ------------------------------------------------------------ janela
 
+// Corretor ortográfico em português e menu do botão direito com as sugestões
+// (o Chromium sublinha as palavras, mas o menu com sugestões é a gente que monta).
+// Ligar/desligar é preferência de cada pessoa: a interface muda o atributo spellcheck.
+function setupSpellcheck() {
+  const ses = win.webContents.session;
+  try {
+    const langs = ses.availableSpellCheckerLanguages || [];
+    ses.setSpellCheckerLanguages([['pt-BR', 'pt'].find((l) => langs.includes(l)) || 'pt-BR']);
+  } catch (e) { console.warn('corretor:', e.message); }
+  win.webContents.on('context-menu', (_e, p) => {
+    const items = [];
+    if (p.misspelledWord) {
+      const sug = (p.dictionarySuggestions || []).slice(0, 6);
+      sug.forEach((w) => items.push({ label: w, click: () => win.webContents.replaceMisspelling(w) }));
+      if (!sug.length) items.push({ label: 'Sem sugestões', enabled: false });
+      items.push({ label: `Adicionar “${p.misspelledWord}” ao dicionário`, click: () => ses.addWordToSpellCheckerDictionary(p.misspelledWord) });
+      items.push({ type: 'separator' });
+    }
+    if (p.isEditable) {
+      items.push({ role: 'cut', label: 'Recortar', enabled: p.editFlags.canCut });
+      items.push({ role: 'copy', label: 'Copiar', enabled: p.editFlags.canCopy });
+      items.push({ role: 'paste', label: 'Colar', enabled: p.editFlags.canPaste });
+      items.push({ type: 'separator' }, { role: 'selectAll', label: 'Selecionar tudo' });
+    } else if (p.selectionText) {
+      items.push({ role: 'copy', label: 'Copiar' });
+    }
+    if (items.length) Menu.buildFromTemplate(items).popup({ window: win });
+  });
+}
+
 function createWindow() {
   const bounds = config.windowBounds || { width: 1360, height: 860 };
   win = new BrowserWindow({
@@ -75,6 +105,7 @@ function createWindow() {
     },
   });
   if (config.windowMaximized) win.maximize();
+  setupSpellcheck();
   win.webContents.session.setPermissionRequestHandler((_wc, permission, cb) => {
     cb(['media', 'notifications', 'clipboard-sanitized-write'].includes(permission));
   });

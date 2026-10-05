@@ -220,6 +220,14 @@ Interface (`src/renderer`, JS puro em módulos ES, sem build):
 - **Ligações**: o Baileys só grava as perdidas; `onCalls` (evento `call`)
   grava/atualiza uma linha `type='call'` com o id da chamada (recebida →
   atendida/recusada/perdida) e avisa a ligação recebida.
+- **Corretor e sugestões ao digitar**: corretor do Chromium em pt-BR
+  (`setupSpellcheck` em `src/desktop/main.js` monta o menu do botão direito
+  com as sugestões — o Chromium só sublinha; no navegador o menu é o nativo);
+  preferências por pessoa `spellcheck` (atributo da caixa de texto) e
+  `wordSuggest` (`USER_KEYS`), API `words:vocab`. Sugestão de palavras = `js/wordsuggest.js` (puro, testado no
+  Node) sobre `db.vocabulary()` — palavras das SUAS mensagens enviadas e
+  respostas rápidas, por frequência (≥2 usos), aprende na hora ao enviar;
+  Tab ou clique completa.
 - **Editar mensagem**: só texto seu, até 15 min (`editableCheck`);
   `sendMessage(jid, { text, edit: key })`. No composer, `editing` mostra a
   faixa "Editando" (Esc cancela). Fotos abrem em `views/imageviewer.js`

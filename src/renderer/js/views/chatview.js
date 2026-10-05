@@ -1,5 +1,6 @@
 // Conversa aberta: cabeçalho, mensagens e caixa de envio.
 import { openImageViewer } from './imageviewer.js';
+import { suggestWords, applyWord, learnWords } from '../wordsuggest.js';
 import {
   h, clear, fill, fmtTime, fmtDay, fmtSize, fmtSeconds, formatWhatsApp, formatPhone, phoneOf, colorFor,
   toast, errToast, modal, confirmDialog, popupMenu, EMOJIS, QUICK_REACTIONS,
@@ -16,6 +17,8 @@ let root;
 let current = null; // { jid, messages: [], els: Map, loadingOlder, noMoreLocal }
 let replyTo = null;
 let editing = null; // mensagem sua sendo editada
+let vocab = null; // palavras que você mais usa (sugestão ao digitar)
+const loadVocab = () => { if (!vocab) { vocab = []; api('words:vocab').then((v) => { vocab = v || []; }).catch(() => {}); } };
 const EDIT_WINDOW_MS = 15 * 60 * 1000;
 let recorder = null;
 
@@ -533,7 +536,34 @@ function renderComposer() {
       : `Mensagem — sai assinada como “${state.me.signature}”  ( / para respostas rápidas )`,
     value: sessionStorage.getItem(draftKey) || '',
   });
+  ta.spellcheck = state.settings.spellcheck !== false;
   const suggest = h('div', { class: 'quick-suggest hidden' });
+  // sugestões de palavras (como no teclado do celular): Tab ou clique completa
+  const wordBar = h('div', { class: 'word-suggest hidden' });
+  let words = [];
+  if (state.settings.wordSuggest !== false) loadVocab();
+  const updateWords = () => {
+    words = [];
+    if (state.settings.wordSuggest !== false && ta.selectionStart === ta.selectionEnd && !ta.value.startsWith('/')) {
+      const after = ta.value.slice(ta.selectionEnd);
+      // só no fim de uma palavra (não no meio dela)
+      if (!/^[\p{L}]/u.test(after)) words = suggestWords(vocab || [], ta.value.slice(0, ta.selectionStart));
+    }
+    fill(wordBar, ...words.map((w, i) => h('button', {
+      class: `word-chip ${i === 0 ? 'first' : ''}`, title: i === 0 ? 'Tab para completar' : 'Clique para completar',
+      onmousedown: (e) => { e.preventDefault(); acceptWord(w); },
+    }, w)), words.length ? h('span', { class: 'word-hint' }, 'Tab') : null);
+    wordBar.classList.toggle('hidden', !words.length);
+  };
+  const acceptWord = (w) => {
+    const r = applyWord(ta.value.slice(0, ta.selectionStart), ta.value.slice(ta.selectionEnd), w);
+    ta.value = r.value;
+    ta.setSelectionRange(r.cursor, r.cursor);
+    sessionStorage.setItem(draftKey, ta.value);
+    autosize();
+    updateWords();
+    ta.focus();
+  };
   let suggestIdx = 0;
   let typingTimer = null;
   let lastTyping = 0;
@@ -553,7 +583,9 @@ function renderComposer() {
       return;
     }
     const quoted = replyTo?.id;
+    if (vocab) learnWords(vocab, text);
     ta.value = '';
+    updateWords();
     sessionStorage.removeItem(draftKey);
     autosize();
     replyTo = null;
@@ -594,6 +626,7 @@ function renderComposer() {
     autosize();
     sessionStorage.setItem(draftKey, ta.value);
     updateSuggest();
+    updateWords();
     if (Date.now() - lastTyping > 4000) {
       lastTyping = Date.now();
       api('chats:presence', c.jid, 'composing').catch(() => {});
@@ -610,6 +643,8 @@ function renderComposer() {
       if (e.key === 'Enter' || e.key === 'Tab') { e.preventDefault(); applyQuick(list[suggestIdx]); return; }
       if (e.key === 'Escape') { suggest.classList.add('hidden'); return; }
     }
+    if (e.key === 'Tab' && !e.shiftKey && words.length) { e.preventDefault(); acceptWord(words[0]); return; }
+    if (e.key === 'Escape' && words.length) { words = []; wordBar.classList.add('hidden'); if (!replyTo && !editing) return; }
     const enterSends = state.settings.enterToSend !== false;
     if (e.key === 'Enter' && !e.isComposing && ((enterSends && !e.shiftKey) || (!enterSends && e.ctrlKey))) {
       e.preventDefault();
@@ -618,6 +653,10 @@ function renderComposer() {
     if (e.key === 'Escape' && replyTo) { replyTo = null; c.composerEl.querySelector('.reply-bar')?.remove(); }
     if (e.key === 'Escape' && editing) cancelEdit();
   });
+  // cursor mudou de lugar (setas/clique): recalcula a sugestão
+  ta.addEventListener('keyup', (e) => { if (e.key.startsWith('Arrow') || e.key === 'Home' || e.key === 'End') updateWords(); });
+  ta.addEventListener('click', updateWords);
+  ta.addEventListener('blur', () => wordBar.classList.add('hidden'));
   ta.addEventListener('paste', (e) => {
     const files = [...(e.clipboardData?.files || [])];
     if (!files.length) return;
@@ -653,7 +692,7 @@ function renderComposer() {
   const micBtn = h('button', { class: 'icon-btn mic', title: 'Gravar áudio', onclick: () => startRecording(micBtn) }, '🎤');
   const sendBtn = h('button', { class: 'send-btn', title: 'Enviar (Enter)', onclick: send }, '➤');
 
-  const bar = h('div', { class: 'composer-bar' }, emojiBtn, attachBtn, quickBtn, h('div', { class: 'composer-input-wrap' }, suggest, ta), micBtn, sendBtn);
+  const bar = h('div', { class: 'composer-bar' }, emojiBtn, attachBtn, quickBtn, h('div', { class: 'composer-input-wrap' }, suggest, wordBar, ta), micBtn, sendBtn);
   const replyBar = replyTo ? h('div', { class: 'reply-bar' },
     h('div', { class: 'quoted' },
       h('div', { class: 'quoted-who' }, replyTo.from_me ? 'Você' : (replyTo.sender_name || chat?.display_name)),

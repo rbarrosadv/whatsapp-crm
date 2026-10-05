@@ -136,6 +136,19 @@ try {
   await page.keyboard.press('Escape');
   await page.mouse.click(5, 5);
 
+  // sugestão de palavras ao digitar (aprende com o que você enviou)
+  await page.fill('.composer-input', 'Preciso da procuração assinada');
+  await page.keyboard.press('Enter');
+  await page.waitForSelector('.msg.out:has-text("procuração assinada")');
+  await page.click('.composer-input');
+  await page.keyboard.type('Segue a proc');
+  await page.waitForSelector('.word-suggest:not(.hidden) .word-chip.first:has-text("procuração")');
+  await shot(page, '03a-sugestao-palavra');
+  await page.keyboard.press('Tab');
+  check(await page.inputValue('.composer-input') === 'Segue a procuração ', 'Tab completa a palavra sugerida');
+  check(await page.getAttribute('.composer-input', 'spellcheck') !== 'false', 'corretor ortográfico ligado na caixa de mensagem');
+  await page.fill('.composer-input', '');
+
   // visualizador de imagens com zoom
   const jidMari = await page.evaluate(() => document.querySelector('.chat-row.active')?.dataset.jid || null);
   await page.evaluate(async ({ jid, files }) => {
