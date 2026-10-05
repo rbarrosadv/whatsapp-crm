@@ -174,7 +174,7 @@ export function parseMessage(msg, { chatJid, senderJid, senderName, keepRaw }) {
     row.text = `📅 ${inner.name || 'Evento'}${inner.description ? `\n${inner.description}` : ''}`;
   } else if (type === 'call') {
     row.type = 'call';
-    row.text = 'Chamada';
+    row.text = 'Chamada em grupo recebida';
   } else {
     const t = textOfContent(content);
     if (!t) return { kind: 'ignore' };

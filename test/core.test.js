@@ -500,3 +500,66 @@ test('editar: só texto seu e até 15 minutos', async () => {
   assert.throws(() => editableCheck({ ...base, ts: Date.now() - 16 * 60e3 }, 'x'), /15 minutos/);
   assert.throws(() => editableCheck(base, '   '), /vazia/);
 });
+
+test('ao acordar, dois pedidos de reconexão juntos abrem uma conexão só', async () => {
+  const { EventEmitter } = await import('node:events');
+  const auth = path.join(dir, 'auth');
+  fs.mkdirSync(auth, { recursive: true });
+  fs.writeFileSync(path.join(auth, 'creds.json'), JSON.stringify({ me: { id: '5511@s.whatsapp.net' }, account: {} }));
+  const s = new WhatsAppService({ dataDir: dir, logFile: path.join(dir, 'logs', 'dup.log') });
+  const criados = [];
+  s.pickVersion = async () => { await new Promise((r) => setTimeout(r, 30)); return [2, 3000, 1]; };
+  s.createSocket = () => {
+    const sk = { ev: new EventEmitter(), ws: new EventEmitter(), ended: false, end() { this.ended = true; } };
+    criados.push(sk);
+    return sk;
+  };
+  // timer de reconexão e o aviso de "voltou da suspensão" chegando quase juntos
+  await Promise.all([s.start(), new Promise((r) => setTimeout(r, 5)).then(() => s.reconnectNow())]);
+  assert.equal(criados.length, 1, 'só uma conexão criada');
+  assert.equal(s.sock, criados[0]);
+  // uma reconexão depois fecha a anterior antes de abrir outra
+  await s.reconnectNow();
+  assert.equal(criados.length, 2);
+  assert.ok(criados[0].ended, 'conexão anterior encerrada');
+  await s.stop();
+  clearTimeout(s.watchdog);
+  fs.rmSync(path.join(auth, 'perfil.json'), { force: true });
+});
+
+test('mensagens que chegaram com o computador desligado contam como não lidas', async () => {
+  const J = '5511977778888@s.whatsapp.net';
+  const t = now() - 3600;
+  await wa.onMessages([
+    { key: { remoteJid: J, fromMe: false, id: 'OFF1' }, message: { conversation: 'bom dia' }, messageTimestamp: t },
+    { key: { remoteJid: J, fromMe: false, id: 'OFF2' }, message: { conversation: 'consegue me ligar?' }, messageTimestamp: t + 1 },
+  ], 'append');
+  assert.equal(db.getChat(J).unread, 2);
+  await wa.onMessages([{ key: { remoteJid: J, fromMe: true, id: 'OFF3' }, message: { conversation: 'ligo já' }, messageTimestamp: t + 2 }], 'append');
+  assert.equal(db.getChat(J).unread, 0, 'respondida pelo celular: lida');
+});
+
+test('ligações aparecem na conversa: recebida → atendida / perdida', async () => {
+  const J = '5511966665555@s.whatsapp.net';
+  const ev = [];
+  const h = (e) => ev.push(e);
+  wa.on('message', h);
+  const d = new Date();
+  await wa.onCalls([{ id: 'CALL1', chatId: J, from: J, date: d, status: 'offer', isVideo: false, isGroup: false }]);
+  assert.equal(db.getMessage(J, 'CALL1').text, 'Chamada de voz recebida');
+  assert.equal(db.getChat(J).unread, 1);
+  assert.ok(ev.some((e) => e.id === 'CALL1' && e.notify), 'avisa a ligação');
+  await wa.onCalls([{ id: 'CALL1', chatId: J, date: d, status: 'accept' }]);
+  await wa.onCalls([{ id: 'CALL1', chatId: J, date: d, status: 'terminate' }]);
+  assert.equal(db.getMessage(J, 'CALL1').text, 'Chamada de voz atendida');
+  assert.equal(db.getChat(J).unread, 1, 'não conta duas vezes');
+  await wa.onCalls([{ id: 'CALL2', chatId: J, date: d, status: 'offer', isVideo: true }]);
+  await wa.onCalls([{ id: 'CALL2', chatId: J, date: d, status: 'terminate', isVideo: true }]);
+  assert.equal(db.getMessage(J, 'CALL2').text, 'Chamada de vídeo perdida');
+  assert.match(db.getChat(J).last_preview, /📞 Chamada de vídeo perdida/);
+  // o Baileys grava a perdida com o mesmo id: não duplica
+  await wa.onMessages([{ key: { remoteJid: J, id: 'CALL2', fromMe: false }, messageStubType: 41, messageTimestamp: Math.floor(d / 1000) }], 'notify');
+  assert.equal(db.getMessage(J, 'CALL2').text, 'Chamada de vídeo perdida');
+  assert.equal(db.listMessages(J).filter((m) => m.type === 'call').length, 2);
+  wa.off('message', h);
+});
