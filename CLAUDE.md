@@ -83,7 +83,7 @@ Motor (`src/main`, sem Electron apesar do nome da pasta):
   `legacy_pending`, `meta`, `contact_types`, `chat_filters`, `cases`,
   `payments`, `case_docs`, `users`, `sessions`, `doc_index`, `clients`,
   `case_parties`, `case_moves`, `case_steps`, `case_checklist`, `oabs`,
-  `intimations`, `expenses`, `incomes` (migrações por versão em
+  `intimations`, `expenses`, `incomes`, `leads`, `lead_contacts` (migrações por versão em
   `migrate()`; `meta.schema` guarda a versão atual).
 - `docs.js` — `DocsService`: pasta "BARROS ADVOGADOS" do OneDrive lida
   direto do disco (`settings.docsRoot`, ou `guessRoot()` em
@@ -155,6 +155,24 @@ Motor (`src/main`, sem Electron apesar do nome da pasta):
   no "recebido por área" como `Avulsa: <categoria>`; recibo pela mesma
   numeração (`lastReceiptNo` olha parcelas e avulsas). Tudo `finance:*`
   (estagiário não vê); excluir despesa/receita só sócio.
+- `leads.js` — **Comercial** (v15): `leads` = interessados que ainda não são
+  clientes (origem, indicação, área, assunto, responsável, consulta,
+  honorários da proposta `fee_kind` fixo|parcelado|exito|fixo_exito), funil fixo
+  `LEAD_STAGES` novo → consulta → proposta → ganho/perdido (`lost_reason`).
+  `lead_contacts` = registros de atendimento (ligação, presencial, e-mail,
+  WhatsApp, vídeo) do interessado **ou do cliente** (aba Atendimentos da ficha).
+  Lembretes de interessado são tarefas com a chave `lead:<id>` na coluna `jid`
+  (`TASK_SELECT` traz `lead_id`/`lead_name`); consulta marcada vira `reuniao`;
+  próximo passo com data vira tarefa. Proposta = texto do modelo
+  (`proposalTemplate`/`proposalValidDays`, `{nome}` `{assunto}` `{honorarios}`…)
+  revisado → WhatsApp, copiar ou PDF (`leads:proposalHtml`); marca enviada e
+  agenda "Retomar proposta" em 3 dias úteis. `convertLead` ("Virar cliente"):
+  cria/usa o cliente, abre o processo com área/resumo/responsável/honorários,
+  gera parcelas se informada a 1ª data, leva tarefas/notas/histórico/atendimentos
+  para a chave do cliente. `leadStats` (novos, fechados, conversão, origem,
+  motivos de perda, propostas em aberto). Estagiário vê o funil sem valores e
+  não faz proposta; excluir interessado só sócio. O funil de casos "Captação"
+  antigo continua existindo, mas o comercial novo não depende dele.
 - `ogg.js` — remux WebM/Opus (MediaRecorder) → OGG/Opus (mensagem de voz).
 - `google.js` — `GoogleService`: Google Agenda pela API oficial com a chave
   (client_secret JSON, tipo "App para computador") do próprio usuário;
@@ -202,7 +220,7 @@ Interface (`src/renderer`, JS puro em módulos ES, sem build):
   `saveMedia`, `pickFiles`, `uploadFiles`, `downloadUrl/Blob`, `openExternal`.
 - Menu (`NAV` em `app.js`, com `also` = sub-telas que acendem o mesmo
   botão): Hoje · Agenda (`agenda` calendário + `tasks` lista) · Jurídico
-  (`legal` + `board`) · Atendimento (`inbox` + `contacts`) · Documentos ·
+  (`legal` + `board`) · Atendimento (`inbox` + `commercial` + `contacts`) · Documentos ·
   Financeiro · Relatórios (`dashboard`). `body[data-view]`: a tela do QR e a
   faixa de conexão só aparecem no Atendimento.
 - `js/views/legal.js` — **Jurídico**: abas Clientes · Processos · Intimações
@@ -228,6 +246,15 @@ Interface (`src/renderer`, JS puro em módulos ES, sem build):
   dica ao passar o mouse/foco, "ver tabela"); cores `--viz-1/--viz-2`
   validadas para os dois temas (skill dataviz). "Recebi" abre `receiveDialog`
   (data, valor, forma) → `showReceipt`; custas na aba Honorários do processo.
+- `js/views/commercial.js` — **Comercial**, a 2ª tela do Atendimento
+  (`atendimentoSwitch`: Conversas · Comercial, também no topo da lista de
+  conversas): números do mês, funil (arrastar; "Fechou" abre o "Virar cliente",
+  "Não fechou" pede o motivo) ou lista; ficha do interessado (`openLead`, abre
+  por cima de qualquer tela via `store.openLead`) com dados, próximos passos,
+  atendimentos, proposta e virar cliente. `contactDialog`/`contactList` também
+  na ficha do cliente. Na ficha do WhatsApp (`crmpanel`) aparece "Interessado no
+  Comercial" ou "Registrar como interessado"; no Hoje, "Interessados sem próximo
+  passo" (`today:summary.leadsIdle`).
 - `js/views/docs.js` — tela **Documentos** (Buscar · Modelos · Pastas),
   `folderBrowser`, `templatePicker` ("Novo do modelo"), `useAsBaseDialog`,
   `caseFolderPanel` (aba Documentos do caso) e `clientFolderDialog` (ficha do

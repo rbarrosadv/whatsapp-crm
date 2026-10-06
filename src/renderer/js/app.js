@@ -17,6 +17,7 @@ import { mountConnect } from './views/connect.js';
 import { mountToday } from './views/today.js';
 import { mountDocs } from './views/docs.js';
 import { mountLegal } from './views/legal.js';
+import { mountCommercial } from './views/commercial.js';
 import { icon } from './icons.js';
 
 // O escritório no centro; o WhatsApp é o módulo de Atendimento (um canal).
@@ -25,7 +26,7 @@ const NAV = [
   ['today', 'home', 'Hoje'],
   ['agenda', 'calendar', 'Agenda', ['tasks']],
   ['legal', 'scale', 'Jurídico', ['board']],
-  ['inbox', 'message', 'Atendimento', ['contacts']],
+  ['inbox', 'message', 'Atendimento', ['contacts', 'commercial']],
   ['docs', 'folder', 'Documentos'],
   ['finance', 'wallet', 'Financeiro'],
   ['dashboard', 'chart', 'Relatórios'],
@@ -44,6 +45,7 @@ async function main() {
     contacts: h('div', { class: 'view view-page' }),
     docs: h('div', { class: 'view view-page view-docs' }),
     legal: h('div', { class: 'view view-page view-legal' }),
+    commercial: h('div', { class: 'view view-commercial' }),
     tasks: h('div', { class: 'view view-page' }),
     dashboard: h('div', { class: 'view view-page' }),
     finance: h('div', { class: 'view view-page' }),
@@ -91,6 +93,7 @@ async function main() {
   mountToday(views.today);
   mountDocs(views.docs);
   mountLegal(views.legal);
+  mountCommercial(views.commercial);
   mountChatList(listCol);
   mountChatView(chatCol, { onTogglePanel: togglePanel });
   mountCrmPanel(crmCol);

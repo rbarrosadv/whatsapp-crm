@@ -4,7 +4,8 @@ import {
   h, clear, fill, fmtDateTime, fmtDue, fmtMoney, fmtDuration, formatPhone, phoneOf, toLocalInput, fromLocalInput,
   modal, errToast, toast, confirmDialog, debounce,
 } from '../util.js';
-import { state, on, emit, api, stageById, openChat, openClient, typeById } from '../store.js';
+import { state, on, emit, api, stageById, openChat, openClient, openLead, typeById } from '../store.js';
+import { leadDialog } from './commercial.js';
 import { avatarEl, typeMenu } from '../components.js';
 import { openCase, newCaseDialog, TASK_KINDS, feeLabel } from './casemodal.js';
 import { icon, named } from '../icons.js';
@@ -19,6 +20,7 @@ export function mountCrmPanel(el) {
   on('config', () => jid && render());
   on('notes', (j) => { if (j === jid) renderNotes(); });
   on('tasks', () => jid && renderTasks());
+  on('leads', () => jid && renderTop());
   on('cases', (j) => { if (jid && (!j || j === jid)) { renderCases(); renderTasks(); } });
 }
 
@@ -103,8 +105,23 @@ function clientBlock(chat) {
       h('div', { class: 'crm-label' }, 'Cliente do escritório'),
       h('button', { class: 'btn wide', onclick: () => openClient(chat.client_id) }, 'Abrir ficha do cliente'));
   }
+  // ainda não é cliente: pode ser um interessado do Comercial
+  const leadEl = h('div', { class: 'lead-link' });
+  if (!chat.is_group) {
+    api('leads:byJid', chat.jid).then((l) => {
+      if (!leadEl.isConnected && !leadEl.parentNode) return;
+      fill(leadEl, l && l.stage !== 'ganho'
+        ? h('div', { class: 'lead-chip', onclick: () => openLead(l.id) },
+          icon('target', 15), h('div', { class: 'grow' }, h('b', null, 'Interessado no Comercial'),
+            h('div', { class: 'small muted' }, `${l.stage_label}${l.next_task ? ` · próximo: ${l.next_task.title}` : ''}`)),
+          h('span', { class: 'link small' }, 'Abrir'))
+        : h('button', { class: 'btn btn-sm wide', onclick: () => leadDialog(null, { jid: chat.jid, name: chat.display_name, phone: chat.jid.endsWith('@s.whatsapp.net') ? formatPhone(chat.jid.split('@')[0]) : '' }) },
+          [icon('target', 15), 'Registrar como interessado (Comercial)']));
+    }).catch(() => {});
+  }
   return h('div', { class: 'crm-block client-link' },
     h('div', { class: 'crm-label' }, 'Cliente do escritório'),
+    leadEl,
     h('div', { class: 'muted small' }, 'Esta conversa ainda não é de um cliente.'),
     h('div', { class: 'row wrap' },
       h('button', {
@@ -197,6 +214,7 @@ export function taskRow(t, { showChat = false } = {}) {
       h('div', { class: 'task-title' }, t.kind && t.kind !== 'tarefa' ? '' : '', t.title),
       h('div', { class: 'task-sub' }, t.due_at ? `${late ? 'Atrasado · ' : ''}${fmtDue(t.due_at)}` : 'Sem data',
         showChat && t.client_id ? h('a', { class: 'link', onclick: (e) => { e.stopPropagation(); openClient(t.client_id); } }, ` · ${t.client_name}`)
+          : showChat && t.lead_id ? h('a', { class: 'link', onclick: (e) => { e.stopPropagation(); openLead(t.lead_id); } }, ` · ${t.lead_name} (interessado)`)
           : showChat && chat ? h('a', { class: 'link', onclick: (e) => { e.stopPropagation(); openChat(chat.jid); } }, ` · ${chat.display_name}`) : null,
         t.case_title ? h('a', { class: 'link', onclick: (e) => { e.stopPropagation(); openCase(t.case_id, { tab: 'prazos' }); } }, ` · ${t.case_title}`) : null,
         t.assignee_name && t.assignee_id !== state.me?.id ? ` · ${t.assignee_name}` : null)),

@@ -279,6 +279,13 @@ function render() {
         h('label', { class: 'field' }, h('span', null, 'Mensagem (na ficha do processo → Fluxo → Solicitar)'), docsTemplateInput()),
         h('p', { class: 'muted small' }, 'Campos: {nome} (primeiro nome) {nome_completo} {caso} {lista} (os documentos marcados). Você sempre revisa antes de enviar.')),
 
+      state.can.finance && section('Proposta de honorários',
+        h('label', { class: 'field' }, h('span', null, 'Modelo do texto (Atendimento → Comercial → ficha do interessado → Proposta)'), proposalTemplateInput()),
+        h('p', { class: 'muted small' }, 'Campos: {nome} (primeiro nome) {nome_completo} {assunto} {area} {honorarios} {validade} {escritorio}. Você sempre revisa antes de enviar.'),
+        h('label', { class: 'toggle-row' }, h('div', null, 'Validade da proposta'),
+          h('select', { class: 'input select-sm', disabled: !state.can.admin, onchange: (e) => setSetting('proposalValidDays', Number(e.target.value)).catch(errToast) },
+            [[7, '7 dias'], [15, '15 dias'], [30, '30 dias']].map(([v, l]) => h('option', { value: v, selected: Number(state.settings.proposalValidDays ?? 15) === v }, l))))),
+
       state.can.finance && section('Dados do escritório (recibos)',
         ...[['officeName', 'Nome', 'Barros Associados'], ['officeDoc', 'CNPJ ou OAB da sociedade', 'Ex.: CNPJ 00.000.000/0001-00'],
           ['officeAddress', 'Endereço', 'Rua, nº, sala, bairro, cidade-UF, CEP'], ['officeCity', 'Cidade (data do recibo)', 'Cuiabá-MT']]
@@ -471,6 +478,13 @@ export function pipelineEditor(p) {
       },
     ],
   });
+}
+
+function proposalTemplateInput() {
+  const ta = h('textarea', { class: 'input', rows: 7, disabled: !state.can.admin, onchange: (e) => setSetting('proposalTemplate', e.target.value).catch(errToast) });
+  if (state.settings.proposalTemplate) ta.value = state.settings.proposalTemplate;
+  else api('leads:defaultTemplate').then((t) => { ta.value = t; }).catch(() => {});
+  return ta;
 }
 
 function chargeTemplateInput() {

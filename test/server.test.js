@@ -515,3 +515,86 @@ test('receita avulsa: com cliente ou só o nome, entra no caixa e no painel, rec
   assert.ok(d.byArea.some((x) => x.label === 'Avulsa: Parecer' && x.value === 1200));
   assert.equal((await c.call('finance:incomes', { clientId: cid })).length, 1, 'aparece na ficha do cliente');
 });
+
+test('comercial: interessado, consulta na agenda, atendimento, proposta pelo WhatsApp, virar cliente com processo e parcelas', async () => {
+  const c = client();
+  await c.req('/auth/login', { body: { login: 'barros', password: 'segredo1' } });
+  await connected(c);
+  const chat = (await c.call('chats:list')).find((x) => !x.is_group && !x.client_id);
+  const id = await c.call('leads:save', {
+    name: 'Paula Interessada', jid: chat.jid, source: 'Instagram', area: 'Família', subject: 'Divórcio consensual',
+    fee_kind: 'parcelado', fee_total: '6.000,00', fee_count: 6,
+  });
+  let l = await c.call('leads:get', id);
+  assert.equal(l.stage, 'novo');
+  assert.equal(l.fee_total, 6000);
+  assert.equal((await c.call('leads:byJid', chat.jid)).id, id, 'conversa sabe que é um interessado');
+
+  // consulta marcada vira compromisso e muda a etapa
+  const when = Date.now() + 2 * 86400e3;
+  await c.call('leads:save', { id, consult_at: when });
+  l = await c.call('leads:get', id);
+  assert.equal(l.stage, 'consulta');
+  assert.ok(l.tasks.some((t) => t.kind === 'reuniao' && t.due_at === when && t.lead_name === 'Paula Interessada'));
+
+  // atendimento com próximo passo = lembrete
+  await c.call('leads:addContact', { lead_id: id, kind: 'ligacao', summary: 'Explicou o caso, tem dois filhos', next_step: 'Ligar para confirmar documentos', next_at: when + 3600e3 });
+  l = await c.call('leads:get', id);
+  assert.equal(l.contacts.length, 1);
+  assert.equal(l.contacts[0].kind_label, 'Ligação');
+  assert.ok(l.tasks.some((t) => t.title === 'Ligar para confirmar documentos'));
+
+  // proposta: texto do modelo, envio pelo WhatsApp, lembrete de retomar
+  const text = await c.call('leads:proposalText', id);
+  assert.match(text, /Olá, Paula!/);
+  assert.match(text, /R\$\s6\.000,00, em 6 parcelas mensais de R\$\s1\.000,00/);
+  await c.call('leads:proposal', id, { text, send: true });
+  l = await c.call('leads:get', id);
+  assert.equal(l.stage, 'proposta');
+  assert.ok(l.proposal_sent_at);
+  assert.ok(l.tasks.some((t) => /^Retomar proposta/.test(t.title)));
+  const msgs = await c.call('messages:list', chat.jid);
+  assert.ok((msgs.messages || msgs).some((m) => m.from_me && /proposta de honorários/.test(m.text)), 'proposta saiu pelo WhatsApp');
+  assert.match((await c.call('leads:proposalHtml', id)).html, /PROPOSTA DE HONORÁRIOS/);
+
+  // estagiária vê o funil sem valores e não faz proposta
+  const est = client();
+  await est.req('/auth/login', { body: { login: 'bia', password: 'estagio1' } });
+  const seen = (await est.call('leads:list', { open: true })).find((x) => x.id === id);
+  assert.ok(seen);
+  assert.equal(seen.fee_total, undefined);
+  await assert.rejects(est.call('leads:proposalText', id), /permissão/);
+  await assert.rejects(est.call('leads:delete', id), /permissão/);
+
+  // virar cliente: cliente com o WhatsApp, processo com honorários e parcelas; lembretes vão junto
+  const due = new Date(); due.setMonth(due.getMonth() + 1); due.setHours(12, 0, 0, 0);
+  const r = await c.call('leads:convert', id, { firstDue: due.getTime() });
+  const cl = await c.call('clients:get', r.clientId);
+  assert.equal(cl.name, 'Paula Interessada');
+  assert.equal(cl.jid, chat.jid);
+  assert.match(cl.origin, /Instagram/);
+  const k = await c.call('cases:get', r.caseId);
+  assert.equal(k.title, 'Divórcio consensual');
+  assert.equal(k.area, 'Família');
+  assert.equal(k.fee_total, 6000);
+  assert.equal(k.payments_count, 6);
+  l = await c.call('leads:get', id);
+  assert.equal(l.stage, 'ganho');
+  assert.ok(l.tasks.some((t) => t.title === 'Ligar para confirmar documentos' && t.client_id === r.clientId), 'lembretes passaram para o cliente');
+  assert.equal((await c.call('leads:contacts', { clientId: r.clientId })).length, 1, 'atendimentos aparecem na ficha do cliente');
+  await assert.rejects(c.call('leads:convert', id, {}), /já virou cliente/);
+
+  // quem não fechou: motivo e lembretes encerrados
+  const lost = await c.call('leads:save', { name: 'Carlos Desistiu', phone: '65 99999-1111', source: 'Google' });
+  await c.call('leads:addContact', { lead_id: lost, kind: 'presencial', summary: 'Achou caro', next_step: 'Retomar', next_at: Date.now() + 86400e3 });
+  await c.call('leads:setStage', lost, 'perdido', { lostReason: 'Preço' });
+  assert.equal((await c.call('leads:get', lost)).tasks.filter((t) => !t.done).length, 0);
+  const st = await c.call('leads:stats', {});
+  assert.equal(st.won, 1);
+  assert.equal(st.lost, 1);
+  assert.equal(st.conversion, 50);
+  assert.ok(st.bySource.some((x) => x.label === 'Instagram'));
+  assert.ok(st.lostReasons.some((x) => x.label === 'Preço'));
+  await c.call('leads:delete', lost);
+  assert.equal((await c.call('leads:list', {})).some((x) => x.id === lost), false);
+});

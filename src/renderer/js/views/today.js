@@ -4,12 +4,13 @@
 import {
   h, fill, fmtMoney, fmtTime, fmtDuration, toast, errToast, confirmDialog, debounce, openExternal,
 } from '../util.js';
-import { state, on, api, openChat, openClient, openLegal, isAwaiting, emit, setView } from '../store.js';
+import { state, on, api, openChat, openClient, openLegal, openLead, isAwaiting, emit, setView } from '../store.js';
 import { showTasks } from './tasks.js';
 import { taskRow, taskDialog } from './crmpanel.js';
 import { openCase, chargeDialog, TASK_KINDS } from './casemodal.js';
 import { avatarEl } from '../components.js';
 import { icon } from '../icons.js';
+import { contactDialog } from './commercial.js';
 
 const DAY = 864e5;
 let root;
@@ -26,6 +27,7 @@ export function mountToday(el) {
   on('cases', refresh);
   on('finance', refresh);
   on('intimations', refresh);
+  on('leads', refresh);
   const slow = debounce(() => state.view === 'today' && render(), 5000);
   on('chats', slow);
 }
@@ -198,6 +200,16 @@ function dayView(sum, events, awaiting) {
       });
     })));
   }
+  if (sum.leadsIdle?.length) {
+    groups.push(group('Interessados sem próximo passo', 'Comercial: marque um retorno para não perder o cliente', sum.leadsIdle.slice(0, 6).map((l) => actionRow({
+      who: l.name, onOpen: () => openLead(l.id),
+      text: [l.stage_label, l.subject].filter(Boolean).join(' · '),
+      meta: `último contato há ${fmtDuration(Date.now() - l.since)}`,
+      late: Date.now() - l.since > 3 * DAY,
+      action: 'Registrar atendimento', onAction: () => contactDialog({ lead_id: l.id }),
+      secondary: { label: 'Abrir', onClick: () => openLead(l.id) },
+    })), sum.leadsIdle.length > 6 ? `e mais ${sum.leadsIdle.length - 6}` : null));
+  }
   if (awaiting.length) {
     groups.push(group('Mensagens aguardando resposta', 'Atendimento (WhatsApp)', awaiting.slice(0, 8).map((c) => actionRow({
       who: c.display_name, chat: c,
@@ -221,8 +233,8 @@ function group(title, hint, rows, more) {
     rows, more ? h('div', { class: 'muted small' }, more) : null);
 }
 
-function actionRow({ who, chat, clientId, text, meta, late, action, onAction, secondary }) {
-  const open = clientId ? () => openClient(clientId) : chat ? () => openChat(chat.jid) : null;
+function actionRow({ who, chat, clientId, onOpen, text, meta, late, action, onAction, secondary }) {
+  const open = onOpen || (clientId ? () => openClient(clientId) : chat ? () => openChat(chat.jid) : null);
   return h('div', { class: 'action-row' },
     chat ? avatarEl(chat, 34) : null,
     h('div', { class: 'grow action-main', onclick: open, title: clientId ? 'Abrir a ficha do cliente' : null },

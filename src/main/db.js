@@ -8,7 +8,7 @@ import fs from 'node:fs';
 
 let db;
 
-const SCHEMA_VERSION = 14;
+const SCHEMA_VERSION = 15;
 
 const DEFAULT_PIPELINES = [
   {
@@ -419,6 +419,31 @@ function migrate() {
       receipt_no INTEGER, created_by TEXT, created_at INTEGER NOT NULL
     );
     CREATE INDEX IF NOT EXISTS incomes_received ON incomes(received_at);
+  `);
+  // versão 15: comercial — interessados (ainda não clientes) e registros de atendimento
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS leads (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      name TEXT NOT NULL, phone TEXT, email TEXT, jid TEXT,
+      source TEXT, referred_by TEXT, area TEXT, subject TEXT, description TEXT,
+      stage TEXT NOT NULL DEFAULT 'novo', stage_changed_at INTEGER, lost_reason TEXT,
+      responsible_id INTEGER, consult_at INTEGER,
+      fee_kind TEXT, fee_total REAL, fee_count INTEGER, fee_percent REAL,
+      proposal_text TEXT, proposal_sent_at INTEGER,
+      client_id INTEGER REFERENCES clients(id) ON DELETE SET NULL, case_id INTEGER,
+      created_by TEXT, created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL, closed_at INTEGER
+    );
+    CREATE INDEX IF NOT EXISTS leads_stage ON leads(stage);
+    CREATE INDEX IF NOT EXISTS leads_jid ON leads(jid);
+    CREATE TABLE IF NOT EXISTS lead_contacts (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      lead_id INTEGER REFERENCES leads(id) ON DELETE CASCADE,
+      client_id INTEGER REFERENCES clients(id) ON DELETE CASCADE,
+      kind TEXT NOT NULL, at INTEGER NOT NULL, summary TEXT NOT NULL, next_step TEXT,
+      user_name TEXT, created_at INTEGER NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS lead_contacts_lead ON lead_contacts(lead_id);
+    CREATE INDEX IF NOT EXISTS lead_contacts_client ON lead_contacts(client_id);
   `);
   addColumn('cases', 'datajud_checked_at', 'INTEGER');
   addColumn('cases', 'datajud_error', 'TEXT');
@@ -1821,11 +1846,13 @@ export function addNote(jid, text, caseId) {
 export function deleteNote(id) { run('DELETE FROM notes WHERE id = ?', id); }
 
 // tasks
+// tarefas de interessados do comercial usam a chave "lead:<id>"
 const TASK_SELECT = `SELECT k.*, c.title AS case_title, c.process_number, u.name AS assignee_name,
-    COALESCE(cl.id, ck.id) AS client_id, COALESCE(cl.name, ck.name) AS client_name
+    COALESCE(cl.id, ck.id) AS client_id, COALESCE(cl.name, ck.name) AS client_name, ld.id AS lead_id, ld.name AS lead_name
   FROM tasks k LEFT JOIN cases c ON c.id = k.case_id LEFT JOIN users u ON u.id = k.assignee_id
   LEFT JOIN clients cl ON cl.id = c.client_id
-  LEFT JOIN clients ck ON c.id IS NULL AND (ck.jid = k.jid OR 'cliente:' || ck.id = k.jid)`;
+  LEFT JOIN clients ck ON c.id IS NULL AND (ck.jid = k.jid OR 'cliente:' || ck.id = k.jid)
+  LEFT JOIN leads ld ON k.jid LIKE 'lead:%' AND 'lead:' || ld.id = k.jid`;
 
 /** `assignee`: id de uma pessoa → as dela e as sem responsável. */
 export function listTasks({ jid, caseId, includeDone = false, assignee } = {}) {

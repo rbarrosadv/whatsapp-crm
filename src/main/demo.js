@@ -7,6 +7,7 @@ import path from 'node:path';
 import QRCode from 'qrcode';
 import { WhatsAppService, guessMime, extFor, editableCheck } from './whatsapp.js';
 import * as db from './db.js';
+import * as leads from './leads.js';
 
 const ME = '5511900000000@s.whatsapp.net';
 
@@ -130,6 +131,21 @@ export class DemoWhatsAppService extends WhatsAppService {
     db.setPaymentPaid(ids[0], true);
     db.saveTask({ case_id: caseId, kind: 'audiencia', title: 'Audiência de instrução', due_at: Date.now() + 5 * 864e5 });
     this.markChanged(carlos);
+
+    // comercial: interessados em etapas diferentes
+    const novo = PEOPLE.find(([, name]) => !name)?.[0];
+    if (novo) {
+      leads.saveLead({ name: 'Interessado pelo WhatsApp', jid: `${novo}@s.whatsapp.net`, phone: novo, source: 'WhatsApp', area: 'Cível', subject: 'Agendar reunião' });
+      this.markChanged(`${novo}@s.whatsapp.net`);
+    }
+    const consulta = leads.saveLead({ name: 'Roberto Lima', phone: '(65) 99812-3456', source: 'Indicação', referred_by: 'Carlos Pereira',
+      area: 'Previdenciário', subject: 'Aposentadoria por tempo de contribuição', stage: 'consulta', consult_at: Date.now() + 2 * 864e5 });
+    db.saveTask({ jid: leads.leadKey(consulta), kind: 'reuniao', title: 'Consulta: Roberto Lima', due_at: Date.now() + 2 * 864e5 });
+    const prop = leads.saveLead({ name: 'Fernanda Dias', phone: '(65) 99633-2211', email: 'fernanda@exemplo.com', source: 'Instagram',
+      area: 'Família', subject: 'Divórcio com partilha de bens', stage: 'proposta', fee_kind: 'parcelado', fee_total: 4500, fee_count: 3 });
+    leads.addContact({ lead_id: prop, kind: 'presencial', at: Date.now() - 3 * 864e5, summary: 'Consulta no escritório. Casados há 12 anos, um imóvel e um carro. Quer resolver rápido.', next_step: 'Enviar proposta' }, 'Rafael');
+    leads.markProposalSent(prop, null);
+    db.saveTask({ jid: leads.leadKey(prop), kind: 'tarefa', title: 'Retomar proposta — Fernanda Dias', due_at: Date.now() + 864e5 });
   }
 
   requireSock() {

@@ -7,6 +7,7 @@ import { avatarEl, ticks, stagePill, tagDots, typeMenu } from '../components.js'
 import { newCaseDialog } from './casemodal.js';
 import { filterEditor } from './settings.js';
 import { icon, dataIcon } from '../icons.js';
+import { atendimentoSwitch } from './commercial.js';
 
 const filters = { q: '', filterId: null, stage: '', tag: '', archived: false };
 let searchHits = [];
@@ -27,11 +28,11 @@ export function mountChatList(root) {
 
   const header = h('div', { class: 'chatlist-head' },
     h('div', { class: 'row' },
-      h('h2', null, 'WhatsApp'),
+      h('h2', null, 'Atendimento'),
       h('div', { class: 'row' },
         h('button', { class: 'icon-btn', title: 'Contatos do WhatsApp (tabela)', onclick: () => setView('contacts') }, icon('users', 18)),
-        h('button', { class: 'icon-btn', title: 'Nova conversa (por número)', onclick: newChatDialog }, '＋'))),
-    searchInput, chipsEl, selectsEl);
+        h('button', { class: 'icon-btn', title: 'Nova conversa (por número)', onclick: newChatDialog }, icon('plus', 18)))),
+    atendimentoSwitch('inbox'), searchInput, chipsEl, selectsEl);
 
   root.append(header, listEl);
 

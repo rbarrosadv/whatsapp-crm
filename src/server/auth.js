@@ -168,7 +168,7 @@ export function endSession(token) {
 // Métodos da API que cada perfil NÃO pode chamar. O sócio pode tudo.
 const ADMIN_ONLY = [
   /^users:(save|list)$/, 'backup:export', /^wa:(logout|reset)$/, 'legacy:import',
-  /^google:(importClient|disconnect)$/, 'cases:delete', 'finance:delete', 'finance:deleteExpense', 'finance:deleteIncome',
+  /^google:(importClient|disconnect)$/, 'cases:delete', 'finance:delete', 'finance:deleteExpense', 'finance:deleteIncome', 'leads:delete',
 ];
 const DENY = {
   socio: [],
@@ -177,7 +177,7 @@ const DENY = {
     ...ADMIN_ONLY,
     /^finance:/, 'stats',
     /^(pipelines|types|filters|tags):(save|delete|reorder)$/,
-    'cases:setStatus', 'messages:delete', /^oabs:(save|delete)$/,
+    'cases:setStatus', 'messages:delete', /^oabs:(save|delete)$/, /^leads:proposal/,
   ],
 };
 
@@ -198,7 +198,7 @@ export function capabilities(role) {
 
 // Campos de dinheiro tirados dos casos para quem não vê o financeiro.
 const MONEY_FIELDS = ['fee_fixed', 'fee_installments', 'fee_success', 'fee_total', 'fee_percent',
-  'paid_total', 'billed_total', 'payments_count', 'overdue_payments'];
+  'paid_total', 'billed_total', 'payments_count', 'overdue_payments', 'fee_count', 'proposal_text', 'proposalsValue'];
 
 export function stripMoney(v) {
   if (Array.isArray(v)) return v.map(stripMoney);

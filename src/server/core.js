@@ -20,6 +20,7 @@ import { diagnoseConnection } from '../main/diag.js';
 import { DocsService, guessRoot, templateValues, PLACEHOLDERS, FOLDERS } from '../main/docs.js';
 import { seedDemoDocs, demoCourtsFetch } from '../main/demo.js';
 import { reais } from '../main/extenso.js';
+import * as leads from '../main/leads.js';
 import { CourtsService, DATAJUD_PUBLIC_KEY, deadlineFromAvailability, formatCnj, tribunalOf, nameCase } from '../main/courts.js';
 import { computeSteps, suggestedChecklist, docsRequestText, addBusinessDays, STEPS, PARTY_ROLES, DEFAULT_DOCS_TEMPLATE } from '../main/workflow.js';
 
@@ -32,7 +33,7 @@ export const USER_KEYS = ['notifications', 'notificationPreview', 'theme', 'last
   'lastFilter', 'agendaHidden', 'agendaView', 'agendaHours', 'discreet', 'discreetMessages', 'spellcheck', 'wordSuggest', 'autocorrect', 'notifyCourts'];
 export const OFFICE_KEYS = ['sendReadReceipts', 'forgottenHours', 'chargeTemplate', 'pixKey', 'paymentNoticeDays',
   'staleCaseDays', 'googleSync', 'googleCalendarId', 'signMessages', 'docsRoot', 'docsRequestTemplate', 'datajudKey',
-  'officeName', 'officeDoc', 'officeAddress', 'officeCity'];
+  'officeName', 'officeDoc', 'officeAddress', 'officeCity', 'proposalTemplate', 'proposalValidDays'];
 
 export const DEFAULT_CHARGE_TEMPLATE = 'Olá, {nome}! Tudo bem? Passando para lembrar da {parcela} dos honorários referentes a {caso}, '
   + 'no valor de {valor}, com vencimento em {vencimento}.{pix_linha}\nQualquer dúvida, estou à disposição.';
@@ -474,6 +475,33 @@ export async function createCore({ dataDir, demo = false, version = '', safeStor
     return { number: no, html };
   }
 
+  /** Proposta de honorários em página A4 (mesmo cabeçalho do recibo). */
+  function proposalDoc(l, text) {
+    const esc = (t) => String(t ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+    const office = settings.officeName || 'Barros Associados';
+    const date = new Date().toLocaleDateString('pt-BR', { day: 'numeric', month: 'long', year: 'numeric' });
+    const paras = String(text).split(/\n{2,}/).map((p) => `<p>${esc(p).replace(/\n/g, '<br>')}</p>`).join('');
+    const html = `<!doctype html><html lang="pt-BR"><head><meta charset="utf-8"><title>Proposta de honorários — ${esc(l.name)}</title><style>
+      @page { size: A4; margin: 22mm; }
+      body { font-family: Georgia, 'Times New Roman', serif; color: #111; font-size: 12.5pt; line-height: 1.6; margin: 0; padding: 24px; background: #fff; }
+      .top { display: flex; justify-content: space-between; align-items: center; border-bottom: 2px solid #3d5a6c; padding-bottom: 10px; }
+      .top img { height: 64px; }
+      .office { text-align: right; font-size: 10.5pt; color: #444; line-height: 1.35; }
+      h1 { font-size: 17pt; letter-spacing: .08em; margin: 26px 0 2px; text-align: center; }
+      .to { text-align: center; color: #555; font-size: 11pt; margin-bottom: 18px; }
+      p { text-align: justify; }
+      .sign { margin-top: 60px; text-align: center; }
+      .sign .line { border-top: 1px solid #111; width: 60%; margin: 0 auto 6px; }
+    </style></head><body>
+      <div class="top"><img src="/assets/logo-barros.jpg" alt=""><div class="office"><b>${esc(office)}</b>${settings.officeDoc ? `<br>${esc(settings.officeDoc)}` : ''}${settings.officeAddress ? `<br>${esc(settings.officeAddress)}` : ''}</div></div>
+      <h1>PROPOSTA DE HONORÁRIOS</h1><div class="to">${esc(l.name)}${l.subject ? ` · ${esc(l.subject)}` : ''}</div>
+      ${paras}
+      <p style="text-align:right">${esc(settings.officeCity || 'Cuiabá-MT')}, ${esc(date)}.</p>
+      <div class="sign"><div class="line"></div>${esc(office)}</div>
+    </body></html>`;
+    return { html };
+  }
+
   /** Etapas do caso (com o que dá para concluir sozinho a partir dos dados). */
   function flowOf(k, checklist) {
     return computeSteps(k, {
@@ -709,6 +737,124 @@ export async function createCore({ dataDir, demo = false, version = '', safeStor
     },
     'clients:fromChat': (ctx, jid) => { const id = db.ensureClientForChat(chatOrThrow(jid), ctx.user.name); clientChanged(id); return id; },
     'clients:activity': (_c, id) => db.listActivity(db.clientKey(db.getClient(id))),
+    // comercial: interessados, atendimentos, proposta e "virar cliente"
+    'leads:meta': () => ({ stages: leads.LEAD_STAGES, sources: leads.LEAD_SOURCES, contactKinds: leads.CONTACT_KINDS, feeKinds: leads.FEE_KINDS }),
+    'leads:list': (ctx, opts = {}) => {
+      const list = leads.listLeads({ ...opts, responsible: opts.responsible === 'me' ? ctx.user.id : opts.responsible });
+      return forMoney(ctx, list);
+    },
+    'leads:get': (ctx, id) => {
+      const l = leads.getLead(id);
+      if (!l) throw new Error('Interessado não encontrado');
+      return forMoney(ctx, {
+        ...l,
+        contacts: leads.listContacts({ leadId: id }),
+        tasks: db.listTasks({ jid: l.client_id && l.case_id ? db.clientKey(db.getClient(l.client_id)) : l.key, includeDone: true }),
+        chat: l.jid ? (() => { const c = db.getChat(l.jid); return c ? { jid: c.jid, display_name: c.display_name } : null; })() : null,
+      });
+    },
+    'leads:byJid': (ctx, jid) => forMoney(ctx, leads.leadByJid(jid)),
+    'leads:save': (ctx, l) => {
+      if (!auth.can(ctx.user.role, 'finance:list')) l = auth.stripMoney(l);
+      const before = l.id ? leads.getLead(l.id) : null;
+      const id = leads.saveLead(l, ctx.user.name);
+      const cur = leads.getLead(id);
+      if (!before) db.logActivity(cur.key, 'lead', `Interessado cadastrado${cur.source ? ` (${cur.source})` : ''}`, ctx.user.name);
+      // consulta marcada vira compromisso na Agenda
+      if (l.consult_at && l.consult_at !== before?.consult_at) {
+        const old = db.get("SELECT id FROM tasks WHERE jid = ? AND kind = 'reuniao' AND done = 0 AND title LIKE 'Consulta:%'", cur.key);
+        const taskId = db.saveTask({ id: old?.id, jid: cur.key, kind: 'reuniao', title: `Consulta: ${cur.name}`, due_at: Number(l.consult_at),
+          end_at: Number(l.consult_at) + 3600e3, assignee_id: cur.responsible_id || ctx.user.id });
+        syncTaskLater(taskId);
+        if (cur.stage === 'novo') leads.setLeadStage(id, 'consulta');
+        send('tasks:changed', null);
+      }
+      if (cur.jid) wa.markChanged(cur.jid);
+      send('leads:changed', id);
+      return id;
+    },
+    'leads:setStage': (ctx, id, stage, opts = {}) => {
+      leads.setLeadStage(id, stage, opts);
+      const l = leads.getLead(id);
+      db.logActivity(l.key, 'lead', `Comercial: ${leads.stageLabel(stage)}${stage === 'perdido' && l.lost_reason ? ` — ${l.lost_reason}` : ''}`, ctx.user.name);
+      if (stage === 'perdido') send('tasks:changed', null);
+      send('leads:changed', id);
+    },
+    'leads:delete': (_c, id) => {
+      const l = leads.getLead(id);
+      leads.deleteLead(id);
+      if (l?.jid) wa.markChanged(l.jid);
+      send('leads:changed', id);
+      send('tasks:changed', null);
+    },
+    'leads:contacts': (_c, { leadId, clientId } = {}) => leads.listContacts({ leadId, clientId }),
+    /** Registro de atendimento; o próximo passo com data vira lembrete na Agenda. */
+    'leads:addContact': (ctx, c = {}) => {
+      const id = leads.addContact(c, ctx.user.name);
+      let key = null;
+      if (c.lead_id) {
+        const l = leads.getLead(c.lead_id);
+        key = l.case_id && l.client_id ? db.clientKey(db.getClient(l.client_id)) : l.key;
+      } else key = db.clientKey(db.getClient(c.client_id));
+      if (c.next_at) {
+        const taskId = db.saveTask({ jid: key, kind: 'tarefa', title: String(c.next_step || '').trim() || 'Retomar contato',
+          due_at: Number(c.next_at), assignee_id: c.assignee_id || ctx.user.id });
+        syncTaskLater(taskId);
+        send('tasks:changed', null);
+      }
+      db.logActivity(key, 'lead', `Atendimento (${leads.CONTACT_KINDS[c.kind]}): ${String(c.summary).trim().slice(0, 140)}`, ctx.user.name);
+      send('leads:changed', c.lead_id || null);
+      if (c.client_id) send('clients:changed', c.client_id);
+      return id;
+    },
+    'leads:deleteContact': (_c, id) => {
+      const c = leads.getContact(id);
+      leads.deleteContact(id);
+      send('leads:changed', c?.lead_id || null);
+      if (c?.client_id) send('clients:changed', c.client_id);
+    },
+    'leads:defaultTemplate': () => leads.DEFAULT_PROPOSAL_TEMPLATE,
+    'leads:proposalText': (_c, id) => {
+      const l = leads.getLead(id);
+      if (!l) throw new Error('Interessado não encontrado');
+      return leads.proposalText(l, settings.proposalTemplate, { office: settings.officeName || 'Barros Associados', validDays: Number(settings.proposalValidDays) || 15 });
+    },
+    /** Proposta revisada: envia pelo WhatsApp (se escolher), marca como enviada e agenda o retorno em 3 dias úteis. */
+    'leads:proposal': async (ctx, id, { text, send: viaWa } = {}) => {
+      const l = leads.getLead(id);
+      if (!l) throw new Error('Interessado não encontrado');
+      if (!String(text || '').trim()) throw new Error('O texto da proposta está vazio.');
+      if (viaWa) {
+        if (!l.jid) throw new Error('Este interessado não tem WhatsApp.');
+        await api['messages:sendText'](ctx, l.jid, text);
+      }
+      leads.markProposalSent(id, text);
+      const taskId = db.saveTask({ jid: l.key, kind: 'tarefa', title: `Retomar proposta — ${l.name}`,
+        due_at: addBusinessDays(Date.now(), 3), assignee_id: l.responsible_id || ctx.user.id });
+      syncTaskLater(taskId);
+      db.logActivity(l.key, 'lead', `Proposta de honorários ${viaWa ? 'enviada pelo WhatsApp' : 'registrada como enviada'}`, ctx.user.name);
+      send('tasks:changed', null);
+      send('leads:changed', id);
+      return { taskId };
+    },
+    /** Proposta em página para imprimir / salvar em PDF, com o cabeçalho do escritório. */
+    'leads:proposalHtml': (_c, id, text) => {
+      const l = leads.getLead(id);
+      if (!l) throw new Error('Interessado não encontrado');
+      return proposalDoc(l, text || l.proposal_text || '');
+    },
+    'leads:convert': (ctx, id, opts = {}) => {
+      if (!auth.can(ctx.user.role, 'finance:list')) opts = { ...opts, firstDue: null };
+      const r = leads.convertLead(id, opts, ctx.user.name);
+      const l = leads.getLead(id);
+      if (l.jid) wa.markChanged(l.jid);
+      clientChanged(r.clientId);
+      send('cases:changed', r.key);
+      send('tasks:changed', null);
+      send('leads:changed', id);
+      return r;
+    },
+    'leads:stats': (ctx, range = {}) => forMoney(ctx, leads.leadStats(range)),
     'cases:list': (ctx, opts = {}) => {
       let list = db.listCases(opts || {});
       if (opts?.responsible === 'me') list = list.filter((k) => k.responsible_id === ctx.user.id);
@@ -1125,6 +1271,9 @@ export async function createCore({ dataDir, demo = false, version = '', safeStor
         staleDays,
         payments: null,
         docRequests,
+        // interessados do comercial em negociação sem nenhum próximo passo marcado
+        leadsIdle: leads.listLeads({ open: true, responsible: scope === 'all' ? null : ctx.user.id }).filter((l) => !l.next_task)
+          .map((l) => ({ id: l.id, name: l.name, subject: l.subject || l.area, stage_label: l.stage_label, jid: l.jid, since: l.last_contact_at || l.created_at })),
         intimations: db.listIntimations({ status: 'nova', limit: 50 }).filter((i) => scope === 'all' || !i.responsible_id || i.responsible_id === ctx.user.id),
       };
       if (auth.can(ctx.user.role, 'finance:list')) {

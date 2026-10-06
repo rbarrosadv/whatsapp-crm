@@ -11,6 +11,7 @@ import { openCase, newCaseDialog, feeLabel, paymentRow } from './casemodal.js';
 import { folderBrowser, clientFolderDialog } from './docs.js';
 import { renderIntimations } from './intimations.js';
 import { icon } from '../icons.js';
+import { contactList, contactDialog } from './commercial.js';
 
 let root;
 let tab = 'clientes'; // clientes | processos | intimacoes
@@ -45,6 +46,7 @@ export function mountLegal(el) {
   on('finance', refresh);
   on('tasks', refresh);
   on('intimations', refresh);
+  on('leads', refresh);
 }
 
 async function render() {
@@ -148,6 +150,7 @@ async function renderClient(my) {
     ['dados', 'Dados'],
     ['documentos', 'Documentos'],
     state.can.finance ? ['financeiro', `Financeiro${c.overdue_payments ? ` ${c.overdue_payments}` : ''}`] : null,
+    ['atendimentos', 'Atendimentos'],
     ['historico', 'Notas e histórico'],
   ].filter(Boolean);
   if (!tabs.some(([id]) => id === clientTab)) clientTab = 'processos';
@@ -170,7 +173,16 @@ async function renderClient(my) {
       class: `tab ${clientTab === id ? 'active' : ''}`, onclick: () => { clientTab = id; render(); },
     }, label))),
     body);
-  ({ processos: clientCases, dados: clientData, documentos: clientDocs, financeiro: clientFinance, historico: clientHistory })[clientTab](body, c);
+  ({ processos: clientCases, dados: clientData, documentos: clientDocs, financeiro: clientFinance, atendimentos: clientContacts, historico: clientHistory })[clientTab](body, c);
+}
+
+async function clientContacts(el, c) {
+  const list = await api('leads:contacts', { clientId: c.id }).catch(() => []);
+  fill(el, h('div', { class: 'panel' },
+    h('div', { class: 'panel-head' }, h('h3', null, 'Atendimentos'),
+      h('button', { class: 'btn btn-sm btn-primary', onclick: () => contactDialog({ client_id: c.id }) }, [icon('plus', 15), 'Registrar atendimento'])),
+    h('p', { class: 'muted small' }, 'Ligações, reuniões, e-mails e conversas importantes, com o que ficou combinado. Os do comercial (antes de virar cliente) também aparecem aqui.'),
+    contactList(list)));
 }
 
 const initialsOf = (n) => String(n || '?').split(/\s+/).filter(Boolean).slice(0, 2).map((w) => w[0]).join('').toUpperCase();

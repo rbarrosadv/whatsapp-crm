@@ -80,6 +80,7 @@ export async function bootstrap() {
   window.api.on('cases:changed', (jid) => emit('cases', jid));
   window.api.on('clients:changed', (id) => emit('clients', id));
   window.api.on('intimations:changed', () => emit('intimations'));
+  window.api.on('leads:changed', (id) => emit('leads', id));
   window.api.on('finance:changed', () => emit('finance'));
   window.api.on('ui:open-chat', (jid) => openChat(jid));
   window.api.on('ui:open-view', (v) => setView(v));
@@ -152,6 +153,11 @@ export function setView(view) {
 export function openClient(id) {
   setView('legal');
   emit('open-client', id);
+}
+
+/** Abre a ficha de um interessado do Comercial (por cima da tela atual). */
+export function openLead(id) {
+  emit('open-lead', id);
 }
 
 /** Abre o módulo Jurídico numa aba (clientes, processos, intimações). */
