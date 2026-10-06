@@ -10,7 +10,7 @@
   <link rel="apple-touch-icon" href="/assets/icon.png">
   <link rel="stylesheet" href="styles.css">
 </head>
-<body>
+<body class="login-body">
   <main class="login-page">
     <form class="login-card" id="form" autocomplete="on">
       <img class="login-logo" src="/assets/logo-barros.jpg" alt="Barros Associados">
@@ -33,6 +33,7 @@
       </label>
       <div class="login-error" id="error" role="alert"></div>
       <button class="btn btn-primary" id="go" type="submit">Entrar</button>
+      <button class="login-switch" id="switch" type="button" hidden>Trocar servidor / usar neste computador</button>
     </form>
   </main>
   <script type="module" src="login.js"></script>

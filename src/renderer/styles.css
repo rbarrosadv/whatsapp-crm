@@ -716,7 +716,10 @@ body.discreet-msgs .reply-bar .quoted:hover {
 .iv-next { right: 12px; }
 
 /* ------------------------------------------------------------ login */
-.login-page { display: flex; align-items: center; justify-content: center; min-height: 100%; padding: 24px 16px; background: var(--bg); }
+.login-page { display: flex; align-items: center; justify-content: center; min-height: 100%; padding: 24px 16px; background: var(--bg); box-sizing: border-box; }
+body.login-body { overflow-y: auto; }
+.login-switch { background: none; border: 0; color: var(--muted); text-decoration: underline; cursor: pointer; font-size: 13px; padding: 4px; align-self: center; }
+
 .login-card { width: 100%; max-width: 400px; background: var(--panel); border: 1px solid var(--border); border-radius: 14px; padding: 28px 24px; box-shadow: var(--shadow); display: flex; flex-direction: column; gap: 14px; }
 .login-logo { display: block; width: 100%; max-width: 300px; margin: 0 auto 4px; border-radius: 10px; background: #fff; padding: 10px 14px; }
 .login-card h1 { font-size: 20px; margin: 0; text-align: center; }
@@ -775,3 +778,13 @@ body.discreet-msgs .reply-bar .quoted:hover {
 .week-ev-title { font-size: 13px; font-weight: 500; }
 .week-empty { text-align: center; margin-top: 12px; }
 .day-close { display: flex; justify-content: space-between; align-items: center; gap: 12px; flex-wrap: wrap; background: var(--panel); border-radius: 12px; padding: 14px 18px; margin-top: 16px; }
+
+/* tela de entrada em janelas baixas (notebook com zoom do Windows) */
+@media (max-height: 820px) {
+  .login-page { align-items: flex-start; padding: 12px 16px; }
+  .login-card { padding: 18px 22px; gap: 9px; }
+  .login-logo { max-width: 220px; padding: 6px 10px; }
+  .login-card .input { height: 38px; }
+  .login-card .btn { height: 40px; }
+  .login-error { min-height: 0; }
+}

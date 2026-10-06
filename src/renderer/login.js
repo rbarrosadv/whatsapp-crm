@@ -51,4 +51,10 @@ $('form').addEventListener('submit', async (e) => {
   }
 });
 
+// no app de desktop: voltar à tela de escolher o servidor do escritório ou "neste computador"
+if (window.desktop?.setup) {
+  $('switch').hidden = false;
+  $('switch').addEventListener('click', () => window.desktop.setup.change());
+}
+
 init();

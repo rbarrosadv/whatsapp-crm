@@ -45,7 +45,9 @@ Servidor (`src/server`, ESM, Node ≥ 22.13 — usa `node:sqlite`):
   `POST /upload` (corpo cru + `X-File-Name`, até 100 MB → `token`, usado
   nos métodos da API); `/download/backup|logs` (só sócio). Linha de comando
   pede **código de primeiro acesso** (console + `codigo-primeiro-acesso.txt`)
-  para criar o sócio num servidor público (`requireSetupCode`).
+  para criar o sócio num servidor público (`requireSetupCode`) — só para
+  quem chega pelo proxy/rede; aberto no próprio computador do servidor
+  (loopback sem `X-Forwarded-For`) não pede.
 - `core.js` — `createCore()`: o antigo processo principal sem Electron.
   Tabela `api` (todo método recebe `ctx` = `{user, conn}` + argumentos),
   `call()` confere a permissão do perfil, lembretes/avisos periódicos,
@@ -113,7 +115,8 @@ Interface (`src/renderer`, JS puro em módulos ES, sem build):
 - `js/bridge.js` — define `window.api` (`call` por fetch, `on` pelo
   WebSocket com reconexão, `upload`, `logout`, `ready`). 401 → `/login.html`.
   Evento `bridge:reconnected` → `store` recarrega conversas.
-- `login.html`/`login.js` — entrar, ou primeiro acesso (cria o sócio).
+- `login.html`/`login.js` — entrar, ou primeiro acesso (cria o sócio). No app
+  de desktop mostra "Trocar servidor / usar neste computador" (`desktop.setup.change`).
 - `js/store.js` — estado (`state.chats` Map jid → conversa com campos do CRM;
   `state.me`, `state.can` {finance, admin, configure, deleteCases},
   `state.viewers`, `state.typing`), event bus `on/emit`, `api()`; manda

@@ -202,6 +202,10 @@ export async function startServer({
     // atrás do proxy (Caddy) o endereço real vem no X-Forwarded-For
     const loopback = /^(::1|127\.|::ffff:127\.)/.test(req.socket.remoteAddress || '');
     const ip = (loopback && String(req.headers['x-forwarded-for'] || '').split(',')[0].trim()) || req.socket.remoteAddress;
+    // aberto no próprio computador do servidor (não veio pelo proxy): quem está
+    // ali já tem acesso ao arquivo do código, então o primeiro acesso não pede
+    const sameMachine = loopback && !req.headers['x-forwarded-for'];
+    const needsCode = !!setupCode && !sameMachine;
     res.setHeader('X-Frame-Options', 'DENY');
     res.setHeader('Referrer-Policy', 'same-origin');
 
@@ -209,7 +213,7 @@ export async function startServer({
     if (p === '/auth/state' && req.method === 'GET') {
       const u = userOf(req);
       const setup = auth.countUsers() === 0;
-      return sendJson(res, 200, { setup, setupCode: setup && !!setupCode, user: auth.publicUser(u), demo });
+      return sendJson(res, 200, { setup, setupCode: setup && needsCode, user: auth.publicUser(u), demo });
     }
     if (p.startsWith('/auth/') && req.method === 'POST') {
       if (req.headers['x-crm'] !== '1') return sendJson(res, 403, { error: 'requisição recusada' });
@@ -223,7 +227,7 @@ export async function startServer({
         return sendJson(res, 200, { user: auth.publicUser(u) }, { 'Set-Cookie': sessionCookie(req, token, 30 * 24 * 3600) });
       }
       if (p === '/auth/setup') {
-        if (setupCode && auth.countUsers() === 0) {
+        if (needsCode && auth.countUsers() === 0) {
           if (tooMany(ip)) return sendJson(res, 429, { error: 'Muitas tentativas erradas. Espere 15 minutos e tente de novo.' });
           if (String(body.code || '').trim() !== setupCode) { failed(ip); return sendJson(res, 400, { error: 'Código de primeiro acesso incorreto.' }); }
         }
