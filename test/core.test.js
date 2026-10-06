@@ -261,6 +261,27 @@ test('queda de conexão (428): com sessão salva reconecta sem pedir QR; sem ses
   await wa.stop();
 });
 
+test('403 (sessão recusada pelo WhatsApp): confirma uma vez e volta ao QR, sem insistir para sempre', async () => {
+  const auth = path.join(dir, 'auth');
+  fs.mkdirSync(auth, { recursive: true });
+  fs.writeFileSync(path.join(auth, 'creds.json'), JSON.stringify({ me: { id: '5511@s.whatsapp.net' }, account: {} }));
+  const close = async () => {
+    const fake = { end() {} };
+    wa.sock = fake; wa.stopped = false;
+    await wa.onConnectionUpdate(fake, { connection: 'close', lastDisconnect: { error: { message: 'Connection Failure', output: { statusCode: 403 }, data: { reason: '403' } } } });
+  };
+  wa.deadSession = 0;
+  await close();
+  assert.equal(wa.getStatus().state, 'reconnecting', '1ª vez: tenta de novo');
+  assert.ok(fs.existsSync(path.join(auth, 'creds.json')));
+  await close();
+  await wa.stop();
+  assert.equal(wa.getStatus().state, 'logged_out');
+  assert.equal(wa.getStatus().registered, false, 'tela do QR code volta a aparecer');
+  assert.match(wa.getStatus().notice, /leia o QR code de novo/);
+  assert.ok(!fs.existsSync(auth), 'sessão recusada é descartada');
+});
+
 test('casos: vários por contato, honorários em parcelas e documentos', () => {
   const J = '5511911112222@s.whatsapp.net';
   db.upsertChat({ jid: J, name: 'Cliente Casos', last_ts: Date.now() });

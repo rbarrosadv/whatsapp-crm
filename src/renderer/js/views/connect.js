@@ -89,7 +89,8 @@ function renderOverlay(el, s) {
 }
 
 function errorBox(s) {
-  return s.error ? h('div', { class: 'alert connect-error' }, s.error) : h('div', { class: 'connect-error' });
+  const msg = s.error || s.notice;
+  return msg ? h('div', { class: 'alert connect-error' }, msg) : h('div', { class: 'connect-error' });
 }
 
 // quedas curtas se resolvem sozinhas: a faixa só aparece depois de 10 s

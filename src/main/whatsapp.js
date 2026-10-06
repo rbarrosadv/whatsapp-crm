@@ -301,12 +301,13 @@ export class WhatsAppService extends EventEmitter {
       this.fastFails = 0;
       this.failedPairing = 0;
       this.profileShift = 0;
+      this.deadSession = 0;
       // o perfil que funcionou é o da sessão; reconexões precisam usar o mesmo
       this.saveBrowserIndex(this.lastBrowser ?? 0);
       // arquivos de clientes que chegaram enquanto o app estava fechado
       setTimeout(() => { if (this.state.state === 'open') this.backfillDownloads(); }, 15000);
       const me = sock.user ? { jid: jidNormalizedUser(sock.user.id), name: sock.user.name || sock.user.verifiedName } : null;
-      this.setStatus({ state: 'open', registered: true, qr: null, pairingCode: null, me, error: null, suggestRepair: false });
+      this.setStatus({ state: 'open', registered: true, qr: null, pairingCode: null, me, error: null, notice: null, suggestRepair: false });
     }
     if (connection === 'close') {
       const code = lastDisconnect?.error?.output?.statusCode;
@@ -329,6 +330,37 @@ export class WhatsAppService extends EventEmitter {
         // mesmo perfil de navegador com que o celular acabou de parear
         if (!this.lastRegistered && this.hasSession()) this.saveBrowserIndex(this.lastBrowser ?? 0);
         this.scheduleReconnect(0);
+      } else if ((code === 403 || code === 406) && this.hasSession()) {
+        // 403/406 no login = o WhatsApp não reconhece mais esta sessão (WhatsApp do
+        // celular reinstalado, trocado de aparelho, aparelho removido ou conta
+        // restrita). Insistir não adianta: confirma uma vez e volta ao QR code,
+        // mantendo as conversas já salvas.
+        this.deadSession = (this.deadSession || 0) + 1;
+        if (this.deadSession < 2) {
+          this.setStatus({ state: 'reconnecting', error: describeError(lastDisconnect?.error, code), retryIn: 3000 });
+          this.scheduleReconnect(3000);
+        } else {
+          this.deadSession = 0;
+          this.clearAuth();
+          this.setStatus({
+            state: 'logged_out', me: null, registered: false,
+            notice: `O WhatsApp encerrou a conexão deste sistema (código ${code}). Isso acontece quando o WhatsApp do celular `
+              + 'foi reinstalado ou trocado de aparelho, quando o aparelho foi removido em "Dispositivos conectados" ou quando o '
+              + 'número foi restrito. Confira se o WhatsApp abre normalmente no celular e leia o QR code de novo — as conversas '
+              + 'já salvas continuam aqui.',
+          });
+          this.scheduleReconnect(500);
+        }
+      } else if (code === 402) {
+        // suspensão temporária do número: não fica batendo na porta
+        const until = Number(lastDisconnect?.error?.data?.expire) || 0;
+        this.setStatus({
+          state: 'reconnecting',
+          error: `O WhatsApp suspendeu este número temporariamente${until ? ` (por cerca de ${Math.ceil(until / 3600)} h)` : ''}. `
+            + 'Abra o WhatsApp no celular para ver o aviso. O sistema tenta de novo em 30 minutos.',
+          retryIn: 1800e3,
+        });
+        this.scheduleReconnect(1800e3);
       } else if (!this.hasSession()) {
         // ainda não conectou nenhuma vez: descarta a tentativa e gera QR novo
         this.failedPairing++;
@@ -1054,7 +1086,9 @@ function describeError(err, code) {
   if (/ECONNREFUSED|ECONNRESET|ETIMEDOUT/i.test(msg)) return 'conexão recusada — verifique firewall/antivírus ou VPN';
   const hints = {
     401: 'sessão encerrada pelo celular',
-    403: 'acesso negado pelo WhatsApp',
+    402: 'número suspenso temporariamente pelo WhatsApp',
+    403: 'o WhatsApp não aceita mais esta sessão',
+    406: 'o WhatsApp não aceita mais esta sessão',
     405: 'o WhatsApp recusou a conexão',
     408: 'sem resposta — verifique a internet',
     428: 'conexão fechada',
