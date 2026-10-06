@@ -7,6 +7,7 @@ import {
 import { state, on, api, stageById, openChat } from '../store.js';
 import { avatarEl, caseStageMenu, stagePicker } from '../components.js';
 import { taskRow, taskDialog } from './crmpanel.js';
+import { caseFolderPanel } from './docs.js';
 
 export const TASK_KINDS = {
   prazo: { icon: '⚠️', label: 'Prazo' },
@@ -225,14 +226,19 @@ export async function openCase(id, { tab = 'dados' } = {}) {
   // ----------------------------------------------------------- documentos
   async function renderDocs(el) {
     const docs = await api('cases:docs', id);
+    const folderBox = h('div', { class: 'case-folder' });
+    caseFolderPanel(folderBox, k);
     fill(el,
+      h('div', { class: 'crm-label' }, 'Pasta do caso no OneDrive'),
+      folderBox,
+      h('div', { class: 'crm-label', style: { marginTop: '14px' } }, 'Anexos guardados no sistema'),
       h('div', { class: 'row wrap' },
         h('button', { class: 'btn btn-sm btn-primary', onclick: async () => {
           const files = await pickFiles();
           if (!files.length) return;
           try { toast('Enviando…'); await api('cases:addFiles', id, await uploadFiles(files)); } catch (e) { errToast(e); }
         } }, '＋ Adicionar do computador'),
-        h('span', { class: 'muted small' }, 'Para guardar um arquivo que o cliente mandou no WhatsApp: na conversa, clique em ▾ na mensagem → “Anexar ao caso”.')),
+        h('span', { class: 'muted small' }, 'Para guardar um arquivo que o cliente mandou no WhatsApp: na conversa, clique em ▾ na mensagem → “Anexar ao caso” (vai também para a pasta do caso).')),
       docs.length ? h('div', { class: 'doc-list' }, docs.map((d) => h('div', { class: 'doc-row' },
         h('span', { class: 'doc-icon' }, /image/.test(d.mime || d.name) || /\.(jpe?g|png|webp)$/i.test(d.name) ? '🖼' : /pdf/i.test(d.mime || d.name) ? '📕' : /audio|ogg|mp3/i.test(d.mime || '') ? '🎤' : '📄'),
         h('div', { class: 'grow' }, h('div', { class: 'ellipsis' }, d.name), h('div', { class: 'muted small' }, [fmtDateTime(d.created_at), fmtSize(d.size), d.msg_id ? 'do WhatsApp' : 'do computador'].filter(Boolean).join(' · '))),

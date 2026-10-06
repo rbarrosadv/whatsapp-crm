@@ -17,6 +17,8 @@ import { CalendarSync } from '../main/calendar-sync.js';
 import { webmToOgg } from '../main/ogg.js';
 import { importLegacy, legacyStateFile } from '../main/legacy.js';
 import { diagnoseConnection } from '../main/diag.js';
+import { DocsService, guessRoot, templateValues, PLACEHOLDERS, FOLDERS } from '../main/docs.js';
+import { seedDemoDocs } from '../main/demo.js';
 
 const DAY = 24 * 3600 * 1000;
 const money = (v) => Number(v || 0).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' });
@@ -26,7 +28,7 @@ const dateBR = (ts) => (ts ? new Date(ts).toLocaleDateString('pt-BR') : 'sem dat
 export const USER_KEYS = ['notifications', 'notificationPreview', 'theme', 'lastView', 'lastPipeline', 'enterToSend',
   'lastFilter', 'agendaHidden', 'agendaView', 'agendaHours', 'discreet', 'discreetMessages', 'spellcheck', 'wordSuggest', 'autocorrect'];
 export const OFFICE_KEYS = ['sendReadReceipts', 'forgottenHours', 'chargeTemplate', 'pixKey', 'paymentNoticeDays',
-  'staleCaseDays', 'googleSync', 'googleCalendarId', 'signMessages'];
+  'staleCaseDays', 'googleSync', 'googleCalendarId', 'signMessages', 'docsRoot'];
 
 export const DEFAULT_CHARGE_TEMPLATE = 'Olá, {nome}! Tudo bem? Passando para lembrar da {parcela} dos honorários referentes a {caso}, '
   + 'no valor de {valor}, com vencimento em {vencimento}.{pix_linha}\nQualquer dúvida, estou à disposição.';
@@ -87,6 +89,12 @@ export async function createCore({ dataDir, demo = false, version = '', safeStor
 
   /** Aviso (notificação). Cada janela decide se mostra, conforme as preferências da pessoa. */
   const notify = (n, to) => send('notify', n, to);
+
+  // documentos: pasta do escritório no OneDrive (no demo, uma pasta de exemplo)
+  const demoDocs = path.join(dataDir, 'OneDrive (demonstração)', 'BARROS ADVOGADOS');
+  if (demo) await seedDemoDocs(demoDocs);
+  const docs = new DocsService({ getRoot: () => settings.docsRoot || (demo ? demoDocs : guessRoot()) });
+  const docUrl = (rel) => `/docs/file/${rel.split('/').map(encodeURIComponent).join('/')}`;
 
   const Service = demo ? DemoWhatsAppService : WhatsAppService;
   const wa = new Service({ dataDir, logFile: path.join(dataDir, 'logs', 'whatsapp.log') });
@@ -272,6 +280,13 @@ export async function createCore({ dataDir, demo = false, version = '', safeStor
     if (!f) throw new Error('Arquivo enviado não encontrado. Tente de novo.');
     return f;
   });
+
+  /** Arquivo anexado ao caso também vai para a pasta dele no OneDrive (se houver). */
+  function copyToCaseFolder(caseId, files) {
+    const k = db.getCase(caseId);
+    if (!k?.folder || !docs.root()) return;
+    try { docs.saveFiles(k.folder, files, null); } catch (e) { console.error('pasta do caso:', e.message); }
+  }
 
   function broadcastConfig() {
     send('config:changed', {
@@ -483,6 +498,7 @@ export async function createCore({ dataDir, demo = false, version = '', safeStor
       const rel = m.media_file && fs.existsSync(resolveMedia(m.media_file)) ? m.media_file : await wa.downloadMedia(chatJid, msgId);
       const name = m.media_name || `${{ image: 'foto', video: 'video', audio: 'audio', ptt: 'audio', sticker: 'figurinha' }[m.type] || 'arquivo'}-${new Date(m.ts).toISOString().slice(0, 10)}${path.extname(rel)}`;
       const id = db.addCaseDoc({ case_id: caseId, name, file: rel, mime: m.media_mime, size: m.media_size, msg_id: msgId });
+      copyToCaseFolder(caseId, [{ path: resolveMedia(rel), name }]);
       send('cases:changed', db.getCase(caseId)?.jid);
       return id;
     },
@@ -497,10 +513,109 @@ export async function createCore({ dataDir, demo = false, version = '', safeStor
         fs.copyFileSync(f.path, dest);
         fs.rmSync(path.dirname(f.path), { recursive: true, force: true });
         db.addCaseDoc({ case_id: caseId, name, file: path.relative(wa.mediaDir, dest), size: fs.statSync(dest).size });
+        copyToCaseFolder(caseId, [{ path: dest, name }]);
       }
       send('cases:changed', db.getCase(caseId)?.jid);
       return files.length;
     },
+    // documentos (pasta do escritório no OneDrive)
+    'docs:status': () => ({ ...docs.status(), placeholders: PLACEHOLDERS, structure: FOLDERS }),
+    'docs:list': (ctx, rel) => {
+      const r = docs.list(rel || '', ctx.user);
+      for (const e of r.entries) if (!e.dir) e.url = docUrl(e.rel);
+      return r;
+    },
+    'docs:search': async (ctx, q, opts = {}) => {
+      if (!docs.root()) return [];
+      // índice vazio: espera a 1ª leitura; senão atualiza em segundo plano a cada 10 min
+      if (!docs.lastIndex) await docs.reindex();
+      else if (Date.now() - docs.lastIndex > 600e3) docs.reindex().catch(() => {});
+      return docs.search(q, ctx.user, opts).map((d) => ({ ...d, url: docUrl(d.rel) }));
+    },
+    'docs:reindex': async () => ({ changed: await docs.reindex(), ...docs.status() }),
+    'docs:templates': () => docs.templates().map((t) => ({ ...t, url: docUrl(t.rel) })),
+    'docs:clientFolder': (_c, jid) => {
+      const chat = db.getChat(chatOrThrow(jid));
+      if (!chat) throw new Error('Contato não encontrado');
+      const folder = chat.folder && docs.root() && fs.existsSync(docs.abs(chat.folder)) ? chat.folder : null;
+      return { folder, linked: chat.folder || null, suggestion: folder ? null : docs.suggestClientFolder(chat.display_name) };
+    },
+    'docs:linkClient': (_c, jid, rel) => {
+      if (rel) docs.abs(rel); // confere que fica dentro da pasta do escritório
+      db.updateCrmFields(jid, { folder: rel || null });
+      wa.markChanged(jid);
+      return rel || null;
+    },
+    'docs:createClientFolder': (_c, jid) => {
+      const chat = db.getChat(chatOrThrow(jid));
+      const rel = docs.createClientFolder(chat.display_name);
+      db.updateCrmFields(jid, { folder: rel });
+      wa.markChanged(jid);
+      return rel;
+    },
+    'docs:caseFolder': (_c, caseId) => {
+      const k = db.getCase(caseId);
+      if (!k) throw new Error('Caso não encontrado');
+      const chat = db.getChat(k.jid);
+      const ok = (rel) => rel && docs.root() && fs.existsSync(docs.abs(rel));
+      const client = ok(chat?.folder) ? chat.folder : null;
+      const suggestion = client ? null : docs.suggestClientFolder(chat?.display_name || '');
+      // pastas que já existem dentro da pasta do cliente (para ligar uma antiga)
+      const where = client || suggestion?.rel;
+      const options = where ? docs.list(where, null).entries.filter((e) => e.dir && e.name !== '_CADASTRO').map((e) => e.rel) : [];
+      return {
+        folder: ok(k.folder) ? k.folder : null,
+        linked: k.folder || null,
+        clientFolder: client,
+        clientSuggestion: suggestion,
+        newName: DocsService.caseFolderName(k),
+        options,
+      };
+    },
+    'docs:createCaseFolder': (_c, caseId, { clientFolder } = {}) => {
+      const k = db.getCase(caseId);
+      if (!k) throw new Error('Caso não encontrado');
+      const chat = db.getChat(k.jid);
+      let client = clientFolder || chat?.folder;
+      if (client) docs.mkdir(client);
+      else client = docs.createClientFolder(chat?.display_name || k.title);
+      if (client !== chat?.folder) { db.updateCrmFields(k.jid, { folder: client }); wa.markChanged(k.jid); }
+      const rel = docs.mkdir(`${client}/${DocsService.caseFolderName(k)}`);
+      db.saveCase({ id: caseId, folder: rel });
+      send('cases:changed', k.jid);
+      return rel;
+    },
+    'docs:linkCase': (_c, caseId, rel) => {
+      if (rel) docs.abs(rel);
+      db.saveCase({ id: caseId, folder: rel || null });
+      // ligou a pasta do caso: a pasta do cliente é a de cima (se ainda não tinha)
+      const k = db.getCase(caseId);
+      const chat = k && db.getChat(k.jid);
+      if (rel && chat && !chat.folder && rel.split('/').length >= 3) { db.updateCrmFields(k.jid, { folder: rel.split('/').slice(0, 2).join('/') }); wa.markChanged(k.jid); }
+      send('cases:changed', db.getCase(caseId)?.jid);
+      return rel || null;
+    },
+    'docs:mkdir': (ctx, rel) => { docs.check(rel, ctx.user); return docs.mkdir(rel); },
+    'docs:upload': (ctx, dirRel, tokens) => {
+      const files = uploads(tokens);
+      const saved = docs.saveFiles(dirRel, files, ctx.user);
+      for (const f of files) fs.rmSync(path.dirname(f.path), { recursive: true, force: true });
+      return saved;
+    },
+    'docs:values': (_c, { jid, caseId } = {}) => {
+      const k = caseId ? db.getCase(caseId) : null;
+      return templateValues(db.getChat(jid || k?.jid), k);
+    },
+    'docs:useAsBase': (ctx, srcRel, { caseId, jid, dirRel, name } = {}) => {
+      const k = caseId ? db.getCase(caseId) : null;
+      const chat = db.getChat(jid || k?.jid);
+      const dest = dirRel || k?.folder || chat?.folder;
+      if (!dest) throw new Error('Este caso ainda não tem pasta. Crie ou ligue a pasta do caso primeiro.');
+      const rel = docs.copyAsBase(srcRel, dest, templateValues(chat, k), ctx.user, name);
+      if (k) db.logActivity(k.jid, 'doc', `Documento criado: ${rel.split('/').pop()}`, ctx.user.name);
+      return { rel, url: docUrl(rel), path: docs.abs(rel) };
+    },
+    'docs:path': (ctx, rel) => ({ path: docs.check(rel || '', ctx.user), url: docUrl(rel || '') }),
     'cases:deleteDoc': (_c, id) => { const d = db.deleteCaseDoc(id); if (d) send('cases:changed', db.getCase(d.case_id)?.jid); },
 
     // honorários / financeiro
@@ -607,6 +722,15 @@ export async function createCore({ dataDir, demo = false, version = '', safeStor
         auth.setUserPref(ctx.user.id, key, value);
       } else if (OFFICE_KEYS.includes(key)) {
         if (ctx.user.role !== 'socio') throw new Error('Só um sócio pode mudar as configurações do escritório.');
+        if (key === 'docsRoot') {
+          value = String(value || '').trim().replace(/^"|"$/g, '') || null;
+          if (value && !(fs.existsSync(value) && fs.statSync(value).isDirectory())) {
+            throw new Error('Pasta não encontrada neste computador. Copie o endereço da pasta "BARROS ADVOGADOS" no Explorador de Arquivos.');
+          }
+          // outra pasta: refaz o índice da busca do zero
+          db.run('DELETE FROM doc_index');
+          docs.lastIndex = 0;
+        }
         settings[key] = value;
         db.setSetting(key, value);
         applySettings();
@@ -688,7 +812,7 @@ export async function createCore({ dataDir, demo = false, version = '', safeStor
   });
 
   return {
-    events, api, call, dropConn, backupFile, resolveMedia, wa, google, dataDir, demo,
+    events, api, call, dropConn, backupFile, resolveMedia, wa, google, docs, dataDir, demo,
     /** O computador voltou da suspensão (modo local): a conexão antiga morreu. */
     onResume() {
       if (!wa.hasSession()) return;

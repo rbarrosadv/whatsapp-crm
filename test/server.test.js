@@ -43,8 +43,9 @@ function client() {
     if (!r.json?.ok) throw new Error(r.json?.error || `HTTP ${r.status}`);
     return r.json.result;
   };
-  return { req, call };
+  return { req, call, cookie: () => cookie };
 }
+const cookieOf = async (c) => c.cookie();
 
 const wait = (ms) => new Promise((r) => setTimeout(r, ms));
 async function connected(c) {
@@ -219,4 +220,51 @@ test('painel do dia: compromissos de cada pessoa, atrasados e passar para amanh�
   const after = await c.call('today:summary', { ...range, scope: 'mine' });
   assert.ok(!after.overdue.some((t) => t.id === late), 'saiu dos atrasados');
   assert.ok(after.week.some((t) => t.id === late && t.due_at === tomorrow), 'foi para amanhã');
+});
+
+test('documentos: busca, permissões por pasta, pasta do caso e "usar como base"', async () => {
+  const { docxText } = await import('../src/main/docs.js');
+  const socio = client();
+  await socio.req('/auth/login', { body: { login: 'barros', password: 'segredo1' } });
+  const st = await socio.call('docs:status');
+  assert.equal(st.ok, true, 'demo tem a pasta do escritório');
+  assert.ok(st.folders.includes('04 MODELOS'));
+
+  const hits = await socio.call('docs:search', 'atraso voo guarulhos');
+  assert.ok(hits.some((d) => d.rel.startsWith('03 ARQUIVO MORTO/') && /Guarulhos/.test(d.snippet)), 'acha pelo conteúdo, sem acento');
+  assert.ok((await socio.call('docs:search', 'extrato')).length >= 1, 'sócio vê o financeiro');
+
+  await socio.call('users:save', { name: 'Bia Estagiária', login: 'bia', role: 'estagiario', password: 'estagio1' });
+  const est = client();
+  await est.req('/auth/login', { body: { login: 'bia', password: 'estagio1' } });
+  assert.equal((await est.call('docs:search', 'extrato')).length, 0, 'estagiária não acha nada do financeiro');
+  await assert.rejects(est.call('docs:list', '05 FINANCEIRO'), /acesso/);
+  assert.ok(!(await est.call('docs:list', '')).entries.some((e) => e.name === '05 FINANCEIRO'), 'nem vê a pasta');
+  const extrato = (await socio.call('docs:search', 'extrato'))[0];
+  assert.equal((await est.req(extrato.url)).status, 404);
+  assert.equal((await socio.req(extrato.url)).status, 200);
+
+  // cliente com pasta antiga é reconhecido; caso ganha pasta no padrão
+  const carlos = (await socio.call('chats:list')).find((c) => c.display_name === 'Carlos Pereira');
+  const cf = await socio.call('docs:clientFolder', carlos.jid);
+  assert.equal(cf.suggestion?.rel, '02 CLIENTES/CARLOS PEREIRA');
+  await socio.call('docs:linkClient', carlos.jid, cf.suggestion.rel);
+  await socio.call('crm:update', carlos.jid, { cpf: '123.456.789-00', nationality: 'brasileiro', marital: 'casado', profession: 'motorista', address: 'Rua A, 10, Cuiabá-MT' });
+  const caseId = await socio.call('cases:save', { jid: carlos.jid, title: 'Horas extras', opposing_party: 'Transportes Rápido Ltda' });
+  const info = await socio.call('docs:caseFolder', caseId);
+  assert.equal(info.clientFolder, '02 CLIENTES/CARLOS PEREIRA');
+  assert.ok(info.options.some((o) => o.endsWith('RECLAMAÇÃO TRABALHISTA x TRANSPORTES RÁPIDO LTDA')), 'oferece ligar a pasta antiga');
+  const folder = await socio.call('docs:createCaseFolder', caseId);
+  assert.equal(folder, '02 CLIENTES/CARLOS PEREIRA/HORAS EXTRAS x TRANSPORTES RÁPIDO LTDA');
+
+  const tpl = (await socio.call('docs:templates')).find((t) => t.name === 'PROCURAÇÃO AD JUDICIA.docx');
+  assert.equal(tpl.area, 'Procurações e contratos');
+  const made = await socio.call('docs:useAsBase', tpl.rel, { caseId });
+  assert.match(made.rel, /^02 CLIENTES\/CARLOS PEREIRA\/HORAS EXTRAS x .*\/\d{4}-\d{2}-\d{2} - PROCURAÇÃO AD JUDICIA\.docx$/);
+  const text = docxText(Buffer.from(await (await fetch(`${srv.url}${made.url}`, { headers: { Cookie: await cookieOf(socio) } })).arrayBuffer()));
+  assert.match(text, /OUTORGANTE: CARLOS PEREIRA, brasileiro, casado, motorista, inscrito\(a\) no CPF sob o nº 123\.456\.789-00/);
+  assert.ok(!/\{/.test(text.replace('{rg}', '')), 'marcadores preenchidos');
+  // o novo documento já entra na busca
+  assert.ok((await socio.call('docs:search', 'procuração carlos')).some((d) => d.rel === made.rel));
+  await assert.rejects(socio.call('docs:list', '../..'), /fora da pasta/);
 });

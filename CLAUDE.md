@@ -80,8 +80,26 @@ Motor (`src/main`, sem Electron apesar do nome da pasta):
   `messages`, `pipelines`, `stages`, `crm`, `tags`, `chat_tags`, `notes`,
   `tasks`, `activity` (com `user_name`), `quick_replies`, `settings`,
   `legacy_pending`, `meta`, `contact_types`, `chat_filters`, `cases`,
-  `payments`, `case_docs`, `users`, `sessions` (migrações por versão em
+  `payments`, `case_docs`, `users`, `sessions`, `doc_index` (migrações por versão em
   `migrate()`; `meta.schema` guarda a versão atual).
+- `docs.js` — `DocsService`: pasta "BARROS ADVOGADOS" do OneDrive lida
+  direto do disco (`settings.docsRoot`, ou `guessRoot()` em
+  `%OneDrive%\BARROS ADVOGADOS`; demo cria uma de exemplo em
+  `<dados>/OneDrive (demonstração)` via `seedDemoDocs`). Tudo guardado como
+  caminho relativo (`crm.folder`, `cases.folder`), sempre conferido por
+  `abs()` para não sair da pasta. Estrutura `FOLDERS` (00 ENTRADA … 07
+  EQUIPE); `allowed()`: 05/06 só sócio, 07 EQUIPE só a pasta da própria
+  pessoa. Pasta do cliente `02 CLIENTES/NOME`(+`_CADASTRO`), do caso
+  `ASSUNTO x PARTE - nº` (`caseFolderName`); arquivos novos `AAAA-MM-DD - …`.
+  Modelos em `04 MODELOS/<área>`; `fillDocx` troca `{marcador}` mesmo
+  quebrado em vários pedaços pelo Word (`{NOME}` → maiúsculas);
+  `templateValues` = ficha do cliente (`CLIENT_FIELDS`: cpf, rg…) + caso.
+  Busca: `doc_index` (texto de .docx/.pdf simples/.txt, `fold` sem acento,
+  incremental por data; PDFs > 8 MB e outros > 15 MB só pelo nome, porque ler
+  arquivo "sob demanda" faz o OneDrive baixá-lo). `zip.js` = zip mínimo.
+  Rota `GET /docs/file/<rel>`; no app de desktop em modo local
+  `desktop.openDoc/showDoc` abre o arquivo original (Word/Explorador). Num
+  servidor remoto vai precisar do Microsoft Graph (ainda não feito).
 - `ogg.js` — remux WebM/Opus (MediaRecorder) → OGG/Opus (mensagem de voz).
 - `google.js` — `GoogleService`: Google Agenda pela API oficial com a chave
   (client_secret JSON, tipo "App para computador") do próprio usuário;
@@ -134,6 +152,10 @@ Interface (`src/renderer`, JS puro em módulos ES, sem build):
   fechamento do dia passa pendências para amanhã (`tasks:reschedule`; prazos
   e audiências não mudam). As faixas de data são calculadas na página (fuso
   de quem usa) e mandadas para `today:summary`.
+- `js/views/docs.js` — tela **Documentos** (Buscar · Modelos · Pastas),
+  `folderBrowser`, `templatePicker` ("Novo do modelo"), `useAsBaseDialog`,
+  `caseFolderPanel` (aba Documentos do caso) e `clientFolderDialog` (ficha do
+  contato tem "Dados para documentos" e "Pasta no OneDrive").
 - `js/views/*` — `chatlist`, `chatview` (mensagens + composer + gravação;
   faixa "Fulano está respondendo / também está com esta conversa aberta"),
   `crmpanel` (ficha do contato, com a lista de casos), `casemodal` (ficha do

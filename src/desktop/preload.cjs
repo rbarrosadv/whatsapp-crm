@@ -10,6 +10,8 @@ contextBridge.exposeInMainWorld('desktop', {
   openUrl: (url, name) => call('openUrl', url, name),
   saveUrl: (url, name) => call('saveUrl', url, name),
   openExternal: (url) => call('openExternal', url),
+  openDoc: (rel) => call('openDoc', rel),
+  showDoc: (rel) => call('showDoc', rel),
   focus: () => call('focus'),
   flash: () => call('flash'),
   setBadge: (n) => call('setBadge', n),

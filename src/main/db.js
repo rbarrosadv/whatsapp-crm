@@ -8,7 +8,7 @@ import fs from 'node:fs';
 
 let db;
 
-const SCHEMA_VERSION = 7;
+const SCHEMA_VERSION = 8;
 
 const DEFAULT_PIPELINES = [
   {
@@ -335,6 +335,21 @@ function migrate() {
   // versão 7: responsável pela tarefa e quando foi concluída (painel do dia)
   addColumn('tasks', 'assignee_id', 'INTEGER');
   addColumn('tasks', 'done_at', 'INTEGER');
+  // versão 8: documentos — dados do cliente para os modelos, pastas no OneDrive
+  // (caminho relativo à pasta do escritório) e índice da busca nos documentos
+  for (const c of CLIENT_FIELDS) addColumn('crm', c, 'TEXT');
+  addColumn('crm', 'folder', 'TEXT');
+  addColumn('cases', 'folder', 'TEXT');
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS doc_index (
+      rel TEXT PRIMARY KEY,
+      name TEXT NOT NULL,
+      mtime INTEGER NOT NULL,
+      size INTEGER NOT NULL,
+      text TEXT,
+      fold TEXT
+    );
+  `);
 
   const version = Number(get('SELECT value FROM meta WHERE key = ?', 'schema')?.value || 0);
   if (version < 1) seedDefaults();
@@ -343,6 +358,9 @@ function migrate() {
   if (version < 5) run("UPDATE contact_types SET autodownload = 1 WHERE id = 'cliente'");
   run('INSERT OR REPLACE INTO meta (key, value) VALUES (?, ?)', 'schema', String(SCHEMA_VERSION));
 }
+
+/** Dados do cliente usados nos modelos de documento ({cpf}, {endereco}…). */
+export const CLIENT_FIELDS = ['cpf', 'rg', 'nationality', 'marital', 'profession', 'address', 'birth'];
 
 function addColumn(table, col, type) {
   const cols = db.prepare(`PRAGMA table_info(${table})`).all().map((c) => c.name);
@@ -557,6 +575,7 @@ export function listChats() {
   return all(`
     SELECT c.*, ct.name AS contact_name, ct.notify, ct.verified_name, ct.phone,
       crm.custom_name, crm.email, crm.company, crm.value, crm.pipeline_id, crm.stage_id, crm.stage_changed_at, crm.type_id,
+      crm.cpf, crm.rg, crm.nationality, crm.marital, crm.profession, crm.address, crm.birth, crm.folder,
       (SELECT group_concat(k.stage_id) FROM (SELECT stage_id FROM cases WHERE jid = c.jid AND status = 'aberto' ORDER BY updated_at DESC) k) AS case_stage_ids,
       (SELECT COUNT(*) FROM cases WHERE jid = c.jid AND status = 'aberto') AS open_cases,
       (SELECT COUNT(*) FROM payments pm JOIN cases cs ON cs.id = pm.case_id WHERE cs.jid = c.jid AND pm.paid_at IS NULL AND pm.due_at < strftime('%s','now') * 1000) AS overdue_payments,
@@ -575,6 +594,7 @@ export function getChat(jid) {
   const row = get(`
     SELECT c.*, ct.name AS contact_name, ct.notify, ct.verified_name, ct.phone,
       crm.custom_name, crm.email, crm.company, crm.value, crm.pipeline_id, crm.stage_id, crm.stage_changed_at, crm.type_id,
+      crm.cpf, crm.rg, crm.nationality, crm.marital, crm.profession, crm.address, crm.birth, crm.folder,
       (SELECT group_concat(k.stage_id) FROM (SELECT stage_id FROM cases WHERE jid = c.jid AND status = 'aberto' ORDER BY updated_at DESC) k) AS case_stage_ids,
       (SELECT COUNT(*) FROM cases WHERE jid = c.jid AND status = 'aberto') AS open_cases,
       (SELECT COUNT(*) FROM payments pm JOIN cases cs ON cs.id = pm.case_id WHERE cs.jid = c.jid AND pm.paid_at IS NULL AND pm.due_at < strftime('%s','now') * 1000) AS overdue_payments,
@@ -804,7 +824,7 @@ export function setStage(jid, stageId) {
 
 // ------------------------------------------------------------------ casos
 
-const CASE_FIELDS = ['title', 'process_number', 'area', 'court', 'opposing_party', 'fee_fixed', 'fee_installments',
+const CASE_FIELDS = ['title', 'folder', 'process_number', 'area', 'court', 'opposing_party', 'fee_fixed', 'fee_installments',
   'fee_success', 'fee_total', 'fee_percent'];
 
 function caseRow(c) {
@@ -1017,7 +1037,7 @@ export function deleteCaseDoc(id) {
 }
 
 export function updateCrmFields(jid, fields) {
-  const allowed = ['custom_name', 'email', 'company', 'value'];
+  const allowed = ['custom_name', 'email', 'company', 'value', 'folder', ...CLIENT_FIELDS];
   tx(() => {
     ensureCrm(jid);
     for (const f of allowed) {

@@ -228,6 +228,22 @@ ipcMain.handle('desktop', async (_e, action, ...args) => {
     case 'openUrl': openFromServer(args[0], 'open', args[1]); return null;
     case 'saveUrl': openFromServer(args[0], 'save', args[1]); return null;
     case 'openExternal': if (/^https?:/i.test(args[0])) shell.openExternal(args[0]); return null;
+    // documento da pasta do escritório: no modo "neste computador" abre o
+    // arquivo de verdade (no Word, no Explorador), para editar e salvar no OneDrive
+    case 'openDoc': {
+      if (config.mode !== 'local' || !local?.core?.docs) return false;
+      const abs = local.core.docs.abs(String(args[0] || ''));
+      if (/\.(exe|bat|cmd|com|scr|msi|ps1|vbs|js|jse|wsf|lnk|hta|jar|reg|pif|cpl|dll)$/i.test(abs)) throw new Error('arquivo executável');
+      if (!fs.existsSync(abs)) throw new Error('Arquivo não encontrado na pasta do escritório.');
+      const err = await shell.openPath(abs);
+      if (err) throw new Error(err);
+      return true;
+    }
+    case 'showDoc': {
+      if (config.mode !== 'local' || !local?.core?.docs) return false;
+      shell.showItemInFolder(local.core.docs.abs(String(args[0] || '')));
+      return true;
+    }
     case 'focus': showWindow(); return null;
     case 'flash': if (win && !win.isFocused()) win.flashFrame(true); return null;
     case 'setBadge': {

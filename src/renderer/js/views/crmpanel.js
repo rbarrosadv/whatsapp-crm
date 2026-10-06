@@ -2,11 +2,12 @@
 // notas e histórico.
 import {
   h, clear, fill, fmtDateTime, fmtDue, fmtMoney, fmtDuration, formatPhone, phoneOf, toLocalInput, fromLocalInput,
-  modal, errToast, toast, confirmDialog, debounce,
+  modal, errToast, toast, confirmDialog, debounce, openDoc,
 } from '../util.js';
 import { state, on, emit, api, stageById, openChat, typeById } from '../store.js';
 import { avatarEl, typeMenu } from '../components.js';
 import { openCase, newCaseDialog, TASK_KINDS, feeLabel } from './casemodal.js';
+import { clientFolderDialog } from './docs.js';
 
 let root;
 let jid = null;
@@ -91,8 +92,29 @@ function renderTop() {
       field('Nome no CRM', 'custom_name', chat, { placeholder: chat.contact_name || chat.notify || chat.name || '' }),
       field('Empresa', 'company', chat),
       field('E-mail', 'email', chat, { type: 'email' })),
+    chat.is_group ? null : h('details', {
+      class: 'crm-block crm-docdata', open: docDataOpen,
+      ontoggle: (e) => { docDataOpen = e.currentTarget.open; },
+    },
+    h('summary', { class: 'crm-label' }, '📄 Dados para documentos'),
+    h('div', { class: 'crm-fields' },
+      field('CPF', 'cpf', chat, { placeholder: '000.000.000-00' }),
+      field('RG', 'rg', chat),
+      field('Nacionalidade', 'nationality', chat, { placeholder: 'brasileiro(a)' }),
+      field('Estado civil', 'marital', chat),
+      field('Profissão', 'profession', chat),
+      field('Endereço', 'address', chat, { placeholder: 'Rua, nº, bairro, cidade-UF, CEP' }),
+      field('Nascimento', 'birth', chat, { placeholder: 'dd/mm/aaaa' })),
+    h('div', { class: 'muted small' }, 'Usados para preencher procurações, contratos e petições dos modelos.')),
+    chat.is_group ? null : h('div', { class: 'crm-block' },
+      h('div', { class: 'crm-label' }, 'Pasta no OneDrive'),
+      h('div', { class: 'row' },
+        h('span', { class: 'grow ellipsis small', title: chat.folder || '' }, chat.folder ? `📁 ${chat.folder.split('/').pop()}` : h('span', { class: 'muted' }, 'nenhuma ligada')),
+        chat.folder ? h('button', { class: 'btn btn-sm', onclick: () => openDoc({ rel: chat.folder, dir: true, name: chat.folder }).catch(errToast) }, 'Abrir') : null,
+        h('button', { class: 'btn btn-sm', onclick: () => clientFolderDialog(chat.jid) }, chat.folder ? 'Trocar' : 'Ligar…'))),
   );
 }
+let docDataOpen = false;
 
 // ------------------------------------------------------------------ casos
 

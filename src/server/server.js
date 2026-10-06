@@ -310,6 +310,12 @@ export async function startServer({
       try { file = core.resolveMedia(p.slice(7)); } catch { res.writeHead(404); return res.end(); }
       return serveFile(req, res, file, { download: url.searchParams.get('download') || undefined, cache: 'private, max-age=3600', csp: "default-src 'none'; img-src 'self'; media-src 'self'; style-src 'unsafe-inline'; sandbox" });
     }
+    // arquivos da pasta do escritório (OneDrive), com a mesma regra de quem vê o quê
+    if (p.startsWith('/docs/file/') && (req.method === 'GET' || req.method === 'HEAD')) {
+      let file;
+      try { file = core.docs.check(p.slice(11), user); } catch { res.writeHead(404); return res.end(); }
+      return serveFile(req, res, file, { download: url.searchParams.get('download') || undefined, csp: "default-src 'none'; img-src 'self'; media-src 'self'; style-src 'unsafe-inline'; sandbox" });
+    }
     if (p === '/download/backup' && user.role === 'socio') {
       const file = core.backupFile();
       res.on('close', () => fs.rmSync(file, { force: true }));

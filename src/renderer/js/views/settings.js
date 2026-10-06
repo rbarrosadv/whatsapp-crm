@@ -153,6 +153,34 @@ async function userEditor(u = {}) {
   });
 }
 
+/** Pasta do escritório no OneDrive (onde estão 02 CLIENTES, 04 MODELOS…). */
+function docsSection() {
+  const box = h('div', { class: 'stack' }, h('p', { class: 'muted small' }, 'Carregando…'));
+  api('docs:status').then((st) => {
+    const input = h('input', { class: 'input', value: st.configured || st.root || '', placeholder: st.guess || 'C:\\Users\\...\\OneDrive\\BARROS ADVOGADOS' });
+    const save = async (value) => {
+      try {
+        await api('settings:set', 'docsRoot', value);
+        toast('Pasta salva. Lendo os documentos para a busca…', 'success');
+        api('docs:reindex').then((r) => toast(`Busca pronta: ${r.indexed} arquivo(s)`, 'success')).catch(() => {});
+        render();
+      } catch (e) { errToast(e); }
+    };
+    fill(box,
+      st.ok
+        ? h('div', null, h('div', { class: 'conn-info' }, h('span', { class: 'status-dot ok' }), h('div', null, h('b', null, 'Pasta encontrada'),
+          h('div', { class: 'muted small' }, `${st.indexed} arquivo(s) na busca${st.missing?.length ? ` · faltam: ${st.missing.join(', ')}` : ''}`))))
+        : h('div', { class: 'conn-info' }, h('span', { class: 'status-dot warn' }), h('div', null, h('b', null, 'Pasta não encontrada'),
+          st.guess ? h('div', { class: 'muted small' }, `Achei: ${st.guess}`) : null)),
+      state.can.admin ? h('label', { class: 'field' }, h('span', null, 'Onde está a pasta “BARROS ADVOGADOS” neste computador'), input) : h('code', { class: 'path' }, st.root || '—'),
+      state.can.admin ? h('div', { class: 'row wrap' },
+        h('button', { class: 'btn btn-primary', onclick: () => save(input.value) }, 'Salvar'),
+        st.guess && st.guess !== st.root ? h('button', { class: 'btn', onclick: () => save(st.guess) }, 'Usar a pasta encontrada') : null) : null,
+      h('p', { class: 'muted small' }, 'Dica: no Explorador de Arquivos, abra a pasta BARROS ADVOGADOS, clique na barra de endereço e copie. O sistema cria e lê pastas só dentro dela; o OneDrive sincroniza normalmente.'));
+  }).catch((e) => fill(box, h('p', { class: 'muted small' }, e.message)));
+  return section('📂 Documentos (OneDrive)', box);
+}
+
 function section(title, ...children) {
   return h('div', { class: 'panel' }, h('div', { class: 'panel-head' }, h('h3', null, title)), ...children);
 }
@@ -166,6 +194,7 @@ function render() {
     h('div', { class: 'settings-grid' },
       accountSection(),
       teamSection(),
+      docsSection(),
       section('📱 Conexão com o WhatsApp',
         h('div', { class: 'conn-info' },
           h('span', { class: `status-dot ${connected ? 'ok' : 'warn'}` }),

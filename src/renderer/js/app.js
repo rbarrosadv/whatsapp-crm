@@ -15,12 +15,14 @@ import { mountAgenda } from './views/agenda.js';
 import { mountSettings, applyTheme } from './views/settings.js';
 import { mountConnect } from './views/connect.js';
 import { mountToday } from './views/today.js';
+import { mountDocs } from './views/docs.js';
 
 const NAV = [
   ['today', '🏠', 'Hoje'],
   ['inbox', '💬', 'Conversas'],
   ['board', '📊', 'Funil'],
   ['contacts', '👥', 'Contatos'],
+  ['docs', '📂', 'Documentos'],
   ['agenda', '📅', 'Agenda'],
   ['tasks', '⏰', 'Tarefas'],
   ['finance', '💰', 'Financeiro'],
@@ -38,6 +40,7 @@ async function main() {
     inbox: h('div', { class: 'view view-inbox' }),
     board: h('div', { class: 'view view-board' }),
     contacts: h('div', { class: 'view view-page' }),
+    docs: h('div', { class: 'view view-page view-docs' }),
     tasks: h('div', { class: 'view view-page' }),
     dashboard: h('div', { class: 'view view-page' }),
     finance: h('div', { class: 'view view-page' }),
@@ -83,6 +86,7 @@ async function main() {
   document.getElementById('app').append(nav, main_, overlay);
 
   mountToday(views.today);
+  mountDocs(views.docs);
   mountChatList(listCol);
   mountChatView(chatCol, { onTogglePanel: togglePanel });
   mountCrmPanel(crmCol);

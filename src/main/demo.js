@@ -318,3 +318,56 @@ export class DemoGoogleService extends EventEmitter {
   }
   async deleteEvent(calendarId, eventId) { this.items = this.items.filter((e) => e.id !== eventId); }
 }
+
+/**
+ * Pasta "BARROS ADVOGADOS" de exemplo para a demonstração (dentro da pasta de
+ * dados do demo), com a estrutura do escritório, modelos com marcadores e
+ * algumas peças para a busca encontrar.
+ */
+export async function seedDemoDocs(root) {
+  const { makeDocx, FOLDERS } = await import('./docs.js');
+  if (fs.existsSync(path.join(root, FOLDERS.modelos))) return;
+  const put = (rel, lines) => {
+    const a = path.join(root, ...rel.split('/'));
+    fs.mkdirSync(path.dirname(a), { recursive: true });
+    fs.writeFileSync(a, Array.isArray(lines) ? makeDocx(lines) : lines);
+  };
+  for (const f of Object.values(FOLDERS)) fs.mkdirSync(path.join(root, f), { recursive: true });
+  put('04 MODELOS/Procurações e contratos/PROCURAÇÃO AD JUDICIA.docx', [
+    'PROCURAÇÃO AD JUDICIA',
+    'OUTORGANTE: {NOME}, {nacionalidade}, {estado_civil}, {profissao}, inscrito(a) no CPF sob o nº {cpf}, RG {rg}, residente em {endereco}.',
+    'OUTORGADOS: BARROS ASSOCIADOS, advogados.',
+    'PODERES: os da cláusula ad judicia et extra, para o foro em geral.',
+    'Cuiabá-MT, {data_extenso}.',
+    '______________________________',
+    '{NOME}',
+  ]);
+  put('04 MODELOS/Procurações e contratos/CONTRATO DE HONORÁRIOS.docx', [
+    'CONTRATO DE PRESTAÇÃO DE SERVIÇOS ADVOCATÍCIOS',
+    'CONTRATANTE: {nome}, CPF {cpf}, residente em {endereco}.',
+    'OBJETO: atuação no caso {caso} em face de {parte_contraria}.',
+    'HONORÁRIOS: {valor_honorarios}, e {percentual} sobre o proveito econômico em caso de êxito.',
+    'Cuiabá-MT, {data_extenso}.',
+  ]);
+  put('04 MODELOS/Trabalhista/MODELO - Reclamação trabalhista.docx', [
+    'EXCELENTÍSSIMO(A) SENHOR(A) JUIZ(A) DA __ VARA DO TRABALHO DE CUIABÁ-MT',
+    '{NOME}, {nacionalidade}, {estado_civil}, {profissao}, CPF {cpf}, vem propor RECLAMAÇÃO TRABALHISTA em face de {parte_contraria}.',
+    'DAS HORAS EXTRAS — o reclamante cumpria jornada superior a 8 horas diárias sem o pagamento das horas extras.',
+  ]);
+  put('04 MODELOS/Cível/MODELO - Indenização atraso de voo.docx', [
+    'EXCELENTÍSSIMO(A) SENHOR(A) JUIZ(A) DO JUIZADO ESPECIAL CÍVEL',
+    '{NOME} vem propor AÇÃO DE INDENIZAÇÃO POR DANOS MORAIS em face de {parte_contraria}, pelo atraso de voo superior a 4 horas.',
+  ]);
+  put('02 CLIENTES/CARLOS PEREIRA/_CADASTRO/2026-09-02 - RG e CPF.txt', 'Documento de identificação (exemplo da demonstração).');
+  put('02 CLIENTES/CARLOS PEREIRA/RECLAMAÇÃO TRABALHISTA x TRANSPORTES RÁPIDO LTDA/2026-09-10 - Petição inicial.docx', [
+    'EXCELENTÍSSIMO SENHOR JUIZ DA 3ª VARA DO TRABALHO DE CUIABÁ-MT',
+    'CARLOS PEREIRA, brasileiro, motorista, vem propor RECLAMAÇÃO TRABALHISTA em face de TRANSPORTES RÁPIDO LTDA.',
+    'DAS HORAS EXTRAS E DO ADICIONAL NOTURNO — o reclamante dirigia de madrugada sem receber o adicional noturno.',
+  ]);
+  put('03 ARQUIVO MORTO/ELISA x AZUL - ATRASO DE VOO/2025-03-01 - Inicial atraso de voo.docx', [
+    'AÇÃO DE INDENIZAÇÃO POR DANOS MORAIS — atraso de voo de 9 horas e perda de conexão em Guarulhos.',
+    'A jurisprudência do STJ reconhece o dano moral pelo atraso excessivo com falta de assistência material.',
+  ]);
+  put('05 FINANCEIRO/2026-09 - Extrato.txt', 'Extrato do mês (só sócios veem esta pasta).');
+  put('07 EQUIPE/ISABELLA/Estudo - prescrição trabalhista.txt', 'Prescrição bienal e quinquenal na Justiça do Trabalho.');
+}

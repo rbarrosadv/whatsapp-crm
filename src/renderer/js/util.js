@@ -345,6 +345,26 @@ export async function uploadFiles(files) {
   return tokens;
 }
 
+/**
+ * Documento da pasta do escritório: no app de desktop ("neste computador") abre
+ * o arquivo original no Word/Explorador; senão abre ou baixa uma cópia.
+ */
+export async function openDoc(doc) {
+  if (window.desktop?.openDoc && await window.desktop.openDoc(doc.rel)) return;
+  if (doc.dir) throw new Error('Abrir a pasta só funciona no app de desktop deste computador.');
+  if (RISKY.test(doc.name || doc.rel)) throw new Error('Por segurança, arquivos executáveis não são abertos direto.');
+  if (window.desktop?.openUrl) return window.desktop.openUrl(doc.url, doc.name);
+  window.open(doc.url, '_blank', 'noopener');
+}
+
+/** Mostra o documento selecionado na pasta (desktop) ou baixa uma cópia. */
+export async function showDoc(doc) {
+  if (window.desktop?.showDoc && await window.desktop.showDoc(doc.rel)) return;
+  const name = doc.name || doc.rel.split('/').pop();
+  if (window.desktop?.saveUrl) return window.desktop.saveUrl(`${doc.url}?download=${encodeURIComponent(name)}`, name);
+  downloadUrl(`${doc.url}?download=${encodeURIComponent(name)}`, name);
+}
+
 /** Abre um link externo (site) fora do sistema. */
 export function openExternal(url) {
   if (!/^https?:/i.test(url)) return;

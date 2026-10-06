@@ -390,6 +390,42 @@ try {
   await page.click('.view-today .seg:has-text("Meu dia")');
   await page.waitForSelector('.today-grid');
 
+  // 7b) documentos (pasta do OneDrive de exemplo da demonstração)
+  await page.click('.rail-btn[title="Documentos"]');
+  await page.waitForSelector('.docs-search');
+  await page.fill('.docs-search', 'atraso voo guarulhos');
+  await page.waitForSelector('.search-hit mark', { timeout: 15000 });
+  check((await page.locator('.search-hit').first().innerText()).includes('Guarulhos'), 'busca encontra pelo conteúdo do documento');
+  await shot(page, '05d-docs-busca');
+  await page.click('.view-docs .seg:has-text("Modelos")');
+  await page.waitForSelector('.placeholder-grid');
+  check(await page.locator('.view-docs .doc-row').count() >= 4, 'modelos listados por área');
+  await shot(page, '05e-docs-modelos');
+  // ficha do cliente → dados para documentos → caso → pasta → documento do modelo
+  await page.click('.rail-btn[title="Conversas"]');
+  await page.locator('.chat-row', { hasText: 'Carlos Pereira' }).click();
+  await page.click('.crm-docdata summary');
+  const cpf = page.locator('.crm-docdata label:has-text("CPF") input');
+  await cpf.fill('123.456.789-00');
+  await cpf.press('Tab');
+  await page.waitForTimeout(300);
+  await page.locator('.crm-panel .case-card').first().click();
+  await page.click('.modal-case .tab:has-text("Documentos")');
+  await page.waitForSelector('.modal-case .docs-empty:has-text("CARLOS PEREIRA")');
+  check(true, 'reconhece a pasta antiga do cliente no OneDrive');
+  await shot(page, '05f-caso-sem-pasta');
+  await page.click('.modal-case button:has-text("Criar pasta do caso")');
+  await page.waitForSelector('.modal-case .docs-toolbar');
+  await page.click('.modal-case button:has-text("Novo do modelo")');
+  await page.click('.tpl-item:has-text("PROCURAÇÃO AD JUDICIA")');
+  await page.waitForSelector('.modal-case .doc-row:has-text("PROCURAÇÃO AD JUDICIA")', { timeout: 8000 });
+  check(true, 'cria a procuração do modelo na pasta do caso');
+  await shot(page, '05g-caso-pasta');
+  const made = await page.evaluate(() => window.api.call('docs:search', 'procuracao 123.456.789-00'));
+  check(made.some((d) => /PROCURAÇÃO AD JUDICIA/.test(d.name)), 'procuração preenchida com o CPF da ficha');
+  await page.keyboard.press('Escape');
+  await page.keyboard.press('Escape');
+
   // outras telas
   await page.click('.rail-btn[title="Contatos"]');
   await page.waitForSelector('.table tbody tr');
