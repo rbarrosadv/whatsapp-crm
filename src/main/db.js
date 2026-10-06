@@ -8,7 +8,7 @@ import fs from 'node:fs';
 
 let db;
 
-const SCHEMA_VERSION = 9;
+const SCHEMA_VERSION = 10;
 
 const DEFAULT_PIPELINES = [
   {
@@ -362,6 +362,40 @@ function migrate() {
     );
   `);
   addColumn('cases', 'client_id', 'INTEGER');
+  // versão 10: processo completo — responsável, dados do processo, partes,
+  // andamentos, as etapas do caso e o checklist de documentos
+  addColumn('cases', 'responsible_id', 'INTEGER');
+  addColumn('cases', 'tribunal', 'TEXT');
+  addColumn('cases', 'kind', "TEXT NOT NULL DEFAULT 'judicial'");
+  addColumn('cases', 'claim_value', 'REAL');
+  addColumn('cases', 'filed_at', 'TEXT');
+  addColumn('cases', 'client_role', 'TEXT');
+  addColumn('cases', 'description', 'TEXT');
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS case_parties (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      case_id INTEGER NOT NULL REFERENCES cases(id) ON DELETE CASCADE,
+      role TEXT NOT NULL, name TEXT NOT NULL, doc TEXT, notes TEXT
+    );
+    CREATE TABLE IF NOT EXISTS case_moves (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      case_id INTEGER NOT NULL REFERENCES cases(id) ON DELETE CASCADE,
+      ts INTEGER NOT NULL, text TEXT NOT NULL, source TEXT NOT NULL DEFAULT 'manual',
+      ext_id TEXT, user_name TEXT, created_at INTEGER NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS case_moves_case ON case_moves(case_id, ts);
+    CREATE TABLE IF NOT EXISTS case_steps (
+      case_id INTEGER NOT NULL REFERENCES cases(id) ON DELETE CASCADE,
+      step TEXT NOT NULL, status TEXT NOT NULL, done_at INTEGER, user_name TEXT,
+      PRIMARY KEY (case_id, step)
+    );
+    CREATE TABLE IF NOT EXISTS case_checklist (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      case_id INTEGER NOT NULL REFERENCES cases(id) ON DELETE CASCADE,
+      label TEXT NOT NULL, status TEXT NOT NULL DEFAULT 'pendente',
+      requested_at INTEGER, received_at INTEGER, file TEXT, position INTEGER NOT NULL DEFAULT 0
+    );
+  `);
   db.exec(`
     CREATE TABLE IF NOT EXISTS doc_index (
       rel TEXT PRIMARY KEY,
@@ -848,7 +882,8 @@ export function setStage(jid, stageId) {
 
 // ------------------------------------------------------------------ casos
 
-const CASE_FIELDS = ['title', 'folder', 'process_number', 'area', 'court', 'opposing_party', 'fee_fixed', 'fee_installments',
+const CASE_FIELDS = ['title', 'folder', 'process_number', 'area', 'court', 'opposing_party', 'tribunal', 'kind', 'filed_at',
+  'client_role', 'description', 'responsible_id', 'claim_value', 'fee_fixed', 'fee_installments',
   'fee_success', 'fee_total', 'fee_percent'];
 
 function caseRow(c) {
@@ -860,6 +895,7 @@ function caseRow(c) {
   const cl = c.client_id ? get('SELECT name, jid FROM clients WHERE id = ?', c.client_id) : null;
   return {
     ...c,
+    responsible_name: c.responsible_id ? get('SELECT name FROM users WHERE id = ?', c.responsible_id)?.name || null : null,
     client_name: cl?.name || (c.jid && !c.jid.startsWith('cliente:') ? getChat(c.jid)?.display_name : null) || null,
     client_jid: cl ? cl.jid : (c.jid && !c.jid.startsWith('cliente:') ? c.jid : null),
     fee_fixed: !!c.fee_fixed, fee_installments: !!c.fee_installments, fee_success: !!c.fee_success,
@@ -1032,7 +1068,8 @@ export function saveCase(c) {
       if (c[f] === undefined) continue;
       let v = c[f];
       if (f.startsWith('fee_') && ['fee_fixed', 'fee_installments', 'fee_success'].includes(f)) v = v ? 1 : 0;
-      else if (f === 'fee_total' || f === 'fee_percent') v = v === '' || v == null ? null : Number(String(v).replace(',', '.')) || 0;
+      else if (f === 'fee_total' || f === 'fee_percent' || f === 'claim_value') v = v === '' || v == null ? null : Number(String(v).replace(/\./g, (m, i, str) => (str.includes(',') ? '' : m)).replace(',', '.')) || 0;
+      else if (f === 'responsible_id') v = v ? Number(v) : null;
       else v = v == null ? null : String(v).trim() || null;
       if (f === 'title' && !v) continue;
       sets.push(`${f} = ?`);
@@ -1070,6 +1107,7 @@ export function deleteCase(id) {
   tx(() => {
     run('DELETE FROM payments WHERE case_id = ?', id);
     run('DELETE FROM case_docs WHERE case_id = ?', id);
+    for (const t of ['case_parties', 'case_moves', 'case_steps', 'case_checklist']) run(`DELETE FROM ${t} WHERE case_id = ?`, id);
     run('UPDATE tasks SET case_id = NULL WHERE case_id = ?', id);
     run('UPDATE notes SET case_id = NULL WHERE case_id = ?', id);
     run('DELETE FROM cases WHERE id = ?', id);
@@ -1190,6 +1228,65 @@ export function addCaseDoc({ case_id, name, file, mime, size, msg_id }) {
   return Number(run('INSERT INTO case_docs (case_id, name, file, mime, size, msg_id, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)',
     case_id, name, file, mime || null, size || null, msg_id || null, now()).lastInsertRowid);
 }
+// ------------------------------------------------------------ processo: partes, andamentos, etapas, documentos
+
+export function listParties(caseId) { return all('SELECT * FROM case_parties WHERE case_id = ? ORDER BY id', caseId); }
+export function saveParty(p) {
+  const name = String(p.name || '').trim();
+  if (!name) throw new Error('Informe o nome da parte.');
+  if (p.id) { run('UPDATE case_parties SET role = ?, name = ?, doc = ?, notes = ? WHERE id = ?', p.role || 'outro', name, p.doc || null, p.notes || null, p.id); return p.id; }
+  return Number(run('INSERT INTO case_parties (case_id, role, name, doc, notes) VALUES (?, ?, ?, ?, ?)', p.case_id, p.role || 'outro', name, p.doc || null, p.notes || null).lastInsertRowid);
+}
+export function deleteParty(id) { run('DELETE FROM case_parties WHERE id = ?', id); }
+
+export function listMoves(caseId) { return all('SELECT * FROM case_moves WHERE case_id = ? ORDER BY ts DESC, id DESC', caseId); }
+export function addMove({ case_id, ts, text, source = 'manual', ext_id = null, user_name = null }) {
+  if (!String(text || '').trim()) throw new Error('Escreva o andamento.');
+  if (ext_id && get('SELECT 1 AS x FROM case_moves WHERE case_id = ? AND ext_id = ?', case_id, ext_id)) return null;
+  return Number(run('INSERT INTO case_moves (case_id, ts, text, source, ext_id, user_name, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)',
+    case_id, ts || now(), String(text).trim(), source, ext_id, user_name, now()).lastInsertRowid);
+}
+export function deleteMove(id) { run("DELETE FROM case_moves WHERE id = ? AND source = 'manual'", id); }
+
+export function listSteps(caseId) { return all('SELECT * FROM case_steps WHERE case_id = ?', caseId); }
+/** Etapa marcada à mão (feito / não se aplica); `null` volta ao automático. */
+export function setStep(caseId, step, status, userName) {
+  if (!status) { run('DELETE FROM case_steps WHERE case_id = ? AND step = ?', caseId, step); return; }
+  run('INSERT OR REPLACE INTO case_steps (case_id, step, status, done_at, user_name) VALUES (?, ?, ?, ?, ?)', caseId, step, status, now(), userName || null);
+}
+
+export function listChecklist(caseId) { return all('SELECT * FROM case_checklist WHERE case_id = ? ORDER BY position, id', caseId); }
+export function addChecklistItems(caseId, labels) {
+  const have = new Set(listChecklist(caseId).map((i) => i.label.toLowerCase()));
+  let pos = get('SELECT COALESCE(MAX(position), 0) AS p FROM case_checklist WHERE case_id = ?', caseId).p;
+  let n = 0;
+  for (const l of labels) {
+    const label = String(l || '').trim();
+    if (!label || have.has(label.toLowerCase())) continue;
+    have.add(label.toLowerCase());
+    run('INSERT INTO case_checklist (case_id, label, position) VALUES (?, ?, ?)', caseId, label, ++pos);
+    n++;
+  }
+  return n;
+}
+export function setChecklistStatus(ids, status, file) {
+  for (const id of ids) {
+    if (status === 'solicitado') run("UPDATE case_checklist SET status = 'solicitado', requested_at = ? WHERE id = ? AND status <> 'recebido'", now(), id);
+    else if (status === 'recebido') run("UPDATE case_checklist SET status = 'recebido', received_at = ?, file = COALESCE(?, file) WHERE id = ?", now(), file || null, id);
+    else run("UPDATE case_checklist SET status = 'pendente', received_at = NULL WHERE id = ?", id);
+  }
+}
+export function deleteChecklistItem(id) { run('DELETE FROM case_checklist WHERE id = ?', id); }
+export function checklistItem(id) { return get('SELECT * FROM case_checklist WHERE id = ?', id); }
+/** Documentos pedidos há mais de `ms` e ainda não recebidos (casos abertos). */
+export function pendingDocRequests(ms) {
+  return all(`SELECT i.case_id, COUNT(*) AS n, MIN(i.requested_at) AS since, c.title, c.client_id, c.jid, c.responsible_id,
+                (SELECT name FROM clients WHERE id = c.client_id) AS client_name
+              FROM case_checklist i JOIN cases c ON c.id = i.case_id
+              WHERE i.status = 'solicitado' AND i.requested_at < ? AND c.status = 'aberto'
+              GROUP BY i.case_id ORDER BY since`, now() - ms);
+}
+
 export function deleteCaseDoc(id) {
   const d = get('SELECT * FROM case_docs WHERE id = ?', id);
   run('DELETE FROM case_docs WHERE id = ?', id);

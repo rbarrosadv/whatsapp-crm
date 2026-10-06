@@ -162,6 +162,15 @@ function dayView(sum, events, awaiting) {
       });
     })));
   }
+  if (sum.docRequests?.length) {
+    groups.push(group('📄 Documentos pedidos e não recebidos', 'Pedidos há mais de 3 dias', sum.docRequests.slice(0, 6).map((r) => actionRow({
+      who: r.client_name || 'Cliente', clientId: r.client_id,
+      text: `${r.title} · ${r.n} documento(s)`,
+      meta: `pedido há ${fmtDuration(Date.now() - r.since)}`,
+      late: Date.now() - r.since > 7 * DAY,
+      action: 'Ver lista', onAction: () => openCase(r.case_id, { tab: 'fluxo' }),
+    }))));
+  }
   if (sum.staleCases.length) {
     groups.push(group('📣 Processos sem retorno ao cliente', `Sem notícia há mais de ${sum.staleDays} dias`, sum.staleCases.slice(0, 6).map((k) => {
       const chat = state.chats.get(k.jid);

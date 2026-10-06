@@ -19,6 +19,7 @@ import { importLegacy, legacyStateFile } from '../main/legacy.js';
 import { diagnoseConnection } from '../main/diag.js';
 import { DocsService, guessRoot, templateValues, PLACEHOLDERS, FOLDERS } from '../main/docs.js';
 import { seedDemoDocs } from '../main/demo.js';
+import { computeSteps, suggestedChecklist, docsRequestText, addBusinessDays, STEPS, PARTY_ROLES, DEFAULT_DOCS_TEMPLATE } from '../main/workflow.js';
 
 const DAY = 24 * 3600 * 1000;
 const money = (v) => Number(v || 0).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' });
@@ -28,7 +29,7 @@ const dateBR = (ts) => (ts ? new Date(ts).toLocaleDateString('pt-BR') : 'sem dat
 export const USER_KEYS = ['notifications', 'notificationPreview', 'theme', 'lastView', 'lastPipeline', 'enterToSend',
   'lastFilter', 'agendaHidden', 'agendaView', 'agendaHours', 'discreet', 'discreetMessages', 'spellcheck', 'wordSuggest', 'autocorrect'];
 export const OFFICE_KEYS = ['sendReadReceipts', 'forgottenHours', 'chargeTemplate', 'pixKey', 'paymentNoticeDays',
-  'staleCaseDays', 'googleSync', 'googleCalendarId', 'signMessages', 'docsRoot'];
+  'staleCaseDays', 'googleSync', 'googleCalendarId', 'signMessages', 'docsRoot', 'docsRequestTemplate'];
 
 export const DEFAULT_CHARGE_TEMPLATE = 'Olá, {nome}! Tudo bem? Passando para lembrar da {parcela} dos honorários referentes a {caso}, '
   + 'no valor de {valor}, com vencimento em {vencimento}.{pix_linha}\nQualquer dúvida, estou à disposição.';
@@ -281,6 +282,21 @@ export async function createCore({ dataDir, demo = false, version = '', safeStor
     return f;
   });
 
+  /** Etapas do caso (com o que dá para concluir sozinho a partir dos dados). */
+  function flowOf(k, checklist) {
+    return computeSteps(k, {
+      manual: db.listSteps(k.id),
+      checklist: checklist || db.listChecklist(k.id),
+      payments: db.get('SELECT COUNT(*) AS n FROM payments WHERE case_id = ?', k.id)?.n || 0,
+    });
+  }
+  function caseChanged(k) {
+    if (!k) return;
+    wa.markChanged(k.jid);
+    send('cases:changed', k.jid);
+  }
+  const send_ = (...a) => send(...a);
+
   /** Cliente mudou: avisa as janelas (e a conversa ligada a ele, se houver). */
   function clientChanged(id) {
     const cl = db.getClient(id);
@@ -501,7 +517,99 @@ export async function createCore({ dataDir, demo = false, version = '', safeStor
     },
     'clients:fromChat': (ctx, jid) => { const id = db.ensureClientForChat(chatOrThrow(jid), ctx.user.name); clientChanged(id); return id; },
     'clients:activity': (_c, id) => db.listActivity(db.clientKey(db.getClient(id))),
-    'cases:list': (ctx, opts) => forMoney(ctx, db.listCases(opts || {})),
+    'cases:list': (ctx, opts = {}) => {
+      let list = db.listCases(opts || {});
+      if (opts?.responsible === 'me') list = list.filter((k) => k.responsible_id === ctx.user.id);
+      else if (opts?.responsible) list = list.filter((k) => k.responsible_id === Number(opts.responsible));
+      if (opts?.withFlow) list = list.map((k) => { const f = flowOf(k); return { ...k, next_step: f.next, flow_done: f.done, flow_total: f.total }; });
+      return forMoney(ctx, list);
+    },
+    // ficha completa do processo: dados, partes, andamentos, etapas e documentos
+    'cases:full': (ctx, id) => {
+      const k = db.getCase(id);
+      if (!k) throw new Error('Processo não encontrado');
+      const checklist = db.listChecklist(id);
+      return {
+        case: forMoney(ctx, k),
+        parties: db.listParties(id),
+        moves: db.listMoves(id),
+        flow: flowOf(k, checklist),
+        checklist,
+        suggested: checklist.length ? null : suggestedChecklist(k),
+        roles: PARTY_ROLES,
+        docsTemplate: settings.docsRequestTemplate || DEFAULT_DOCS_TEMPLATE,
+      };
+    },
+    'cases:setStep': (ctx, id, step, status) => {
+      if (!STEPS.some((x) => x.key === step)) throw new Error('etapa desconhecida');
+      db.setStep(id, step, status === 'done' || status === 'na' ? status : null, ctx.user.name);
+      const k = db.getCase(id);
+      if (status) db.logActivity(k.jid, 'case', `${k.title}: etapa “${STEPS.find((x) => x.key === step).label}” ${status === 'na' ? 'não se aplica' : 'concluída'}`, ctx.user.name);
+      caseChanged(k);
+    },
+    'parties:save': (_c, p) => { const id = db.saveParty(p); caseChanged(db.getCase(p.case_id)); return id; },
+    'parties:delete': (_c, id, caseId) => { db.deleteParty(id); caseChanged(db.getCase(caseId)); },
+    'moves:add': (ctx, m) => { const id = db.addMove({ ...m, user_name: ctx.user.name }); caseChanged(db.getCase(m.case_id)); return id; },
+    'moves:delete': (_c, id, caseId) => { db.deleteMove(id); caseChanged(db.getCase(caseId)); },
+    'checklist:add': (_c, caseId, labels) => { const n = db.addChecklistItems(caseId, labels); caseChanged(db.getCase(caseId)); return n; },
+    'checklist:delete': (_c, id) => { const i = db.checklistItem(id); db.deleteChecklistItem(id); if (i) caseChanged(db.getCase(i.case_id)); },
+    /** Marca como recebido (opcional: arquivos enviados vão para a pasta do caso com o nome do documento). */
+    'checklist:set': (ctx, ids, status, tokens) => {
+      const first = db.checklistItem(ids?.[0]);
+      if (!first) throw new Error('Item não encontrado');
+      const k = db.getCase(first.case_id);
+      let file = null;
+      if (tokens?.length) {
+        const files = uploads(tokens);
+        try {
+          if (k.folder && docs.root()) {
+            const saved = docs.saveFiles(k.folder, files.map((f, i) => ({ path: f.path, name: `${first.label.slice(0, 80)}${files.length > 1 ? ` (${i + 1})` : ''}${path.extname(f.name)}` })), ctx.user);
+            file = saved[0];
+          } else {
+            const dir = path.join(wa.mediaDir, '_casos', String(k.id));
+            fs.mkdirSync(dir, { recursive: true });
+            for (const f of files) {
+              const dest = path.join(dir, `${Date.now()}-${path.basename(f.name)}`);
+              fs.copyFileSync(f.path, dest);
+              db.addCaseDoc({ case_id: k.id, name: `${first.label} - ${path.basename(f.name)}`, file: path.relative(wa.mediaDir, dest), size: fs.statSync(dest).size });
+            }
+          }
+        } finally { files.forEach((f) => fs.rmSync(path.dirname(f.path), { recursive: true, force: true })); }
+      }
+      db.setChecklistStatus(ids, status, file);
+      caseChanged(k);
+    },
+    'checklist:requestText': (_c, caseId, ids) => {
+      const k = db.getCase(caseId);
+      const items = db.listChecklist(caseId).filter((i) => ids.includes(i.id));
+      return docsRequestText(settings.docsRequestTemplate, { nome: k.client_name, caso: k.title, itens: items.map((i) => i.label) });
+    },
+    /**
+     * Pede os documentos: envia pelo WhatsApp (se o cliente tiver e a pessoa
+     * escolher) com o texto revisado, marca como "solicitado" e agenda um
+     * lembrete para cobrar em 3 dias úteis.
+     */
+    'checklist:request': async (ctx, caseId, ids, { text, send } = {}) => {
+      const k = db.getCase(caseId);
+      if (!k) throw new Error('Processo não encontrado');
+      if (!ids?.length) throw new Error('Escolha os documentos.');
+      if (send) {
+        if (!k.client_jid) throw new Error('Este cliente não tem WhatsApp ligado.');
+        if (!String(text || '').trim()) throw new Error('O texto do pedido está vazio.');
+        await api['messages:sendText'](ctx, k.client_jid, text);
+      }
+      db.setChecklistStatus(ids, 'solicitado');
+      if (send) db.touchCase(caseId);
+      const taskId = db.saveTask({
+        jid: k.jid, case_id: caseId, kind: 'tarefa', assignee_id: ctx.user.id,
+        title: `Conferir documentos pedidos — ${k.client_name || k.title}`, due_at: addBusinessDays(Date.now(), 3),
+      });
+      syncTaskLater(taskId);
+      db.logActivity(k.jid, 'case', `${k.title}: ${ids.length} documento(s) solicitado(s)${send ? ' pelo WhatsApp' : ''}`, ctx.user.name);
+      caseChanged(k);
+      send_('tasks:changed', null);
+      return { taskId };
+    },
     'cases:get': (ctx, id) => forMoney(ctx, db.getCase(id)),
     'cases:save': (ctx, c) => {
       if (!auth.can(ctx.user.role, 'finance:list')) c = auth.stripMoney(c);
@@ -711,11 +819,14 @@ export async function createCore({ dataDir, demo = false, version = '', safeStor
       const assignee = scope === 'all' ? null : ctx.user.id;
       const tasks = db.tasksForDay({ dayStart, dayEnd, weekStart, weekEnd, assignee });
       const staleDays = Number(settings.staleCaseDays ?? 15);
+      // documentos pedidos ao cliente há mais de 3 dias e ainda não recebidos
+      const docRequests = db.pendingDocRequests(3 * DAY).filter((r) => scope === 'all' || !r.responsible_id || r.responsible_id === ctx.user.id);
       const out = {
         ...tasks,
         staleCases: staleDays > 0 ? db.casesWithoutUpdate(staleDays * DAY) : [],
         staleDays,
         payments: null,
+        docRequests,
       };
       if (auth.can(ctx.user.role, 'finance:list')) {
         const soon = dayStart + 8 * DAY;

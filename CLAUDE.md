@@ -81,7 +81,8 @@ Motor (`src/main`, sem Electron apesar do nome da pasta):
   `messages`, `pipelines`, `stages`, `crm`, `tags`, `chat_tags`, `notes`,
   `tasks`, `activity` (com `user_name`), `quick_replies`, `settings`,
   `legacy_pending`, `meta`, `contact_types`, `chat_filters`, `cases`,
-  `payments`, `case_docs`, `users`, `sessions`, `doc_index`, `clients` (migrações por versão em
+  `payments`, `case_docs`, `users`, `sessions`, `doc_index`, `clients`,
+  `case_parties`, `case_moves`, `case_steps`, `case_checklist` (migrações por versão em
   `migrate()`; `meta.schema` guarda a versão atual).
 - `docs.js` — `DocsService`: pasta "BARROS ADVOGADOS" do OneDrive lida
   direto do disco (`settings.docsRoot`, ou `guessRoot()` em
@@ -101,6 +102,14 @@ Motor (`src/main`, sem Electron apesar do nome da pasta):
   Rota `GET /docs/file/<rel>`; no app de desktop em modo local
   `desktop.openDoc/showDoc` abre o arquivo original (Word/Explorador). Num
   servidor remoto vai precisar do Microsoft Graph (ainda não feito).
+- `workflow.js` — as **10 etapas do caso** (`STEPS`, do documento do projeto)
+  e `computeSteps(caso, {manual, checklist, payments})`: etapas que se
+  concluem sozinhas pelos dados (triagem = tem cliente; proposta = honorários;
+  documentos = checklist todo recebido; pasta = `cases.folder`; petição = nº
+  do processo; cobrança = parcelas; encerramento = caso encerrado), o resto à
+  mão (`case_steps`: feito / não se aplica). `next` = próximo passo. Checklists
+  de documentos por área (`suggestedChecklist`), texto do pedido
+  (`docsRequestText`, configurável em `docsRequestTemplate`) e `addBusinessDays`.
 - `ogg.js` — remux WebM/Opus (MediaRecorder) → OGG/Opus (mensagem de voz).
 - `google.js` — `GoogleService`: Google Agenda pela API oficial com a chave
   (client_secret JSON, tipo "App para computador") do próprio usuário;
@@ -172,7 +181,12 @@ Interface (`src/renderer`, JS puro em módulos ES, sem build):
 - `js/views/*` — `chatlist`, `chatview` (mensagens + composer + gravação;
   faixa "Fulano está respondendo / também está com esta conversa aberta"),
   `crmpanel` (ficha do contato, com a lista de casos), `casemodal` (ficha do
-  caso em abas; Honorários só com `can.finance`), `finance`, `agenda`,
+  processo em tela grande: Resumo — dados do processo, responsável, partes —,
+  Fluxo — etapas + documentos do cliente com "Solicitar" (revisa o texto, envia
+  pelo WhatsApp se houver ou copia; marca pedido e cria lembrete em 3 dias
+  úteis) e "Recebido" (arquivo vai para a pasta do caso) —, Andamentos (linha
+  do tempo; manual por enquanto, `source` datajud/djen depois), Prazos,
+  Documentos, Honorários só com `can.finance`, Notas; dados via `cases:full`), `finance`, `agenda`,
   `board` (kanban de CASOS), `contacts`, `tasks`, `dashboard`, `settings`
   (Minha conta, Equipe — só sócio —, conexão, notificações…), `connect`.
 - Estilos em `styles.css` com variáveis e `[data-theme=light|dark]`; cor da

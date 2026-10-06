@@ -17,7 +17,7 @@ export function mountSettings(el) {
 
 // configurações que valem para o escritório todo (só sócio muda)
 const OFFICE_KEYS = ['sendReadReceipts', 'forgottenHours', 'chargeTemplate', 'pixKey', 'paymentNoticeDays',
-  'staleCaseDays', 'googleSync', 'googleCalendarId', 'signMessages'];
+  'staleCaseDays', 'googleSync', 'googleCalendarId', 'signMessages', 'docsRequestTemplate'];
 
 function toggle(key, label, hint, def = true) {
   const val = state.settings[key] ?? def;
@@ -263,6 +263,10 @@ function render() {
             h('button', { class: 'btn btn-sm', onclick: () => filterEditor(f) }, 'Editar')))),
         h('button', { class: 'btn', onclick: () => filterEditor() }, '＋ Novo filtro')),
 
+      section('📄 Pedido de documentos ao cliente',
+        h('label', { class: 'field' }, h('span', null, 'Mensagem (na ficha do processo → Fluxo → Solicitar)'), docsTemplateInput()),
+        h('p', { class: 'muted small' }, 'Campos: {nome} (primeiro nome) {nome_completo} {caso} {lista} (os documentos marcados). Você sempre revisa antes de enviar.')),
+
       state.can.finance && section('💰 Honorários e cobrança',
         h('label', { class: 'field' }, h('span', null, 'Chave PIX / dados para pagamento'),
           h('input', { class: 'input', value: state.settings.pixKey || '', placeholder: 'Ex.: CNPJ, e-mail ou celular', onchange: (e) => setSetting('pixKey', e.target.value.trim()).catch(errToast) })),
@@ -445,6 +449,12 @@ function chargeTemplateInput() {
     class: 'btn btn-sm', style: { marginTop: '6px' },
     onclick: async () => { const t = await api('finance:defaultTemplate'); ta.value = t; setSetting('chargeTemplate', null).catch(errToast); },
   }, 'Restaurar texto padrão'));
+}
+
+function docsTemplateInput() {
+  const ta = h('textarea', { class: 'input', rows: 5, disabled: !state.can.admin, onchange: (e) => setSetting('docsRequestTemplate', e.target.value).catch(errToast) });
+  ta.value = state.settings.docsRequestTemplate || 'Olá, {nome}! Para darmos andamento ao seu caso ({caso}), precisamos dos seguintes documentos:\n\n{lista}\n\nPode enviar por aqui mesmo, por foto ou PDF. Qualquer dúvida, estou à disposição.';
+  return ta;
 }
 
 async function moveItem(kind, list, i, dir) {

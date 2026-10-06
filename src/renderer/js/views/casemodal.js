@@ -16,6 +16,7 @@ export const TASK_KINDS = {
   tarefa: { icon: '✅', label: 'Tarefa' },
 };
 
+const TRIBUNAIS = ['TJMT', 'TRT23', 'TRF1', 'JEF', 'JEC', 'STJ', 'STF', 'TST', 'TRE-MT', 'INSS (administrativo)', 'PROCON'];
 const AREAS = ['Cível', 'Trabalhista', 'Família e Sucessões', 'Previdenciário', 'Consumidor', 'Tributário', 'Empresarial',
   'Criminal', 'Imobiliário', 'Administrativo', 'Contratos', 'Consultoria'];
 
@@ -116,9 +117,15 @@ export async function openCase(id, { tab = 'dados' } = {}) {
   const m = modal({ title: 'Caso', body, wide: true, onClose: () => { off1(); off2(); } });
   m.box.classList.add('modal-case');
 
+  let full = null;
+  let team = [];
   const reload = async () => {
-    k = await api('cases:get', id);
-    if (!k) { m.close(); return; }
+    try { full = await api('cases:full', id); } catch { m.close(); return; }
+    // não redesenha no meio da digitação de um campo do resumo (perderia o foco)
+    const a = document.activeElement;
+    if (k && current === 'dados' && body.contains(a) && /^(INPUT|TEXTAREA|SELECT)$/.test(a.tagName)) { k = full.case; return; }
+    k = full.case;
+    if (!team.length) team = await api('team:list').catch(() => []);
     render();
   };
   const off1 = on('cases', () => reload());
@@ -131,11 +138,14 @@ export async function openCase(id, { tab = 'dados' } = {}) {
     const since = Date.now() - (k.last_update_at || k.created_at);
     m.box.querySelector('.modal-head h3').textContent = `📁 ${k.title}`;
 
+    const pend = full.checklist.filter((i) => i.status !== 'recebido').length;
     const tabs = [
-      ['dados', '📋 Dados'],
-      state.can.finance ? ['honorarios', `💰 Honorários${k.overdue_payments ? ` ⚠${k.overdue_payments}` : ''}`] : null,
+      ['dados', '📋 Resumo'],
+      ['fluxo', `🧭 Fluxo ${full.flow.done}/${full.flow.total}${pend ? ` · 📄${pend}` : ''}`],
+      ['andamentos', `📜 Andamentos${full.moves.length ? ` (${full.moves.length})` : ''}`],
       ['prazos', `📅 Prazos${k.open_tasks ? ` (${k.open_tasks})` : ''}`],
       ['docs', `📎 Documentos${k.docs_count ? ` (${k.docs_count})` : ''}`],
+      state.can.finance ? ['honorarios', `💰 Honorários${k.overdue_payments ? ` ⚠${k.overdue_payments}` : ''}`] : null,
       ['notas', '📝 Notas'],
     ].filter(Boolean);
     if (current === 'honorarios' && !state.can.finance) current = 'dados';
@@ -151,6 +161,9 @@ export async function openCase(id, { tab = 'dados' } = {}) {
           onclick: (e) => caseStageMenu(e.currentTarget, k),
         }, st ? `${st.pipeline.icon || ''} ${st.pipeline.name} → ${st.name}` : 'Escolher etapa', ' ▾'),
         closed ? h('span', { class: 'status-pill muted' }, 'Encerrado') : null,
+        h('div', { class: 'case-next', title: 'Próximo passo do fluxo do caso', onclick: () => { current = 'fluxo'; render(); } },
+          h('span', { class: 'muted small' }, 'Próximo passo'), h('b', null, full.flow.next || '✓ Fluxo concluído')),
+        h('div', { class: 'case-resp' }, h('span', { class: 'muted small' }, 'Responsável'), h('b', null, k.responsible_name || '—')),
         h('button', {
           class: 'icon-btn', title: 'Mais opções',
           onclick: (e) => popupMenu(e.currentTarget, [
@@ -175,23 +188,172 @@ export async function openCase(id, { tab = 'dados' } = {}) {
         onclick: () => { current = key; render(); },
       }, label))),
       content);
-    ({ dados: renderDados, honorarios: renderHonorarios, prazos: renderPrazos, docs: renderDocs, notas: renderNotas })[current](content);
+    ({ dados: renderDados, fluxo: renderFluxo, andamentos: renderMoves, honorarios: renderHonorarios, prazos: renderPrazos, docs: renderDocs, notas: renderNotas })[current](content);
   }
 
-  // ---------------------------------------------------------------- dados
+  // ------------------------------------------------------------- resumo
   function renderDados(el) {
     const save = (field) => (e) => api('cases:save', { id, [field]: e.target.value }).catch(errToast);
     const areaList = h('datalist', { id: 'areas-list' }, AREAS.map((a) => h('option', { value: a })));
-    fill(el, h('div', { class: 'case-grid' },
-      h('label', { class: 'field wide' }, h('span', null, 'Nº do processo / procedimento'),
-        h('input', { class: 'input mono', value: k.process_number || '', placeholder: '0000000-00.0000.0.00.0000', onchange: save('process_number') })),
-      h('label', { class: 'field' }, h('span', null, 'Área'),
-        h('input', { class: 'input', value: k.area || '', list: 'areas-list', placeholder: 'Ex.: Trabalhista', onchange: save('area') }), areaList),
-      h('label', { class: 'field' }, h('span', null, 'Vara / Comarca / Órgão'),
-        h('input', { class: 'input', value: k.court || '', placeholder: 'Ex.: 2ª Vara do Trabalho de SP', onchange: save('court') })),
-      h('label', { class: 'field wide' }, h('span', null, 'Parte contrária'),
-        h('input', { class: 'input', value: k.opposing_party || '', onchange: save('opposing_party') }))),
-    h('p', { class: 'muted small' }, `Caso aberto em ${fmtDateTime(k.created_at)}. As alterações são salvas automaticamente.`));
+    const tribList = h('datalist', { id: 'trib-list' }, TRIBUNAIS.map((a) => h('option', { value: a })));
+    const sel = (field, options, value) => h('select', { class: 'input', onchange: save(field) },
+      options.map(([v, l]) => h('option', { value: v, selected: String(value ?? '') === String(v) }, l)));
+    fill(el,
+      h('div', { class: 'case-grid' },
+        h('label', { class: 'field' }, h('span', null, 'Tipo'), sel('kind', [['judicial', 'Processo judicial'], ['extrajudicial', 'Extrajudicial / administrativo'], ['consultivo', 'Consultivo (sem processo)']], k.kind || 'judicial')),
+        h('label', { class: 'field' }, h('span', null, 'Advogado(a) responsável'),
+          sel('responsible_id', [['', '— escolher —'], ...team.map((u) => [u.id, u.name])], k.responsible_id || '')),
+        h('label', { class: 'field wide' }, h('span', null, 'Nº do processo (CNJ) / procedimento'),
+          h('input', { class: 'input mono', value: k.process_number || '', placeholder: '0000000-00.0000.0.00.0000', onchange: save('process_number') })),
+        h('label', { class: 'field' }, h('span', null, 'Tribunal'),
+          h('input', { class: 'input', value: k.tribunal || '', list: 'trib-list', placeholder: 'Ex.: TJMT, TRT23', onchange: save('tribunal') }), tribList),
+        h('label', { class: 'field' }, h('span', null, 'Vara / comarca / órgão'),
+          h('input', { class: 'input', value: k.court || '', placeholder: 'Ex.: 3ª Vara do Trabalho de Cuiabá', onchange: save('court') })),
+        h('label', { class: 'field' }, h('span', null, 'Área'),
+          h('input', { class: 'input', value: k.area || '', list: 'areas-list', placeholder: 'Ex.: Trabalhista', onchange: save('area') }), areaList),
+        h('label', { class: 'field' }, h('span', null, 'O cliente é'), sel('client_role', [['', '—'], ['autor', 'Autor / requerente'], ['reu', 'Réu / requerido'], ['terceiro', 'Terceiro']], k.client_role || '')),
+        h('label', { class: 'field' }, h('span', null, 'Parte contrária (principal)'),
+          h('input', { class: 'input', value: k.opposing_party || '', onchange: save('opposing_party') })),
+        h('label', { class: 'field' }, h('span', null, 'Distribuído em'),
+          h('input', { class: 'input', type: 'date', value: k.filed_at || '', onchange: save('filed_at') })),
+        state.can.finance ? h('label', { class: 'field' }, h('span', null, 'Valor da causa (R$)'),
+          h('input', { class: 'input money', value: k.claim_value != null ? Number(k.claim_value).toLocaleString('pt-BR', { minimumFractionDigits: 2 }) : '', placeholder: '0,00', onchange: save('claim_value') })) : null,
+        h('label', { class: 'field wide' }, h('span', null, 'Resumo do caso'),
+          h('textarea', { class: 'input', rows: 3, placeholder: 'Em poucas linhas: o que aconteceu e o que o cliente quer.', onchange: save('description') }, k.description || ''))),
+      partiesBlock(),
+      h('p', { class: 'muted small' }, `Aberto em ${fmtDateTime(k.created_at)}. As alterações são salvas sozinhas.`));
+  }
+
+  function partiesBlock() {
+    const roles = new Map(full.roles);
+    const role = h('select', { class: 'input select-sm' }, full.roles.map(([v, l]) => h('option', { value: v }, l)));
+    const name = h('input', { class: 'input input-sm', placeholder: 'Nome da parte' });
+    const doc = h('input', { class: 'input input-sm', placeholder: 'CPF/CNPJ (opcional)' });
+    const add = async () => {
+      if (!name.value.trim()) return;
+      try { await api('parties:save', { case_id: id, role: role.value, name: name.value, doc: doc.value }); } catch (e) { errToast(e); }
+    };
+    return h('div', { class: 'panel parties' },
+      h('div', { class: 'panel-head' }, h('h3', null, '👥 Partes')),
+      full.parties.length ? h('table', { class: 'table compact' }, h('tbody', null, full.parties.map((p) => h('tr', null,
+        h('td', { class: 'muted small' }, roles.get(p.role) || p.role), h('td', null, h('b', null, p.name)), h('td', { class: 'mono small' }, p.doc || ''),
+        h('td', { class: 'num' }, h('button', { class: 'icon-btn small', title: 'Tirar', onclick: () => api('parties:delete', p.id, id).catch(errToast) }, '🗑'))))))
+        : h('p', { class: 'muted small' }, 'Nenhuma parte cadastrada além do cliente.'),
+      h('div', { class: 'row wrap' }, role, name, doc, h('button', { class: 'btn btn-sm', onclick: add }, '＋ Adicionar')));
+  }
+
+  // --------------------------------------------------------------- fluxo
+  function renderFluxo(el) {
+    const icon = (s) => (s.status === 'done' ? '✅' : s.status === 'na' ? '➖' : '⬜');
+    const steps = h('div', { class: 'flow' }, full.flow.steps.map((s, i) => h('div', { class: `flow-step ${s.status} ${full.flow.next === s.label ? 'next' : ''}` },
+      h('span', { class: 'flow-icon' }, icon(s)),
+      h('div', { class: 'grow' },
+        h('div', null, h('b', null, `${i + 1}. ${s.label}`), s.progress ? h('span', { class: 'muted small' }, ` · ${s.progress}`) : null),
+        h('div', { class: 'muted small' }, s.status === 'done' ? (s.auto ? 'concluída automaticamente' : `concluída${s.by ? ` por ${s.by}` : ''}${s.at ? ` em ${new Date(s.at).toLocaleDateString('pt-BR')}` : ''}`)
+          : s.status === 'na' ? 'não se aplica' : s.hint)),
+      s.status === 'open'
+        ? h('div', { class: 'row' },
+          h('button', { class: 'btn btn-sm', onclick: () => api('cases:setStep', id, s.key, 'done').catch(errToast) }, 'Concluir'),
+          h('button', { class: 'btn btn-sm', title: 'Esta etapa não se aplica a este caso', onclick: () => api('cases:setStep', id, s.key, 'na').catch(errToast) }, 'N/A'))
+        : s.auto ? null : h('button', { class: 'btn btn-sm', onclick: () => api('cases:setStep', id, s.key, null).catch(errToast) }, 'Desfazer'))));
+    fill(el,
+      h('div', { class: 'flow-wrap' },
+        h('div', { class: 'panel' }, h('div', { class: 'panel-head' }, h('h3', null, '🧭 Etapas do caso'), h('span', { class: 'muted small' }, `${full.flow.done} de ${full.flow.total}`)), steps),
+        checklistPanel()));
+  }
+
+  function checklistPanel() {
+    const selected = new Set(full.checklist.filter((i) => i.status === 'pendente').map((i) => i.id));
+    const statusPill = (i) => h('span', { class: `status-pill ${i.status === 'recebido' ? 'ok' : i.status === 'solicitado' ? 'warn' : 'muted'}` },
+      i.status === 'recebido' ? `recebido ${new Date(i.received_at).toLocaleDateString('pt-BR')}` : i.status === 'solicitado' ? `pedido ${new Date(i.requested_at).toLocaleDateString('pt-BR')}` : 'falta pedir');
+    const newItem = h('input', { class: 'input input-sm grow', placeholder: 'Outro documento…' });
+    const addItem = async () => { if (newItem.value.trim()) await api('checklist:add', id, [newItem.value]).catch(errToast); };
+    newItem.addEventListener('keydown', (e) => { if (e.key === 'Enter') addItem(); });
+    return h('div', { class: 'panel' },
+      h('div', { class: 'panel-head' }, h('h3', null, '📄 Documentos do cliente'),
+        full.checklist.length ? h('button', { class: 'btn btn-sm btn-primary', onclick: () => requestDocs([...selected]) }, '📨 Solicitar selecionados') : null),
+      !full.checklist.length && full.suggested ? h('div', { class: 'docs-empty' },
+        h('p', { class: 'small' }, `Lista sugerida${full.suggested.area ? ` para ${full.suggested.area}` : ''}:`),
+        h('ul', { class: 'small' }, full.suggested.items.map((i) => h('li', null, i))),
+        h('div', null, h('button', { class: 'btn btn-sm btn-primary', onclick: () => api('checklist:add', id, full.suggested.items).catch(errToast) }, 'Usar esta lista'))) : null,
+      full.checklist.map((i) => h('div', { class: `check-row ${i.status}` },
+        h('input', { type: 'checkbox', checked: selected.has(i.id), disabled: i.status === 'recebido', onchange: (e) => (e.target.checked ? selected.add(i.id) : selected.delete(i.id)) }),
+        h('span', { class: 'grow' }, i.label),
+        statusPill(i),
+        i.status !== 'recebido'
+          ? h('button', { class: 'btn btn-sm', title: 'Marcar como recebido (e guardar o arquivo, se quiser)', onclick: () => receiveDialog(i) }, '✓ Recebido')
+          : h('button', { class: 'btn btn-sm', onclick: () => api('checklist:set', [i.id], 'pendente').catch(errToast) }, 'Desfazer'),
+        h('button', { class: 'icon-btn small', title: 'Tirar da lista', onclick: () => api('checklist:delete', i.id).catch(errToast) }, '🗑'))),
+      h('div', { class: 'row' }, newItem, h('button', { class: 'btn btn-sm', onclick: addItem }, '＋')));
+  }
+
+  async function requestDocs(ids) {
+    if (!ids.length) { toast('Marque os documentos que vai pedir', 'error'); return; }
+    const text = await api('checklist:requestText', id, ids).catch((e) => { errToast(e); return null; });
+    if (text == null) return;
+    const ta = h('textarea', { class: 'input', rows: 10 }, text);
+    const go = async (send) => {
+      try {
+        await api('checklist:request', id, ids, { text: ta.value, send });
+        toast(send ? 'Pedido enviado pelo WhatsApp. Lembrete para conferir em 3 dias úteis.' : 'Marcados como pedidos. Lembrete para conferir em 3 dias úteis.', 'success', 6000);
+      } catch (e) { errToast(e); return false; }
+      return true;
+    };
+    modal({
+      title: '📨 Solicitar documentos ao cliente',
+      wide: true,
+      body: h('div', { class: 'stack' },
+        h('p', { class: 'muted small' }, 'Revise o texto. Nada é enviado sem você confirmar.'), ta,
+        k.client_jid ? null : h('p', { class: 'muted small' }, 'Este cliente não tem WhatsApp ligado: copie o texto e mande por e-mail ou outro meio.')),
+      actions: [
+        { label: 'Cancelar' },
+        { label: 'Copiar e marcar como pedido', onClick: async () => { try { await navigator.clipboard.writeText(ta.value); } catch { /* sem área de transferência */ } return go(false); } },
+        k.client_jid ? { label: '💬 Enviar pelo WhatsApp', primary: true, onClick: () => go(true) } : null,
+      ].filter(Boolean),
+    });
+  }
+
+  async function receiveDialog(item) {
+    let files = [];
+    const info = h('div', { class: 'muted small' }, 'Nenhum arquivo escolhido (opcional).');
+    modal({
+      title: `Recebido: ${item.label}`,
+      body: h('div', { class: 'stack' },
+        h('p', { class: 'small' }, k.folder ? 'O arquivo vai para a pasta do caso no OneDrive, com o nome do documento.' : 'O arquivo fica nos anexos do caso.'),
+        h('div', { class: 'row' }, h('button', { class: 'btn btn-sm', onclick: async () => { files = await pickFiles(); info.textContent = files.length ? files.map((f) => f.name).join(', ') : 'Nenhum arquivo escolhido (opcional).'; } }, '📎 Escolher arquivo'), info)),
+      actions: [
+        { label: 'Cancelar' },
+        { label: 'Marcar como recebido', primary: true, onClick: async () => {
+          try { await api('checklist:set', [item.id], 'recebido', files.length ? await uploadFiles(files) : null); } catch (e) { errToast(e); return false; }
+          return true;
+        } },
+      ],
+    });
+  }
+
+  // ----------------------------------------------------------- andamentos
+  function renderMoves(el) {
+    const date = h('input', { class: 'input input-sm', type: 'date', value: new Date().toISOString().slice(0, 10) });
+    const text = h('textarea', { class: 'input', rows: 2, placeholder: 'Ex.: Juntada de contestação; audiência designada para 10/11 às 14h.' });
+    fill(el,
+      h('div', { class: 'panel' },
+        h('div', { class: 'row' }, h('label', { class: 'field' }, h('span', null, 'Data'), date)),
+        text,
+        h('div', { class: 'row end' }, h('button', {
+          class: 'btn btn-sm btn-primary',
+          onclick: async () => {
+            if (!text.value.trim()) return;
+            const ts = date.value ? new Date(`${date.value}T12:00:00`).getTime() : Date.now();
+            try { await api('moves:add', { case_id: id, text: text.value, ts }); } catch (e) { errToast(e); }
+          },
+        }, '＋ Registrar andamento')),
+        h('p', { class: 'muted small' }, 'Em breve os andamentos do tribunal (DataJud) e as intimações (DJEN) entram aqui sozinhos.')),
+      full.moves.length ? h('div', { class: 'timeline' }, full.moves.map((mv) => h('div', { class: `tl-item src-${mv.source}` },
+        h('div', { class: 'tl-date' }, new Date(mv.ts).toLocaleDateString('pt-BR')),
+        h('div', { class: 'grow' }, h('div', { class: 'tl-text' }, mv.text),
+          h('div', { class: 'muted small' }, mv.source === 'manual' ? `registrado por ${mv.user_name || 'equipe'}` : mv.source.toUpperCase())),
+        mv.source === 'manual' ? h('button', { class: 'icon-btn small', title: 'Apagar', onclick: async () => { if (await confirmDialog('Apagar este andamento?', { okLabel: 'Apagar', danger: true })) api('moves:delete', mv.id, id).catch(errToast); } }, '🗑') : null)))
+        : h('p', { class: 'muted small' }, 'Nenhum andamento registrado.'));
   }
 
   // ----------------------------------------------------------- honorários

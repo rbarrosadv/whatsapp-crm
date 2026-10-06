@@ -298,3 +298,52 @@ test('clientes: cadastro sem WhatsApp, casos e tarefas do cliente; ligar o Whats
   await c.call('clients:linkChat', id, null);
   assert.equal((await c.call('cases:get', caseId)).jid, `cliente:${id}`);
 });
+
+test('processo: etapas automáticas e à mão, partes, andamentos e pedido de documentos com lembrete', async () => {
+  const c = client();
+  await c.req('/auth/login', { body: { login: 'barros', password: 'segredo1' } });
+  const me = (await c.call('bootstrap')).me;
+  const cid = await c.call('clients:save', { name: 'Paulo Reis' });
+  const id = await c.call('cases:save', { client_id: cid, title: 'Horas extras', area: 'Trabalhista' });
+  await c.call('cases:save', { id, responsible_id: me.id, tribunal: 'TRT23', claim_value: '45.000,50' });
+
+  let f = await c.call('cases:full', id);
+  assert.equal(f.case.responsible_name, me.name);
+  assert.equal(f.case.claim_value, 45000.5, 'valor em formato brasileiro');
+  assert.equal(f.flow.steps.find((s) => s.key === 'triagem').status, 'done', 'triagem automática (tem cliente)');
+  assert.equal(f.flow.next, 'Atendimento');
+  assert.ok(f.suggested.items.some((i) => /CTPS|Carteira de trabalho/.test(i)), 'lista sugerida pela área');
+
+  await c.call('cases:setStep', id, 'atendimento', 'done');
+  await c.call('cases:save', { id, process_number: '0000001-02.2026.5.23.0001' });
+  f = await c.call('cases:full', id);
+  assert.equal(f.flow.steps.find((s) => s.key === 'atendimento').by, me.name);
+  assert.equal(f.flow.steps.find((s) => s.key === 'peticao').status, 'done', 'nº do processo conclui o protocolo');
+  assert.equal(f.flow.next, 'Proposta de honorários');
+
+  await c.call('parties:save', { case_id: id, role: 'reu', name: 'Transportes Ltda', doc: '00.000.000/0001-00' });
+  await c.call('moves:add', { case_id: id, text: 'Audiência designada para 10/11', ts: Date.now() });
+  f = await c.call('cases:full', id);
+  assert.equal(f.parties[0].name, 'Transportes Ltda');
+  assert.equal(f.moves[0].user_name, me.name);
+
+  // pedido de documentos (cliente sem WhatsApp: sem envio, só marca e agenda o lembrete)
+  await c.call('checklist:add', id, f.suggested.items.slice(0, 4));
+  f = await c.call('cases:full', id);
+  const ids = f.checklist.map((i) => i.id);
+  const text = await c.call('checklist:requestText', id, ids);
+  assert.match(text, /^Olá, Paulo!/);
+  assert.match(text, /• CPF/);
+  await assert.rejects(c.call('checklist:request', id, ids, { text, send: true }), /WhatsApp/);
+  const { taskId } = await c.call('checklist:request', id, ids, { send: false });
+  const task = (await c.call('tasks:list', { caseId: id })).find((t) => t.id === taskId);
+  assert.match(task.title, /Conferir documentos pedidos — Paulo Reis/);
+  assert.ok(task.due_at > Date.now() + 864e5, 'lembrete em dias úteis');
+  f = await c.call('cases:full', id);
+  assert.ok(f.checklist.every((i) => i.status === 'solicitado'));
+  await c.call('checklist:set', ids, 'recebido');
+  f = await c.call('cases:full', id);
+  assert.equal(f.flow.steps.find((s) => s.key === 'documentos').status, 'done', 'tudo recebido conclui a etapa');
+  const withFlow = (await c.call('cases:list', { withFlow: true, responsible: 'me' })).find((k) => k.id === id);
+  assert.equal(withFlow.next_step, 'Proposta de honorários');
+});
