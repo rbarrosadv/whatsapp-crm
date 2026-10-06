@@ -264,7 +264,11 @@ function render() {
         h('button', { class: 'btn', onclick: () => filterEditor() }, '＋ Novo filtro')),
 
       section('📣 Intimações e andamentos',
-        h('p', { class: 'small' }, 'As OABs acompanhadas ficam em Jurídico → Intimações. O sistema busca no DJEN a cada 6 horas (das 6h às 22h) e os andamentos no DataJud uma vez por dia.'),
+        h('p', { class: 'small' }, 'As OABs acompanhadas ficam em Jurídico → Intimações. O sistema busca as intimações no DJEN e os andamentos no DataJud a cada 6 horas (das 6h às 22h) e avisa no computador.'),
+        h('label', { class: 'field' }, h('span', null, 'Me avisar de andamentos e intimações (vale só para você)'),
+          h('select', { class: 'input', onchange: (e) => setSetting('notifyCourts', e.target.value).catch(errToast) },
+            [['mine', 'Dos processos em que sou responsável'], ['all', 'De todos os processos do escritório'], ['off', 'Não avisar (vejo no Hoje e no Jurídico)']]
+              .map(([v, l]) => h('option', { value: v, selected: (state.settings.notifyCourts || 'mine') === v }, l)))),
         h('button', { class: 'btn btn-sm', onclick: () => import('../store.js').then((m) => m.openLegal('intimacoes')) }, 'Abrir Intimações'),
         state.can.admin ? h('label', { class: 'field' }, h('span', null, 'Chave pública do DataJud (só trocar se o CNJ mudar)'),
           h('input', { class: 'input mono', value: state.settings.datajudKey || '', placeholder: 'padrão do CNJ', onchange: (e) => setSetting('datajudKey', e.target.value.trim() || null).catch(errToast) })) : null),

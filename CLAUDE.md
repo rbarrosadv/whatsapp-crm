@@ -131,6 +131,12 @@ Motor (`src/main`, sem Electron apesar do nome da pasta):
   abertos, 1 por vez com 1,5 s). Intimação → prazo (`intimations:deadline`,
   tarefa `kind='prazo'` do responsável do processo); processo só visto nas
   intimações → `courts:import` (cria cliente/caso/partes, religa intimações).
+  **Avisos** (`notifyCase`): um por processo com andamento/intimação nova,
+  `{user}` conforme a preferência `notifyCourts` (`mine` = responsável — ou,
+  sem responsável, o dono da OAB/todos menos estagiário; `all`; `off`); a 1ª
+  consulta do DataJud (histórico) não avisa; clique abre o processo
+  (`action.case`, `notify.js`). DJEN e DataJud rodam a cada 6 h (6h–22h);
+  `core.runCourts()` roda na hora (testes).
 - `ogg.js` — remux WebM/Opus (MediaRecorder) → OGG/Opus (mensagem de voz).
 - `google.js` — `GoogleService`: Google Agenda pela API oficial com a chave
   (client_secret JSON, tipo "App para computador") do próprio usuário;

@@ -387,3 +387,37 @@ test('intimações: OAB cadastrada, busca no DJEN, liga ao processo, vira prazo;
   assert.ok(nf.moves.some((m) => m.source === 'datajud'), 'andamentos do DataJud');
   assert.ok(!(await c.call('courts:unknown')).some((u) => u.process_number === p.process_number));
 });
+
+test('avisos de andamento novo: vão para o responsável, abrem o processo e respeitam "não avisar"', async () => {
+  const c = client();
+  await c.req('/auth/login', { body: { login: 'barros', password: 'segredo1' } });
+  const me = (await c.call('bootstrap')).me;
+  const cid = await c.call('clients:save', { name: 'Aviso Teste' });
+  const id = await c.call('cases:save', { client_id: cid, title: 'Cobrança' });
+  await c.call('cases:save', { id, process_number: '0002222-33.2026.8.11.0041', responsible_id: me.id });
+  await c.call('cases:datajud', id); // 1ª consulta: traz o histórico, sem aviso
+  const got = [];
+  const listen = (ch, data, to) => { if (ch === 'notify' && data.kind === 'moves') got.push({ data, to }); };
+  srv.core.events.on('event', listen);
+  try {
+    // simula andamento novo desde a última consulta
+    db.run("DELETE FROM case_moves WHERE case_id = ? AND source = 'datajud' AND text LIKE 'Juntada%'", id);
+    db.run('UPDATE cases SET datajud_checked_at = ? WHERE process_number IS NOT NULL', Date.now() - 7 * 3600e3);
+    await srv.core.runCourts();
+    const mine = got.filter((g) => g.data.action?.case === id);
+    assert.equal(mine.length, 1, 'um aviso para este processo');
+    assert.equal(mine[0].to.user, me.id, 'para o responsável');
+    assert.match(mine[0].data.title, /Andamento novo — Aviso Teste: Cobrança/);
+    assert.match(mine[0].data.body, /Juntada de Petição/);
+    // "não avisar"
+    await c.call('settings:set', 'notifyCourts', 'off');
+    got.length = 0;
+    db.run("DELETE FROM case_moves WHERE case_id = ? AND source = 'datajud' AND text LIKE 'Juntada%'", id);
+    db.run('UPDATE cases SET datajud_checked_at = ? WHERE id = ?', Date.now() - 7 * 3600e3, id);
+    await srv.core.runCourts();
+    assert.equal(got.filter((g) => g.data.action?.case === id && g.to.user === me.id).length, 0);
+  } finally {
+    srv.core.events.off('event', listen);
+    await c.call('settings:set', 'notifyCourts', 'mine');
+  }
+});

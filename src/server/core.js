@@ -28,7 +28,7 @@ const dateBR = (ts) => (ts ? new Date(ts).toLocaleDateString('pt-BR') : 'sem dat
 
 // Preferências de cada pessoa (ficam no usuário) × configurações do escritório (valem para todos).
 export const USER_KEYS = ['notifications', 'notificationPreview', 'theme', 'lastView', 'lastPipeline', 'enterToSend',
-  'lastFilter', 'agendaHidden', 'agendaView', 'agendaHours', 'discreet', 'discreetMessages', 'spellcheck', 'wordSuggest', 'autocorrect'];
+  'lastFilter', 'agendaHidden', 'agendaView', 'agendaHours', 'discreet', 'discreetMessages', 'spellcheck', 'wordSuggest', 'autocorrect', 'notifyCourts'];
 export const OFFICE_KEYS = ['sendReadReceipts', 'forgottenHours', 'chargeTemplate', 'pixKey', 'paymentNoticeDays',
   'staleCaseDays', 'googleSync', 'googleCalendarId', 'signMessages', 'docsRoot', 'docsRequestTemplate', 'datajudKey'];
 
@@ -290,6 +290,24 @@ export async function createCore({ dataDir, demo = false, version = '', safeStor
     return f;
   });
 
+  /**
+   * Aviso de um processo (andamento ou intimação) para quem deve saber,
+   * conforme a preferência de cada pessoa (`notifyCourts`): 'mine' (padrão —
+   * processos em que é responsável; sem responsável, todos os advogados),
+   * 'all' ou 'off'. O clique no aviso abre o processo.
+   */
+  function notifyCase(k, n, { fallbackUserId } = {}) {
+    for (const u of auth.listUsers().filter((x) => x.active)) {
+      const pref = auth.userPrefs(u.id).notifyCourts || 'mine';
+      if (pref === 'off') continue;
+      const owner = k?.responsible_id || fallbackUserId || null;
+      if (pref === 'mine' && owner && owner !== u.id) continue;
+      if (pref === 'mine' && !owner && u.role === 'estagiario') continue;
+      notify({ ...n, action: k ? { case: k.id, tab: 'andamentos' } : { view: 'legal', tab: 'intimacoes' } }, { user: u.id });
+    }
+  }
+  const short = (t, n = 140) => (String(t || '').length > n ? `${String(t).slice(0, n - 1)}…` : String(t || ''));
+
   // ------------------------------------------------ intimações (DJEN) e andamentos (DataJud)
   let checkingIntimations = null;
   /** Busca as intimações das OABs acompanhadas nos últimos `days` dias. */
@@ -307,6 +325,14 @@ export async function createCore({ dataDir, demo = false, version = '', safeStor
             if (!id) continue;
             result.new++;
             const row = db.getIntimation(id);
+            const kc = row.case_id ? db.getCase(row.case_id) : null;
+            if (result.new <= 10) {
+              notifyCase(kc, {
+                kind: 'intimation',
+                title: `📣 Intimação${it.doc_kind ? ` (${it.doc_kind})` : ''} — ${kc ? `${kc.client_name || ''}: ${kc.title}` : it.process_number}`,
+                body: short(it.text), discreet: '📣 Nova intimação',
+              }, { fallbackUserId: o.user_id });
+            }
             if (row.case_id) {
               db.addMove({ case_id: row.case_id, ts: it.date, text: `${it.kind}${it.doc_kind ? ` (${it.doc_kind})` : ''} — ${it.text.slice(0, 600)}`, source: 'djen', ext_id: `djen:${it.ext_id}` });
               touched.add(row.case_id);
@@ -322,7 +348,7 @@ export async function createCore({ dataDir, demo = false, version = '', safeStor
       db.setSetting('djenLastRun', Date.now());
       settings.djenLastRun = Date.now();
       if (result.new) {
-        notify({ kind: 'intimation', title: `📣 ${result.new} intimação(ões) nova(s) no DJEN`, body: 'Abra Jurídico → Intimações para conferir e criar os prazos.', action: { view: 'legal', tab: 'intimacoes' } });
+        if (result.new > 10) notify({ kind: 'intimation', title: `📣 ${result.new} intimações novas no DJEN`, body: 'Abra Jurídico → Intimações para conferir e criar os prazos.', action: { view: 'legal', tab: 'intimacoes' } });
         send('intimations:changed', null);
         for (const id of touched) caseChanged(db.getCase(id));
       }
@@ -357,20 +383,29 @@ export async function createCore({ dataDir, demo = false, version = '', safeStor
     datajudRunning = true;
     try {
       const due = db.listCases({ includeClosed: false })
-        .filter((k) => k.process_number && k.kind !== 'consultivo' && (!k.datajud_checked_at || Date.now() - k.datajud_checked_at > 20 * 3600e3))
+        .filter((k) => k.process_number && k.kind !== 'consultivo' && (!k.datajud_checked_at || Date.now() - k.datajud_checked_at > 6 * 3600e3))
         .slice(0, 200);
       const changed = [];
       for (const k of due) {
-        try { const r = await updateDatajud(k.id); if (r.newMoves && k.datajud_checked_at) changed.push(k); } catch { /* fica registrado no caso */ }
+        try {
+          const r = await updateDatajud(k.id);
+          // a 1ª consulta traz o histórico inteiro: só avisa o que é novo depois dela
+          if (r.newMoves && k.datajud_checked_at) changed.push({ k, n: r.newMoves, last: db.listMoves(k.id).find((m) => m.source === 'datajud') });
+        } catch { /* fica registrado no caso */ }
         await new Promise((r) => setTimeout(r, demo ? 10 : 1500));
       }
-      if (changed.length) {
-        notify({ kind: 'moves', title: `📜 Andamentos novos em ${changed.length} processo(s)`, body: changed.slice(0, 3).map((k) => k.title).join(', '), action: { view: 'legal', tab: 'processos' } });
+      for (const { k, n, last } of changed) {
+        notifyCase(k, {
+          kind: 'moves',
+          title: `📜 Andamento novo — ${k.client_name ? `${k.client_name}: ` : ''}${k.title}`,
+          body: `${last ? short(last.text) : ''}${n > 1 ? ` (e mais ${n - 1})` : ''}`,
+          discreet: '📜 Andamento novo em processo',
+        });
       }
     } finally { datajudRunning = false; }
   }
 
-  /** Relógio dos tribunais: DJEN a cada 6 h (das 6h às 22h), DataJud uma vez por dia. */
+  /** Relógio dos tribunais: DJEN e DataJud a cada 6 h (das 6h às 22h). */
   function courtsTick() {
     const hour = new Date().getHours();
     if (hour < 6 || hour >= 22) return;
@@ -1108,6 +1143,8 @@ export async function createCore({ dataDir, demo = false, version = '', safeStor
 
   return {
     events, api, call, dropConn, backupFile, resolveMedia, wa, google, docs, dataDir, demo,
+    /** Roda agora a busca dos tribunais (DJEN + DataJud), como o relógio faria. */
+    runCourts: () => Promise.all([checkIntimations(), datajudDaily()]),
     /** O computador voltou da suspensão (modo local): a conexão antiga morreu. */
     onResume() {
       if (!wa.hasSession()) return;
