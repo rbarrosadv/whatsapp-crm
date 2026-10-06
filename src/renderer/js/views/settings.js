@@ -17,7 +17,7 @@ export function mountSettings(el) {
 
 // configurações que valem para o escritório todo (só sócio muda)
 const OFFICE_KEYS = ['sendReadReceipts', 'forgottenHours', 'chargeTemplate', 'pixKey', 'paymentNoticeDays',
-  'staleCaseDays', 'googleSync', 'googleCalendarId', 'signMessages', 'docsRequestTemplate'];
+  'staleCaseDays', 'googleSync', 'googleCalendarId', 'signMessages', 'docsRequestTemplate', 'datajudKey'];
 
 function toggle(key, label, hint, def = true) {
   const val = state.settings[key] ?? def;
@@ -262,6 +262,12 @@ function render() {
             h('button', { class: 'icon-btn small', title: 'Descer', disabled: i === state.filters.length - 1, onclick: () => moveItem('filters', state.filters, i, 1) }, '↓'),
             h('button', { class: 'btn btn-sm', onclick: () => filterEditor(f) }, 'Editar')))),
         h('button', { class: 'btn', onclick: () => filterEditor() }, '＋ Novo filtro')),
+
+      section('📣 Intimações e andamentos',
+        h('p', { class: 'small' }, 'As OABs acompanhadas ficam em Jurídico → Intimações. O sistema busca no DJEN a cada 6 horas (das 6h às 22h) e os andamentos no DataJud uma vez por dia.'),
+        h('button', { class: 'btn btn-sm', onclick: () => import('../store.js').then((m) => m.openLegal('intimacoes')) }, 'Abrir Intimações'),
+        state.can.admin ? h('label', { class: 'field' }, h('span', null, 'Chave pública do DataJud (só trocar se o CNJ mudar)'),
+          h('input', { class: 'input mono', value: state.settings.datajudKey || '', placeholder: 'padrão do CNJ', onchange: (e) => setSetting('datajudKey', e.target.value.trim() || null).catch(errToast) })) : null),
 
       section('📄 Pedido de documentos ao cliente',
         h('label', { class: 'field' }, h('span', null, 'Mensagem (na ficha do processo → Fluxo → Solicitar)'), docsTemplateInput()),

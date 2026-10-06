@@ -347,3 +347,43 @@ test('processo: etapas automáticas e à mão, partes, andamentos e pedido de do
   const withFlow = (await c.call('cases:list', { withFlow: true, responsible: 'me' })).find((k) => k.id === id);
   assert.equal(withFlow.next_step, 'Proposta de honorários');
 });
+
+test('intimações: OAB cadastrada, busca no DJEN, liga ao processo, vira prazo; processo novo é cadastrado com DataJud', async () => {
+  const c = client();
+  await c.req('/auth/login', { body: { login: 'barros', password: 'segredo1' } });
+  await c.call('oabs:save', { name: 'Rafael Augusto de Barros Correa', number: '14.271', uf: 'mt' });
+  await assert.rejects(c.call('oabs:save', { name: 'Outro', number: '14271', uf: 'MT' }), /já está cadastrada/);
+  const cid = await c.call('clients:save', { name: 'Teste DJEN' });
+  const caseId = await c.call('cases:save', { client_id: cid, title: 'Indenização' });
+  await c.call('cases:save', { id: caseId, process_number: '0001111-22.2026.8.11.0041' });
+
+  const r = await c.call('intimations:check', { days: 5 });
+  assert.ok(r.new >= 2, 'intimações novas do DJEN');
+  const list = await c.call('intimations:list', { status: 'nova' });
+  const mine = list.find((i) => i.case_id === caseId);
+  assert.ok(mine, 'intimação ligada ao processo pelo número');
+  assert.ok((await c.call('intimations:check', { days: 5 })).new === 0, 'não duplica na 2ª busca');
+  const full = await c.call('cases:full', caseId);
+  assert.ok(full.moves.some((m) => m.source === 'djen'), 'entra nos andamentos do processo');
+
+  const calc = await c.call('intimations:calc', mine.id, 15);
+  assert.ok(calc.due > calc.published);
+  const taskId = await c.call('intimations:deadline', mine.id, { due_at: calc.due });
+  const t = (await c.call('tasks:list', { caseId })).find((x) => x.id === taskId);
+  assert.equal(t.kind, 'prazo');
+  assert.equal((await c.call('intimations:list', {})).find((i) => i.id === mine.id).status, 'prazo');
+
+  // processo que só existe nas intimações → cadastrar
+  const unknown = await c.call('courts:unknown');
+  const p = unknown.find((u) => u.process_number === '1002345-67.2026.8.11.0041');
+  assert.ok(p, 'processo novo aparece para cadastrar');
+  const newCase = await c.call('courts:import', p.process_digits, { client_name: 'Elisa Martins', client_role: 'autor', title: 'Atraso de voo' });
+  await wait(200);
+  const nf = await c.call('cases:full', newCase);
+  assert.equal(nf.case.tribunal, 'TJMT');
+  assert.equal(nf.case.client_name, 'Elisa Martins');
+  assert.ok(nf.parties.some((x) => x.name === 'Companhia Aérea Exemplo S.a.' || /Companhia Aérea/.test(x.name)));
+  assert.ok(nf.parties.some((x) => /Companhia Aérea/.test(x.name)), 'parte contrária vem da intimação');
+  assert.ok(nf.moves.some((m) => m.source === 'datajud'), 'andamentos do DataJud');
+  assert.ok(!(await c.call('courts:unknown')).some((u) => u.process_number === p.process_number));
+});

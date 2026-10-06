@@ -24,6 +24,7 @@ export function mountToday(el) {
   on('tasks', refresh);
   on('cases', refresh);
   on('finance', refresh);
+  on('intimations', refresh);
   const slow = debounce(() => state.view === 'today' && render(), 5000);
   on('chats', slow);
 }
@@ -81,6 +82,7 @@ async function render() {
 
   // faixa do que é mais urgente
   const alerts = [
+    sum.intimations?.length && `${sum.intimations.length} intimação(ões) para conferir`,
     prazosHoje && `${prazosHoje} prazo(s) vencem hoje`,
     audHoje && `${audHoje} audiência(s) hoje`,
     sum.overdue.length && `${sum.overdue.length} compromisso(s) atrasado(s)`,
@@ -111,6 +113,8 @@ async function render() {
     h('div', { class: 'stats' },
       stat('Compromissos hoje', openToday.length, prazosHoje ? `${prazosHoje} prazo(s)` : 'em aberto', '', () => showTasks({ who: scope === 'mine' ? 'me' : 'all' })),
       stat('Atrasados', sum.overdue.length, sum.overdue.length ? 'resolver primeiro' : 'nenhum', sum.overdue.length ? 'stat-bad' : '', () => showTasks({ who: scope === 'mine' ? 'me' : 'all' })),
+      stat('Intimações para conferir', sum.intimations?.length || 0, sum.intimations?.length ? 'DJEN · criar os prazos' : 'nenhuma nova',
+        sum.intimations?.length ? 'stat-bad' : '', () => openLegal('intimacoes')),
       stat('Processos sem retorno', sum.staleCases.length, `cliente sem notícia há mais de ${sum.staleDays} dias`, sum.staleCases.length ? 'stat-warn' : '', () => openLegal('processos', { status: 'aberto' })),
       sum.payments ? stat('A receber na semana', h('span', { class: 'money' }, fmtMoney(sum.payments.weekTotal)),
         sum.payments.overdue.length ? `${sum.payments.overdue.length} vencida(s)` : 'nenhuma vencida', sum.payments.overdue.length ? 'stat-bad' : '',
@@ -161,6 +165,15 @@ function dayView(sum, events, awaiting) {
         action: 'Cobrar', onAction: () => chargeDialog(p.id),
       });
     })));
+  }
+  if (sum.intimations?.length) {
+    groups.unshift(group('📣 Intimações para conferir', 'Diário de Justiça Eletrônico (DJEN)', sum.intimations.slice(0, 6).map((i) => actionRow({
+      who: i.client_name || i.process_number, clientId: i.client_id,
+      text: `${i.tribunal} · ${i.doc_kind || i.kind} · ${String(i.text).slice(0, 110)}`,
+      meta: `disponibilizada em ${new Date(i.date).toLocaleDateString('pt-BR')}${i.case_title ? ` · ${i.case_title}` : ' · processo não cadastrado'}`,
+      late: true,
+      action: 'Conferir', onAction: () => openLegal('intimacoes'),
+    })), sum.intimations.length > 6 ? `e mais ${sum.intimations.length - 6}` : null));
   }
   if (sum.docRequests?.length) {
     groups.push(group('📄 Documentos pedidos e não recebidos', 'Pedidos há mais de 3 dias', sum.docRequests.slice(0, 6).map((r) => actionRow({

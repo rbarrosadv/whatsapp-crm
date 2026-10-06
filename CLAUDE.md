@@ -82,7 +82,8 @@ Motor (`src/main`, sem Electron apesar do nome da pasta):
   `tasks`, `activity` (com `user_name`), `quick_replies`, `settings`,
   `legacy_pending`, `meta`, `contact_types`, `chat_filters`, `cases`,
   `payments`, `case_docs`, `users`, `sessions`, `doc_index`, `clients`,
-  `case_parties`, `case_moves`, `case_steps`, `case_checklist` (migrações por versão em
+  `case_parties`, `case_moves`, `case_steps`, `case_checklist`, `oabs`,
+  `intimations` (migrações por versão em
   `migrate()`; `meta.schema` guarda a versão atual).
 - `docs.js` — `DocsService`: pasta "BARROS ADVOGADOS" do OneDrive lida
   direto do disco (`settings.docsRoot`, ou `guessRoot()` em
@@ -110,6 +111,26 @@ Motor (`src/main`, sem Electron apesar do nome da pasta):
   mão (`case_steps`: feito / não se aplica). `next` = próximo passo. Checklists
   de documentos por área (`suggestedChecklist`), texto do pedido
   (`docsRequestText`, configurável em `docsRequestTemplate`) e `addBusinessDays`.
+- `courts.js` — tribunais pelas **APIs públicas do CNJ** (sem login no PJe):
+  `CourtsService.djenByOab` (DJEN, `comunicaapi.pje.jus.br`, paginado, 0,7 s
+  entre páginas) e `.datajud(nº)` (`api-publica.datajud.cnj.jus.br`, índice
+  pelo nº CNJ via `tribunalOf`/`datajudIndex`, chave pública
+  `DATAJUD_PUBLIC_KEY` ou `settings.datajudKey`); `parseDjenItem` /
+  `parseDatajudHit` aceitam as variações de nome dos campos;
+  `deadlineFromAvailability` = publicação no dia útil seguinte à
+  disponibilização + N dias úteis (feriados nacionais, Carnaval, Sexta Santa,
+  Corpus Christi, recesso 20/12–20/01; locais não — a tela pede para conferir);
+  `nameCase` (nomes do DJEN vêm em maiúsculas). **O ambiente de
+  desenvolvimento na nuvem não alcança esses hosts** (proxy): testes usam
+  respostas no formato real (`test/courts.test.js`) e o demo usa
+  `demoCourtsFetch` (`demo.js`). No servidor (`core.js`): `checkIntimations`
+  (OABs ativas, últimos 10 dias, a cada 6 h das 6h às 22h, `settings.djenLastRun`)
+  grava `intimations` (ligadas ao processo pelos dígitos do nº; também viram
+  `case_moves` source `djen`), `updateDatajud` (andamentos source `datajud`,
+  completa tribunal/vara/distribuição vazios) e `datajudDaily` (processos
+  abertos, 1 por vez com 1,5 s). Intimação → prazo (`intimations:deadline`,
+  tarefa `kind='prazo'` do responsável do processo); processo só visto nas
+  intimações → `courts:import` (cria cliente/caso/partes, religa intimações).
 - `ogg.js` — remux WebM/Opus (MediaRecorder) → OGG/Opus (mensagem de voz).
 - `google.js` — `GoogleService`: Google Agenda pela API oficial com a chave
   (client_secret JSON, tipo "App para computador") do próprio usuário;
@@ -161,7 +182,8 @@ Interface (`src/renderer`, JS puro em módulos ES, sem build):
   Financeiro · Relatórios (`dashboard`). `body[data-view]`: a tela do QR e a
   faixa de conexão só aparecem no Atendimento.
 - `js/views/legal.js` — **Jurídico**: abas Clientes · Processos · Intimações
-  (esta ainda é só o aviso da próxima etapa), busca no topo; ficha do cliente
+  (`views/intimations.js`: OABs acompanhadas, Buscar agora, conferir / criar
+  prazo, processos encontrados para cadastrar), busca no topo; ficha do cliente
   (Processos, Dados — que preenchem os modelos —, Documentos, Financeiro,
   Notas e histórico; botão WhatsApp ou "Ligar WhatsApp"). `openClient(id)` /
   `openLegal(tab)` em `store.js` navegam para cá de qualquer tela.

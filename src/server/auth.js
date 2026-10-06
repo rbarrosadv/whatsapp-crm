@@ -177,7 +177,7 @@ const DENY = {
     ...ADMIN_ONLY,
     /^finance:/, 'stats',
     /^(pipelines|types|filters|tags):(save|delete|reorder)$/,
-    'cases:setStatus', 'messages:delete',
+    'cases:setStatus', 'messages:delete', /^oabs:(save|delete)$/,
   ],
 };
 

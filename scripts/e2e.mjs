@@ -491,6 +491,33 @@ try {
   check((await page.locator('.cases-table tbody tr').innerText()).includes('Joana Lima'), 'busca de processos pela parte contrária');
   await shot(page, '05i-juridico-processos');
 
+  // 7d) intimações: cadastrar OAB, buscar no DJEN (simulado), criar prazo, cadastrar processo encontrado
+  await page.click('.view-legal .seg:has-text("Intimações")');
+  await page.click('.view-legal button:has-text("Cadastrar OAB")');
+  await page.fill('.modal label:has-text("Advogado(a)") input', 'Rafael Augusto de Barros Correa');
+  await page.fill('.modal label:has-text("Número da OAB") input', '14.271');
+  await page.click('.modal button:has-text("Salvar")');
+  await page.waitForSelector('.oab-row:has-text("OAB 14.271/MT")');
+  check(true, 'OAB cadastrada (14.271/MT)');
+  await page.click('.view-legal button:has-text("Buscar agora")');
+  await page.waitForSelector('.intim.intim-nova', { timeout: 15000 });
+  check(await page.locator('.intim.intim-nova').count() >= 2, 'intimações do DJEN para conferir');
+  await shot(page, '05k-intimacoes');
+  await page.locator('.intim.intim-nova', { hasText: 'Plano anual' }).locator('button:has-text("Criar prazo")').click();
+  await page.waitForSelector('.modal .field:has-text("Vence em") input');
+  check((await page.locator('.modal .field:has-text("Vence em") input').inputValue()).length > 0, 'vencimento sugerido em dias úteis');
+  await page.click('.modal button:has-text("Criar prazo na Agenda")');
+  await page.waitForSelector('.toast:has-text("Prazo criado")');
+  check(true, 'intimação vira prazo na Agenda');
+  await page.click('.unknown-procs summary').catch(() => {});
+  await page.locator('.unknown-row', { hasText: '1002345-67.2026.8.11.0041' }).locator('button:has-text("Cadastrar")').click();
+  await page.click('.modal .picker-item:has-text("ELISA MARTINS")');
+  await page.click('.modal button:has-text("Cadastrar processo")');
+  await page.waitForSelector('.modal-case .tl-item', { timeout: 10000 });
+  check(true, 'processo encontrado pela OAB cadastrado, com andamentos');
+  await shot(page, '05l-processo-importado');
+  await page.keyboard.press('Escape');
+
   // outras telas
   await page.click('.rail-btn[title="Atendimento"]');
   await page.click('.chatlist-head button[title^="Contatos do WhatsApp"]');

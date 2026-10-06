@@ -865,3 +865,20 @@ body:not([data-view="inbox"]) .banner-wrap { display: none !important; }
 .tl-date { width: 86px; flex: none; font-weight: 600; font-variant-numeric: tabular-nums; }
 .tl-text { white-space: pre-wrap; }
 .parties { margin: 6px 0 0; }
+
+/* ---------- Intimações ---------- */
+.oab-list { display: flex; flex-direction: column; gap: 4px; }
+.oab-row { display: flex; align-items: center; gap: 10px; padding: 6px 4px; border-top: 1px solid var(--border); }
+.oab-row.off { opacity: .55; }
+.intim-tools { margin: 4px 0 12px; align-items: center; }
+.intim-list { display: flex; flex-direction: column; gap: 10px; }
+.intim { margin: 0; gap: 6px; border-left: 4px solid var(--border); }
+.intim-nova { border-left-color: #f59e0b; }
+.intim-prazo { border-left-color: #22c55e; }
+.intim-head { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.intim-date { font-weight: 700; font-variant-numeric: tabular-nums; }
+.intim-text { white-space: pre-wrap; font-size: 14px; display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden; }
+.intim-text.open { display: block; -webkit-line-clamp: unset; max-height: 40vh; overflow-y: auto; background: var(--panel-2); padding: 8px 10px; border-radius: 8px; }
+.unknown-procs summary { cursor: pointer; }
+.unknown-row { display: flex; align-items: center; gap: 10px; padding: 8px 4px; border-top: 1px solid var(--border); }
+.datajud-row { align-items: center; }

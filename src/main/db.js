@@ -8,7 +8,7 @@ import fs from 'node:fs';
 
 let db;
 
-const SCHEMA_VERSION = 10;
+const SCHEMA_VERSION = 11;
 
 const DEFAULT_PIPELINES = [
   {
@@ -371,6 +371,28 @@ function migrate() {
   addColumn('cases', 'filed_at', 'TEXT');
   addColumn('cases', 'client_role', 'TEXT');
   addColumn('cases', 'description', 'TEXT');
+  // versão 11: intimações (DJEN, pelas OABs acompanhadas) e andamentos do DataJud
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS oabs (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      name TEXT NOT NULL, number TEXT NOT NULL, uf TEXT NOT NULL,
+      user_id INTEGER, active INTEGER NOT NULL DEFAULT 1, last_check INTEGER, last_error TEXT,
+      UNIQUE (number, uf)
+    );
+    CREATE TABLE IF NOT EXISTS intimations (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      ext_id TEXT NOT NULL UNIQUE,
+      oab_ids TEXT,
+      date INTEGER, tribunal TEXT, kind TEXT, doc_kind TEXT, orgao TEXT, classe TEXT,
+      process_number TEXT, process_digits TEXT, text TEXT, link TEXT, parties TEXT, lawyers TEXT,
+      case_id INTEGER, status TEXT NOT NULL DEFAULT 'nova', task_id INTEGER, handled_by TEXT, handled_at INTEGER,
+      created_at INTEGER NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS intimations_status ON intimations(status, date);
+    CREATE INDEX IF NOT EXISTS intimations_proc ON intimations(process_digits);
+  `);
+  addColumn('cases', 'datajud_checked_at', 'INTEGER');
+  addColumn('cases', 'datajud_error', 'TEXT');
   db.exec(`
     CREATE TABLE IF NOT EXISTS case_parties (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -1286,6 +1308,89 @@ export function pendingDocRequests(ms) {
               WHERE i.status = 'solicitado' AND i.requested_at < ? AND c.status = 'aberto'
               GROUP BY i.case_id ORDER BY since`, now() - ms);
 }
+
+// ------------------------------------------------------------ OABs e intimações
+
+const digitsOf = (s) => String(s || '').replace(/\D/g, '');
+
+export function listOabs() {
+  return all('SELECT o.*, u.name AS user_name FROM oabs o LEFT JOIN users u ON u.id = o.user_id ORDER BY o.name');
+}
+export function saveOab(o) {
+  const number = digitsOf(o.number);
+  const uf = String(o.uf || '').trim().toUpperCase();
+  if (!String(o.name || '').trim() || !number || !/^[A-Z]{2}$/.test(uf)) throw new Error('Informe nome, número da OAB e UF (ex.: MT).');
+  const dup = get('SELECT id FROM oabs WHERE number = ? AND uf = ?', number, uf);
+  if (dup && dup.id !== o.id) throw new Error('Esta OAB já está cadastrada.');
+  if (o.id) {
+    run('UPDATE oabs SET name = ?, number = ?, uf = ?, user_id = ?, active = ? WHERE id = ?', o.name.trim(), number, uf, o.user_id || null, o.active === false ? 0 : 1, o.id);
+    return o.id;
+  }
+  return Number(run('INSERT INTO oabs (name, number, uf, user_id) VALUES (?, ?, ?, ?)', o.name.trim(), number, uf, o.user_id || null).lastInsertRowid);
+}
+export function deleteOab(id) { run('DELETE FROM oabs WHERE id = ?', id); }
+export function markOabChecked(id, error) { run('UPDATE oabs SET last_check = ?, last_error = ? WHERE id = ?', now(), error || null, id); }
+
+/** Processo cadastrado com este número (compara só os dígitos). */
+export function caseByProcessNumber(num) {
+  const d = digitsOf(num);
+  if (d.length < 15) return null;
+  const rows = all("SELECT id, process_number FROM cases WHERE process_number IS NOT NULL AND process_number <> ''");
+  return rows.find((r) => digitsOf(r.process_number) === d)?.id || null;
+}
+
+/** Grava a intimação se ainda não existe; devolve o id novo (ou null se já tinha). */
+export function addIntimation(i, oabId) {
+  const have = get('SELECT id, oab_ids FROM intimations WHERE ext_id = ?', i.ext_id);
+  if (have) {
+    const ids = new Set(String(have.oab_ids || '').split(',').filter(Boolean));
+    if (oabId && !ids.has(String(oabId))) { ids.add(String(oabId)); run('UPDATE intimations SET oab_ids = ? WHERE id = ?', [...ids].join(','), have.id); }
+    return null;
+  }
+  const caseId = caseByProcessNumber(i.process_number);
+  return Number(run(`INSERT INTO intimations (ext_id, oab_ids, date, tribunal, kind, doc_kind, orgao, classe, process_number, process_digits, text, link, parties, lawyers, case_id, created_at)
+                     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+  i.ext_id, oabId ? String(oabId) : null, i.date, i.tribunal, i.kind, i.doc_kind || null, i.orgao, i.classe, i.process_number, digitsOf(i.process_number),
+  i.text, i.link, JSON.stringify(i.parties || []), JSON.stringify(i.lawyers || []), caseId, now()).lastInsertRowid);
+}
+
+const intimationRow = (r) => (r ? {
+  ...r, parties: JSON.parse(r.parties || '[]'), lawyers: JSON.parse(r.lawyers || '[]'),
+} : null);
+
+export function listIntimations({ status, caseId, limit = 300 } = {}) {
+  const where = [];
+  const args = [];
+  if (status === 'abertas') where.push("i.status = 'nova'");
+  else if (status) { where.push('i.status = ?'); args.push(status); }
+  if (caseId) { where.push('i.case_id = ?'); args.push(caseId); }
+  return all(`SELECT i.*, c.title AS case_title, c.client_id, (SELECT name FROM clients WHERE id = c.client_id) AS client_name,
+                c.responsible_id, t.due_at AS task_due
+              FROM intimations i LEFT JOIN cases c ON c.id = i.case_id LEFT JOIN tasks t ON t.id = i.task_id
+              ${where.length ? `WHERE ${where.join(' AND ')}` : ''} ORDER BY i.date DESC, i.id DESC LIMIT ?`, ...args, limit).map(intimationRow);
+}
+export function getIntimation(id) { return intimationRow(get('SELECT * FROM intimations WHERE id = ?', id)); }
+export function setIntimation(id, fields) {
+  for (const [k, v] of Object.entries(fields)) {
+    if (!['status', 'task_id', 'case_id', 'handled_by', 'handled_at'].includes(k)) continue;
+    run(`UPDATE intimations SET ${k} = ? WHERE id = ?`, v ?? null, id);
+  }
+}
+/** Liga ao processo as intimações que chegaram antes de ele ser cadastrado. */
+export function relinkIntimations(caseId) {
+  const k = get('SELECT process_number FROM cases WHERE id = ?', caseId);
+  const d = digitsOf(k?.process_number);
+  if (d.length < 15) return 0;
+  return Number(run('UPDATE intimations SET case_id = ? WHERE process_digits = ? AND case_id IS NULL', caseId, d).changes || 0);
+}
+/** Processos que aparecem nas intimações e ainda não estão cadastrados. */
+export function unknownProcesses() {
+  return all(`SELECT process_number, process_digits, MAX(date) AS last, COUNT(*) AS n, MAX(tribunal) AS tribunal, MAX(classe) AS classe,
+                MAX(orgao) AS orgao, MAX(parties) AS parties
+              FROM intimations WHERE case_id IS NULL AND process_digits <> '' AND status <> 'ignorada'
+              GROUP BY process_digits ORDER BY last DESC`).map((r) => ({ ...r, parties: JSON.parse(r.parties || '[]') }));
+}
+export function markDatajud(caseId, error) { run('UPDATE cases SET datajud_checked_at = ?, datajud_error = ? WHERE id = ?', now(), error || null, caseId); }
 
 export function deleteCaseDoc(id) {
   const d = get('SELECT * FROM case_docs WHERE id = ?', id);

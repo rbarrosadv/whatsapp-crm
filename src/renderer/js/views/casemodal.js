@@ -347,7 +347,21 @@ export async function openCase(id, { tab = 'dados' } = {}) {
             try { await api('moves:add', { case_id: id, text: text.value, ts }); } catch (e) { errToast(e); }
           },
         }, '＋ Registrar andamento')),
-        h('p', { class: 'muted small' }, 'Em breve os andamentos do tribunal (DataJud) e as intimações (DJEN) entram aqui sozinhos.')),
+        h('div', { class: 'row wrap datajud-row' },
+          h('button', {
+            class: 'btn btn-sm', disabled: !k.process_number,
+            title: k.process_number ? 'Busca os andamentos no DataJud (CNJ). O sistema também atualiza sozinho uma vez por dia.' : 'Informe o nº do processo no Resumo',
+            onclick: async (e) => {
+              e.currentTarget.disabled = true;
+              try {
+                const r = await api('cases:datajud', id);
+                toast(r.found ? `${r.newMoves} andamento(s) novo(s)` : 'Processo não encontrado no DataJud (pode estar em segredo de justiça ou ainda não indexado).', r.found ? 'success' : 'info', 6000);
+              } catch (err) { errToast(err); }
+              reload();
+            },
+          }, '🔄 Atualizar do tribunal (DataJud)'),
+          h('span', { class: `small ${k.datajud_error ? 'bad-text' : 'muted'}` },
+            k.datajud_checked_at ? `Consultado em ${fmtDateTime(k.datajud_checked_at)}${k.datajud_error ? ` — ${k.datajud_error}` : ''}` : 'Andamentos do DataJud e intimações do DJEN entram aqui sozinhos.'))),
       full.moves.length ? h('div', { class: 'timeline' }, full.moves.map((mv) => h('div', { class: `tl-item src-${mv.source}` },
         h('div', { class: 'tl-date' }, new Date(mv.ts).toLocaleDateString('pt-BR')),
         h('div', { class: 'grow' }, h('div', { class: 'tl-text' }, mv.text),

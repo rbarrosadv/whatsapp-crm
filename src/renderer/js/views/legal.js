@@ -9,6 +9,7 @@ import { state, on, api, openChat, setView, stageById } from '../store.js';
 import { avatarEl } from '../components.js';
 import { openCase, newCaseDialog, feeLabel, paymentRow } from './casemodal.js';
 import { folderBrowser, clientFolderDialog } from './docs.js';
+import { renderIntimations } from './intimations.js';
 
 let root;
 let tab = 'clientes'; // clientes | processos | intimacoes
@@ -42,6 +43,7 @@ export function mountLegal(el) {
   on('cases', refresh);
   on('finance', refresh);
   on('tasks', refresh);
+  on('intimations', refresh);
 }
 
 async function render() {
@@ -339,9 +341,5 @@ async function drawCases(el, my) {
 // ------------------------------------------------------------ intimações
 
 function drawIntimations(el) {
-  fill(el, h('div', { class: 'panel' },
-    h('div', { class: 'panel-head' }, h('h3', null, '📣 Intimações e andamentos')),
-    h('p', null, 'Aqui vão chegar as intimações do Diário de Justiça Eletrônico Nacional (DJEN), pela OAB de cada advogado, e os andamentos dos processos (DataJud do CNJ).'),
-    h('p', null, 'Cada intimação vai aparecer para ser conferida e virar prazo na Agenda com um clique.'),
-    h('p', { class: 'muted small' }, 'Em construção (próxima etapa). Para ligar, o escritório precisa informar o número de OAB (com UF) de cada advogado.')));
+  renderIntimations(el, () => drawList());
 }

@@ -371,3 +371,74 @@ export async function seedDemoDocs(root) {
   put('05 FINANCEIRO/2026-09 - Extrato.txt', 'Extrato do mês (só sócios veem esta pasta).');
   put('07 EQUIPE/ISABELLA/Estudo - prescrição trabalhista.txt', 'Prescrição bienal e quinquenal na Justiça do Trabalho.');
 }
+
+/**
+ * Tribunais na demonstração: responde como o DJEN e o DataJud responderiam
+ * (mesmos campos), com intimações para os processos de exemplo e um
+ * processo que ainda não está cadastrado.
+ */
+export function demoCourtsFetch(getCases) {
+  const json = (o) => new Response(JSON.stringify(o), { status: 200, headers: { 'Content-Type': 'application/json' } });
+  const day = (offset) => { const d = new Date(); d.setDate(d.getDate() - offset); return d.toISOString().slice(0, 10); };
+  return async (url) => {
+    const u = new URL(url);
+    if (u.host === 'comunicaapi.pje.jus.br') {
+      if (u.searchParams.get('pagina') !== '1') return json({ status: 'success', count: 0, items: [] });
+      const known = getCases().filter((k) => k.process_number).slice(0, 2);
+      const items = known.map((k, i) => ({
+        id: 900100 + i,
+        data_disponibilizacao: day(i + 1),
+        siglaTribunal: k.tribunal || 'TJSP',
+        tipoComunicacao: 'Intimação',
+        tipoDocumento: i === 0 ? 'Despacho' : 'Sentença',
+        nomeOrgao: k.court || '1ª Vara Cível',
+        nomeClasse: 'PROCEDIMENTO COMUM CÍVEL',
+        numeroprocessocommascara: k.process_number,
+        texto: i === 0
+          ? 'Intimem-se as partes para, no prazo de 15 (quinze) dias, especificarem as provas que pretendem produzir.'
+          : 'Julgo PROCEDENTE o pedido. Intimem-se. Prazo para recurso: 15 dias.',
+        link: 'https://comunica.pje.jus.br/',
+        destinatarios: [{ nome: k.client_name || 'CLIENTE', polo: 'A' }, { nome: k.opposing_party || 'PARTE CONTRÁRIA', polo: 'P' }],
+        destinatarioadvogados: [{ advogado: { nome: 'ADVOGADO DEMONSTRAÇÃO', numero_oab: u.searchParams.get('numeroOab'), uf_oab: u.searchParams.get('ufOab') } }],
+      }));
+      items.push({
+        id: 900199,
+        data_disponibilizacao: day(2),
+        siglaTribunal: 'TJMT',
+        tipoComunicacao: 'Intimação',
+        tipoDocumento: 'Decisão',
+        nomeOrgao: '3ª Vara Cível de Cuiabá',
+        nomeClasse: 'PROCEDIMENTO DO JUIZADO ESPECIAL CÍVEL',
+        numeroprocessocommascara: '1002345-67.2026.8.11.0041',
+        texto: 'Designo audiência de conciliação. Cite-se a parte requerida. Intime-se a parte autora por seu advogado.',
+        link: 'https://comunica.pje.jus.br/',
+        destinatarios: [{ nome: 'ELISA MARTINS', polo: 'A' }, { nome: 'COMPANHIA AÉREA EXEMPLO S.A.', polo: 'P' }],
+        destinatarioadvogados: [],
+      });
+      return json({ status: 'success', message: 'Sucesso', count: items.length, items });
+    }
+    if (u.host === 'api-publica.datajud.cnj.jus.br') {
+      const now = Date.now();
+      const iso = (d) => new Date(now - d * 864e5).toISOString();
+      return json({
+        hits: {
+          hits: [{
+            _source: {
+              numeroProcesso: '00000000000000000000',
+              classe: { nome: 'Procedimento Comum Cível' },
+              orgaoJulgador: { nome: 'Vara de demonstração' },
+              dataAjuizamento: '20260115000000',
+              dataHoraUltimaAtualizacao: iso(1),
+              movimentos: [
+                { codigo: 26, nome: 'Distribuído por sorteio', dataHora: iso(60) },
+                { codigo: 11010, nome: 'Mero expediente', dataHora: iso(20) },
+                { codigo: 12266, nome: 'Juntada de Petição', complementosTabelados: [{ nome: 'Contestação' }], dataHora: iso(3) },
+              ],
+            },
+          }],
+        },
+      });
+    }
+    return new Response('{}', { status: 404 });
+  };
+}
