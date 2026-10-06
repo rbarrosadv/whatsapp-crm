@@ -17,7 +17,8 @@ export function mountSettings(el) {
 
 // configurações que valem para o escritório todo (só sócio muda)
 const OFFICE_KEYS = ['sendReadReceipts', 'forgottenHours', 'chargeTemplate', 'pixKey', 'paymentNoticeDays',
-  'staleCaseDays', 'googleSync', 'googleCalendarId', 'signMessages', 'docsRequestTemplate', 'datajudKey'];
+  'staleCaseDays', 'googleSync', 'googleCalendarId', 'signMessages', 'docsRequestTemplate', 'datajudKey',
+  'officeName', 'officeDoc', 'officeAddress', 'officeCity'];
 
 function toggle(key, label, hint, def = true) {
   const val = state.settings[key] ?? def;
@@ -276,6 +277,13 @@ function render() {
       section('📄 Pedido de documentos ao cliente',
         h('label', { class: 'field' }, h('span', null, 'Mensagem (na ficha do processo → Fluxo → Solicitar)'), docsTemplateInput()),
         h('p', { class: 'muted small' }, 'Campos: {nome} (primeiro nome) {nome_completo} {caso} {lista} (os documentos marcados). Você sempre revisa antes de enviar.')),
+
+      state.can.finance && section('🧾 Dados do escritório (recibos)',
+        ...[['officeName', 'Nome', 'Barros Associados'], ['officeDoc', 'CNPJ ou OAB da sociedade', 'Ex.: CNPJ 00.000.000/0001-00'],
+          ['officeAddress', 'Endereço', 'Rua, nº, sala, bairro, cidade-UF, CEP'], ['officeCity', 'Cidade (data do recibo)', 'Cuiabá-MT']]
+          .map(([key, label, ph]) => h('label', { class: 'field' }, h('span', null, label),
+            h('input', { class: 'input', value: state.settings[key] || '', placeholder: ph, disabled: !state.can.admin, onchange: (e) => setSetting(key, e.target.value.trim() || null).catch(errToast) }))),
+        h('p', { class: 'muted small' }, 'Aparecem no cabeçalho e na assinatura dos recibos (Financeiro → parcela recebida → 🧾 Recibo).')),
 
       state.can.finance && section('💰 Honorários e cobrança',
         h('label', { class: 'field' }, h('span', null, 'Chave PIX / dados para pagamento'),

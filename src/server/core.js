@@ -19,6 +19,7 @@ import { importLegacy, legacyStateFile } from '../main/legacy.js';
 import { diagnoseConnection } from '../main/diag.js';
 import { DocsService, guessRoot, templateValues, PLACEHOLDERS, FOLDERS } from '../main/docs.js';
 import { seedDemoDocs, demoCourtsFetch } from '../main/demo.js';
+import { reais } from '../main/extenso.js';
 import { CourtsService, DATAJUD_PUBLIC_KEY, deadlineFromAvailability, formatCnj, tribunalOf, nameCase } from '../main/courts.js';
 import { computeSteps, suggestedChecklist, docsRequestText, addBusinessDays, STEPS, PARTY_ROLES, DEFAULT_DOCS_TEMPLATE } from '../main/workflow.js';
 
@@ -30,7 +31,8 @@ const dateBR = (ts) => (ts ? new Date(ts).toLocaleDateString('pt-BR') : 'sem dat
 export const USER_KEYS = ['notifications', 'notificationPreview', 'theme', 'lastView', 'lastPipeline', 'enterToSend',
   'lastFilter', 'agendaHidden', 'agendaView', 'agendaHours', 'discreet', 'discreetMessages', 'spellcheck', 'wordSuggest', 'autocorrect', 'notifyCourts'];
 export const OFFICE_KEYS = ['sendReadReceipts', 'forgottenHours', 'chargeTemplate', 'pixKey', 'paymentNoticeDays',
-  'staleCaseDays', 'googleSync', 'googleCalendarId', 'signMessages', 'docsRoot', 'docsRequestTemplate', 'datajudKey'];
+  'staleCaseDays', 'googleSync', 'googleCalendarId', 'signMessages', 'docsRoot', 'docsRequestTemplate', 'datajudKey',
+  'officeName', 'officeDoc', 'officeAddress', 'officeCity'];
 
 export const DEFAULT_CHARGE_TEMPLATE = 'Olá, {nome}! Tudo bem? Passando para lembrar da {parcela} dos honorários referentes a {caso}, '
   + 'no valor de {valor}, com vencimento em {vencimento}.{pix_linha}\nQualquer dúvida, estou à disposição.';
@@ -411,6 +413,49 @@ export async function createCore({ dataDir, demo = false, version = '', safeStor
     if (hour < 6 || hour >= 22) return;
     if (db.listOabs().some((o) => o.active) && Date.now() - Number(settings.djenLastRun || 0) > 6 * 3600e3) checkIntimations().catch((e) => console.error('djen:', e.message));
     datajudDaily().catch((e) => console.error('datajud:', e.message));
+  }
+
+  /** Recibo de uma parcela recebida (HTML para imprimir ou salvar em PDF). */
+  function receiptHtml(id) {
+    const p = db.getPayment(id);
+    if (!p) throw new Error('Parcela não encontrada');
+    if (!p.paid_at) throw new Error('Registre o recebimento antes de emitir o recibo.');
+    const no = db.receiptNumber(id);
+    const k = db.getCase(p.case_id);
+    const cl = k?.client_id ? db.getClient(k.client_id) : null;
+    const esc = (t) => String(t ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+    const value = p.paid_amount ?? p.amount;
+    const money = (v) => Number(v).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' });
+    const date = new Date(p.paid_at).toLocaleDateString('pt-BR', { day: 'numeric', month: 'long', year: 'numeric' });
+    const office = settings.officeName || 'Barros Associados';
+    const methods = { pix: 'Pix', dinheiro: 'dinheiro', transferencia: 'transferência bancária', boleto: 'boleto', cartao: 'cartão', cheque: 'cheque' };
+    const desc = p.description || 'honorários advocatícios';
+    const ref = [desc, p.of_total > 1 && !/parcela/i.test(desc) ? `parcela ${p.seq}/${p.of_total}` : null, k?.title ? `caso “${k.title}”` : null,
+      k?.process_number ? `processo nº ${k.process_number}` : null].filter(Boolean).join(', ');
+    const html = `<!doctype html><html lang="pt-BR"><head><meta charset="utf-8"><title>Recibo nº ${no}</title><style>
+      @page { size: A4; margin: 22mm; }
+      body { font-family: Georgia, 'Times New Roman', serif; color: #111; font-size: 13.5pt; line-height: 1.6; margin: 0; padding: 24px; background: #fff; }
+      .top { display: flex; justify-content: space-between; align-items: center; border-bottom: 2px solid #3d5a6c; padding-bottom: 10px; }
+      .top img { height: 64px; }
+      .office { text-align: right; font-size: 10.5pt; color: #444; line-height: 1.35; }
+      h1 { font-size: 20pt; letter-spacing: .12em; margin: 26px 0 4px; text-align: center; }
+      .no { text-align: center; color: #555; font-size: 11pt; }
+      .value { margin: 22px auto; width: fit-content; border: 2px solid #3d5a6c; border-radius: 6px; padding: 8px 22px; font-size: 16pt; font-weight: bold; }
+      p { text-align: justify; }
+      .sign { margin-top: 70px; text-align: center; }
+      .sign .line { border-top: 1px solid #111; width: 60%; margin: 0 auto 6px; }
+      .small { font-size: 10pt; color: #555; }
+    </style></head><body>
+      <div class="top"><img src="/assets/logo-barros.jpg" alt=""><div class="office"><b>${esc(office)}</b>${settings.officeDoc ? `<br>${esc(settings.officeDoc)}` : ''}${settings.officeAddress ? `<br>${esc(settings.officeAddress)}` : ''}</div></div>
+      <h1>RECIBO</h1><div class="no">Nº ${String(no).padStart(4, '0')}</div>
+      <div class="value">${money(value)}</div>
+      <p>Recebemos de <b>${esc(cl?.name || k?.client_name || 'cliente')}</b>${cl?.cpf ? `, ${cl.kind === 'pj' ? 'CNPJ' : 'CPF'} ${esc(cl.cpf)}` : ''}, a importância de
+      <b>${money(value)}</b> (${esc(reais(value))}), referente a ${esc(ref)}${p.method ? `, paga em ${esc(methods[p.method] || p.method)}` : ''}.</p>
+      <p>Para clareza, firmamos o presente recibo, dando plena quitação do valor acima.</p>
+      <p style="text-align:right">${esc(settings.officeCity || 'Cuiabá-MT')}, ${esc(date)}.</p>
+      <div class="sign"><div class="line"></div>${esc(office)}${settings.officeDoc ? `<div class="small">${esc(settings.officeDoc)}</div>` : ''}</div>
+    </body></html>`;
+    return { number: no, html };
   }
 
   /** Etapas do caso (com o que dá para concluir sozinho a partir dos dados). */
@@ -945,6 +990,45 @@ export async function createCore({ dataDir, demo = false, version = '', safeStor
     'cases:deleteDoc': (_c, id) => { const d = db.deleteCaseDoc(id); if (d) send('cases:changed', db.getCase(d.case_id)?.jid); },
 
     // honorários / financeiro
+    // financeiro completo: recebimento, recibo, contas a pagar, fluxo de caixa
+    'finance:register': (ctx, id, r = {}) => {
+      db.registerPayment(id, { ...r, user_name: ctx.user.name });
+      const p = db.getPayment(id);
+      if (p) { wa.markChanged(p.jid); send('cases:changed', p.jid); }
+      send('finance:changed');
+    },
+    'finance:receipt': (_c, id) => receiptHtml(id),
+    'finance:expenses': (_c, opts) => db.listExpenses(opts || {}),
+    'finance:saveExpense': (ctx, e) => {
+      const ids = db.saveExpense({ ...e, created_by: ctx.user.name });
+      if (e.case_id) caseChanged(db.getCase(e.case_id));
+      send('finance:changed');
+      return ids;
+    },
+    'finance:expensePaid': (_c, id, paid, method) => { db.setExpensePaid(id, paid, method); const e = db.getExpense(id); if (e?.case_id) caseChanged(db.getCase(e.case_id)); send('finance:changed'); },
+    'finance:reimbursed': (_c, id, yes) => { db.setExpenseReimbursed(id, yes); const e = db.getExpense(id); if (e?.case_id) caseChanged(db.getCase(e.case_id)); send('finance:changed'); },
+    'finance:deleteExpense': (_c, id, opts) => { const e = db.getExpense(id); db.deleteExpense(id, opts || {}); if (e?.case_id) caseChanged(db.getCase(e.case_id)); send('finance:changed'); },
+    'finance:cashflow': (_c, { from, to } = {}) => {
+      if (!Number.isFinite(from) || !Number.isFinite(to)) throw new Error('período inválido');
+      return db.cashflow(from, to);
+    },
+    'finance:months': (_c, n) => db.cashflowMonths(Math.min(24, Math.max(1, Number(n) || 12))),
+    'finance:defaulters': () => db.defaulters(),
+    /** Tudo o que o painel do financeiro mostra, numa chamada (datas no fuso de quem vê). */
+    'finance:dashboard': (_c, { monthFrom, monthTo, yearFrom } = {}) => {
+      if (![monthFrom, monthTo, yearFrom].every(Number.isFinite)) throw new Error('período inválido');
+      const prevFrom = new Date(monthFrom); prevFrom.setMonth(prevFrom.getMonth() - 1);
+      const prev = db.cashflow(prevFrom.getTime(), monthFrom);
+      const cur = db.cashflow(monthFrom, monthTo);
+      return {
+        summary: db.financeSummary(),
+        month: { in: cur.totalIn, out: cur.totalOut, toReceive: cur.toReceive, toPay: cur.toPay },
+        prevMonth: { in: prev.totalIn, out: prev.totalOut },
+        months: db.cashflowMonths(12, monthFrom),
+        defaulters: db.defaulters().slice(0, 6),
+        ...db.financeBreakdown(monthFrom, monthTo, yearFrom),
+      };
+    },
     'finance:summary': () => db.financeSummary(),
     'finance:list': (_c, opts) => db.listPayments(opts || {}),
     'finance:save': (_c, p) => { const id = db.savePayment(p); const k = db.getCase(p.case_id || db.getPayment(id)?.case_id); if (k) { wa.markChanged(k.jid); send('cases:changed', k.jid); } send('finance:changed'); return id; },

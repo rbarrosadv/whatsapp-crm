@@ -251,6 +251,13 @@ try {
   await page.waitForSelector('.modal-case table tbody tr >> nth=1');
   check(await page.locator('.modal-case table tbody tr').count() === 2, 'parcelas geradas (2× R$ 1.194,00)');
   await page.locator('.modal-case table tbody tr').first().locator('button:has-text("Recebi")').click();
+  await page.locator('.modal:not(.modal-case) .field:has-text("Forma") select').selectOption('pix');
+  await page.click('.modal:not(.modal-case) button:has-text("Registrar e emitir recibo")');
+  await page.waitForSelector('.modal iframe.receipt-frame');
+  const receipt = await page.locator('.modal iframe.receipt-frame').evaluate((f) => f.contentDocument.body.innerText);
+  check(/RECIBO/.test(receipt) && /mil cento e noventa e quatro reais/.test(receipt) && /Pix/.test(receipt), 'recibo com valor por extenso e forma de pagamento');
+  await shot(page, '04c-recibo');
+  await page.click('.modal:has(iframe.receipt-frame) button:has-text("Fechar")');
   await page.waitForSelector('.modal-case .status-pill.ok:has-text("Paga")');
   check((await page.locator('.modal-case .fee-summary').innerText()).includes('1.194,00'), 'parcela recebida entra no resumo');
   await page.locator('.modal-case table tbody tr').nth(1).locator('button:has-text("Cobrar")').click();
@@ -372,9 +379,33 @@ try {
   await page.waitForSelector('body:not(.discreet)');
   check(true, 'botão 🕶 desliga o modo discreto');
 
-  // 6b) financeiro
+  // 6b) financeiro: painel, despesas, fluxo de caixa, inadimplência
   await page.click('.rail-btn[title="Financeiro"]');
-  await page.waitForSelector('.view.active .stat');
+  await page.waitForSelector('.view-page.active .fin-grid .viz-svg');
+  check(await page.locator('.view.active .viz-svg path.viz-mark').count() > 0, 'painel do financeiro com o gráfico de 12 meses');
+  check((await page.locator('.view.active .fin-alert').allInnerTexts()).some((t) => /vencida/.test(t)), 'destaque das parcelas vencidas no painel');
+  await page.locator('.view.active .viz-hit').last().hover();
+  await page.waitForSelector('.view.active .viz-tip.on');
+  check((await page.locator('.view.active .viz-tip').innerText()).includes('Entradas'), 'valor ao passar o mouse no gráfico');
+  await shot(page, '05a-financeiro-painel');
+  await page.click('.view.active .page-head button:has-text("Despesa")');
+  await page.fill('.modal label:has-text("Descrição") input', 'Aluguel da sala');
+  await page.locator('.modal label:has-text("Categoria") select').selectOption('Aluguel');
+  await page.fill('.modal label:has-text("Valor") input', '2.500,00');
+  await page.locator('.modal label:has-text("Conta fixa") select').selectOption('3');
+  await page.click('.modal button:has-text("Salvar")');
+  await page.click('.view.active .seg:has-text("A pagar")');
+  await page.waitForSelector('.view.active .table tbody tr:has-text("Aluguel da sala")');
+  check(await page.locator('.view.active .table tbody tr:has-text("Aluguel da sala")').count() === 3, 'conta fixa lançada para 3 meses');
+  await page.locator('.view.active .table tbody tr:has-text("Aluguel da sala")').first().locator('button:has-text("Paguei")').click();
+  await page.click('.view.active .seg:has-text("Fluxo de caixa")');
+  await page.waitForSelector('.view.active .table tbody tr:has-text("Aluguel da sala")');
+  check(true, 'despesa paga entra no fluxo de caixa');
+  await shot(page, '05m-fluxo-caixa');
+  await page.click('.view.active .seg:has-text("Inadimplência")');
+  await page.waitForSelector('.view.active .table tbody tr:has-text("Carlos Pereira")');
+  check(true, 'inadimplência por cliente');
+  await page.click('.view.active .seg:has-text("A receber")');
   await page.click('.chips .chip:has-text("Vencidas")');
   await page.waitForSelector('.view.active .table tbody tr:has-text("Carlos Pereira")');
   check(true, 'parcela vencida aparece no Financeiro');

@@ -421,3 +421,74 @@ test('avisos de andamento novo: vão para o responsável, abrem o processo e res
     await c.call('settings:set', 'notifyCourts', 'mine');
   }
 });
+
+test('financeiro: recebimento com forma e recibo numerado, contas a pagar, custas reembolsáveis, fluxo de caixa e inadimplência', async () => {
+  const { reais } = await import('../src/main/extenso.js');
+  assert.equal(reais(1234.56), 'mil duzentos e trinta e quatro reais e cinquenta e seis centavos');
+  assert.equal(reais(2005), 'dois mil e cinco reais');
+  assert.equal(reais(1), 'um real');
+  const c = client();
+  await c.req('/auth/login', { body: { login: 'barros', password: 'segredo1' } });
+  const cid = await c.call('clients:save', { name: 'Financeiro Teste', cpf: '111.111.111-11' });
+  const caseId = await c.call('cases:save', { client_id: cid, title: 'Divórcio' });
+  const [p1, p2] = await c.call('finance:generate', caseId, { total: 2000, count: 2, firstDue: Date.now() - 40 * 864e5, description: 'Honorários' });
+  await c.call('finance:register', p1, { paid_amount: '950,00', method: 'pix' });
+  const r1 = await c.call('finance:receipt', p1);
+  const r1b = await c.call('finance:receipt', p1);
+  assert.equal(r1.number, r1b.number, 'o mesmo recibo mantém o número');
+  assert.match(r1.html, /Financeiro Teste/);
+  assert.match(r1.html, /CPF 111\.111\.111-11/);
+  assert.match(r1.html, /novecentos e cinquenta reais/);
+  assert.match(r1.html, /parcela 1\/2/);
+  assert.match(r1.html, /paga em Pix/);
+  await assert.rejects(c.call('finance:receipt', p2), /Registre o recebimento/);
+
+  // contas fixas do escritório (3 meses) e custa do processo, reembolsável pelo cliente
+  const rent = await c.call('finance:saveExpense', { kind: 'escritorio', category: 'Aluguel', description: 'Aluguel da sala', amount: '2.500,00', due_at: Date.now(), repeat: 3 });
+  assert.equal(rent.length, 3);
+  const [custa] = await c.call('finance:saveExpense', { kind: 'custa', case_id: caseId, category: 'Custas judiciais', description: 'Guia de custas iniciais', amount: 300, due_at: Date.now() });
+  await c.call('finance:expensePaid', custa, true, 'pix');
+  await c.call('finance:expensePaid', rent[0], true);
+  const reimb = await c.call('finance:expenses', { status: 'reimburse' });
+  assert.ok(reimb.some((e) => e.id === custa && e.client_name === 'Financeiro Teste'), 'custa paga aguardando reembolso do cliente');
+  await c.call('finance:reimbursed', custa, true);
+
+  const from = new Date(); from.setDate(1); from.setHours(0, 0, 0, 0);
+  const to = new Date(from); to.setMonth(to.getMonth() + 1);
+  const cf = await c.call('finance:cashflow', { from: from.getTime(), to: to.getTime() });
+  assert.ok(cf.entries.some((e) => e.dir === 'in' && e.amount === 950 && e.method === 'pix'));
+  assert.ok(cf.entries.some((e) => e.dir === 'in' && e.type === 'reembolso' && e.amount === 300));
+  assert.ok(cf.entries.some((e) => e.dir === 'out' && e.amount === 2500));
+  assert.ok(cf.totalOut >= 2800);
+  const months = await c.call('finance:months', 12);
+  assert.equal(months.length, 12);
+  assert.ok(months[11].in >= 1250);
+
+  const def = await c.call('finance:defaulters');
+  assert.ok(def.some((d) => d.client_id === cid && d.n === 1 && d.total === 1000), 'parcela vencida aparece na inadimplência');
+
+  // permissões: estagiária não vê; advogado não exclui despesa
+  await c.call('users:save', { name: 'Ana Advogada', login: 'ana', role: 'advogado', password: 'advogado1' });
+  const adv = client();
+  await adv.req('/auth/login', { body: { login: 'ana', password: 'advogado1' } });
+  await assert.rejects(adv.call('finance:deleteExpense', custa), /permissão/);
+  const est = client();
+  await est.req('/auth/login', { body: { login: 'bia', password: 'estagio1' } });
+  await assert.rejects(est.call('finance:expenses', {}), /permissão/);
+});
+
+test('painel do financeiro: mês atual x anterior, 12 meses, categorias, áreas, vencimentos e previsão', async () => {
+  const c = client();
+  await c.req('/auth/login', { body: { login: 'barros', password: 'segredo1' } });
+  const from = new Date(); from.setDate(1); from.setHours(0, 0, 0, 0);
+  const to = new Date(from); to.setMonth(to.getMonth() + 1);
+  const y = new Date(from); y.setMonth(y.getMonth() - 11);
+  const d = await c.call('finance:dashboard', { monthFrom: from.getTime(), monthTo: to.getTime(), yearFrom: y.getTime() });
+  assert.equal(d.months.length, 12);
+  assert.ok(d.month.in >= 1250, 'recebido no mês (honorários + reembolso)');
+  assert.ok(d.byCategory.some((x) => x.label === 'Aluguel' && x.value === 2500));
+  assert.ok(d.byArea.length >= 1);
+  assert.equal(d.forecast.length, 3);
+  assert.ok(Array.isArray(d.payables) && Array.isArray(d.receivables));
+  assert.ok(d.defaulters.length >= 1);
+});

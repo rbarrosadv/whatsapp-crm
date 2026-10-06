@@ -8,7 +8,7 @@ import fs from 'node:fs';
 
 let db;
 
-const SCHEMA_VERSION = 11;
+const SCHEMA_VERSION = 12;
 
 const DEFAULT_PIPELINES = [
   {
@@ -390,6 +390,24 @@ function migrate() {
     );
     CREATE INDEX IF NOT EXISTS intimations_status ON intimations(status, date);
     CREATE INDEX IF NOT EXISTS intimations_proc ON intimations(process_digits);
+  `);
+  // versão 12: financeiro completo — recebimento (forma, valor, recibo) e despesas
+  addColumn('payments', 'method', 'TEXT');
+  addColumn('payments', 'paid_amount', 'REAL');
+  addColumn('payments', 'receipt_no', 'INTEGER');
+  addColumn('payments', 'paid_by', 'TEXT');
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS expenses (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      kind TEXT NOT NULL DEFAULT 'escritorio',
+      case_id INTEGER REFERENCES cases(id) ON DELETE SET NULL,
+      category TEXT, description TEXT NOT NULL, amount REAL NOT NULL,
+      due_at INTEGER, paid_at INTEGER, method TEXT,
+      reimbursable INTEGER NOT NULL DEFAULT 0, reimbursed_at INTEGER,
+      series TEXT, created_by TEXT, created_at INTEGER NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS expenses_due ON expenses(paid_at, due_at);
+    CREATE INDEX IF NOT EXISTS expenses_case ON expenses(case_id);
   `);
   addColumn('cases', 'datajud_checked_at', 'INTEGER');
   addColumn('cases', 'datajud_error', 'TEXT');
@@ -1209,7 +1227,24 @@ export function generateInstallments(caseId, { total, count, firstDue, descripti
 }
 
 export function setPaymentPaid(id, paid) {
-  run('UPDATE payments SET paid_at = ? WHERE id = ?', paid ? now() : null, id);
+  if (paid) run('UPDATE payments SET paid_at = ? WHERE id = ?', now(), id);
+  else run('UPDATE payments SET paid_at = NULL, paid_amount = NULL, method = NULL, paid_by = NULL WHERE id = ?', id);
+}
+/** Recebimento com data, valor recebido (pode diferir da parcela) e forma. */
+export function registerPayment(id, { paid_at, paid_amount, method, user_name } = {}) {
+  const p = get('SELECT * FROM payments WHERE id = ?', id);
+  if (!p) throw new Error('Parcela não encontrada');
+  const amount = paid_amount == null || paid_amount === '' ? p.amount : Number(String(paid_amount).replace(',', '.'));
+  if (!(amount > 0)) throw new Error('Valor recebido inválido.');
+  run('UPDATE payments SET paid_at = ?, paid_amount = ?, method = ?, paid_by = ? WHERE id = ?', paid_at || now(), amount, method || null, user_name || null, id);
+}
+/** Número do recibo (sequencial do escritório), dado na 1ª emissão. */
+export function receiptNumber(id) {
+  const p = get('SELECT receipt_no FROM payments WHERE id = ?', id);
+  if (p?.receipt_no) return p.receipt_no;
+  const next = (get('SELECT COALESCE(MAX(receipt_no), 0) AS n FROM payments').n || 0) + 1;
+  run('UPDATE payments SET receipt_no = ? WHERE id = ?', next, id);
+  return next;
 }
 export function markPaymentCharged(id) { run('UPDATE payments SET charged_at = ? WHERE id = ?', now(), id); }
 export function deletePayment(id) { run('DELETE FROM payments WHERE id = ?', id); }
@@ -1238,9 +1273,149 @@ export function financeSummary() {
     overdue: one('SELECT COALESCE(SUM(amount), 0) AS v FROM payments WHERE paid_at IS NULL AND due_at < ?', now()),
     overdueCount: one('SELECT COUNT(*) AS v FROM payments WHERE paid_at IS NULL AND due_at < ?', now()),
     dueMonth: one('SELECT COALESCE(SUM(amount), 0) AS v FROM payments WHERE paid_at IS NULL AND due_at >= ? AND due_at < ?', now(), monthEnd),
-    receivedMonth: one('SELECT COALESCE(SUM(amount), 0) AS v FROM payments WHERE paid_at >= ? AND paid_at < ?', monthStart, monthEnd),
+    receivedMonth: one('SELECT COALESCE(SUM(COALESCE(paid_amount, amount)), 0) AS v FROM payments WHERE paid_at >= ? AND paid_at < ?', monthStart, monthEnd),
+    payableMonth: one('SELECT COALESCE(SUM(amount), 0) AS v FROM expenses WHERE paid_at IS NULL AND due_at < ?', monthEnd),
+    payableOverdue: one('SELECT COUNT(*) AS v FROM expenses WHERE paid_at IS NULL AND due_at < ?', now()),
+    paidOutMonth: one('SELECT COALESCE(SUM(amount), 0) AS v FROM expenses WHERE paid_at >= ? AND paid_at < ?', monthStart, monthEnd),
+    reimbursePending: one("SELECT COALESCE(SUM(amount), 0) AS v FROM expenses WHERE kind = 'custa' AND reimbursable = 1 AND paid_at IS NOT NULL AND reimbursed_at IS NULL"),
     openTotal: one('SELECT COALESCE(SUM(amount), 0) AS v FROM payments WHERE paid_at IS NULL'),
   };
+}
+
+// ------------------------------------------------------------ despesas (contas a pagar)
+
+const EXPENSE_SELECT = `SELECT e.*, c.title AS case_title, c.client_id, (SELECT name FROM clients WHERE id = c.client_id) AS client_name
+  FROM expenses e LEFT JOIN cases c ON c.id = e.case_id`;
+
+export function listExpenses({ caseId, kind, status, from, to } = {}) {
+  const where = [];
+  const args = [];
+  if (caseId) { where.push('e.case_id = ?'); args.push(caseId); }
+  if (kind) { where.push('e.kind = ?'); args.push(kind); }
+  if (status === 'open') where.push('e.paid_at IS NULL');
+  if (status === 'overdue') { where.push('e.paid_at IS NULL AND e.due_at < ?'); args.push(now()); }
+  if (status === 'paid') where.push('e.paid_at IS NOT NULL');
+  if (status === 'reimburse') where.push("e.kind = 'custa' AND e.reimbursable = 1 AND e.paid_at IS NOT NULL AND e.reimbursed_at IS NULL");
+  if (from) { where.push('COALESCE(e.paid_at, e.due_at) >= ?'); args.push(from); }
+  if (to) { where.push('COALESCE(e.paid_at, e.due_at) < ?'); args.push(to); }
+  return all(`${EXPENSE_SELECT} ${where.length ? `WHERE ${where.join(' AND ')}` : ''}
+              ORDER BY e.paid_at IS NOT NULL, COALESCE(e.due_at, e.paid_at) ${status === 'paid' ? 'DESC' : 'ASC'}`, ...args);
+}
+export function getExpense(id) { return get(`${EXPENSE_SELECT} WHERE e.id = ?`, id); }
+
+/**
+ * Lança uma despesa. `repeat` = quantos meses (contas fixas do escritório:
+ * aluguel, internet…) — cria uma por mês com o mesmo dia de vencimento.
+ */
+export function saveExpense(e) {
+  const amount = Number(String(e.amount ?? '').replace(/\./g, (m, i, str) => (str.includes(',') ? '' : m)).replace(',', '.'));
+  if (!String(e.description || '').trim()) throw new Error('Descreva a despesa.');
+  if (!(amount > 0)) throw new Error('Informe o valor.');
+  const kind = e.kind === 'custa' ? 'custa' : 'escritorio';
+  const fields = [kind, e.case_id || null, e.category || null, e.description.trim(), amount, e.method || null, kind === 'custa' && e.reimbursable !== false ? 1 : 0];
+  if (e.id) {
+    run('UPDATE expenses SET kind = ?, case_id = ?, category = ?, description = ?, amount = ?, method = ?, reimbursable = ?, due_at = ?, paid_at = ? WHERE id = ?',
+      ...fields, e.due_at || null, e.paid_at || null, e.id);
+    return [e.id];
+  }
+  const n = Math.min(60, Math.max(1, Number(e.repeat) || 1));
+  const series = n > 1 ? `s${now()}` : null;
+  const ids = [];
+  for (let i = 0; i < n; i++) {
+    let due = e.due_at || null;
+    if (due && i) { const d = new Date(due); d.setMonth(d.getMonth() + i); due = d.getTime(); }
+    ids.push(Number(run(`INSERT INTO expenses (kind, case_id, category, description, amount, method, reimbursable, due_at, paid_at, series, created_by, created_at)
+                         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    ...fields, due, i === 0 ? (e.paid_at || null) : null, series, e.created_by || null, now()).lastInsertRowid));
+  }
+  return ids;
+}
+export function setExpensePaid(id, paid, method) {
+  run('UPDATE expenses SET paid_at = ?, method = COALESCE(?, method) WHERE id = ?', paid ? (typeof paid === 'number' ? paid : now()) : null, method || null, id);
+}
+export function setExpenseReimbursed(id, yes) { run('UPDATE expenses SET reimbursed_at = ? WHERE id = ?', yes ? now() : null, id); }
+export function deleteExpense(id, { series = false } = {}) {
+  const e = get('SELECT * FROM expenses WHERE id = ?', id);
+  if (!e) return;
+  if (series && e.series) run('DELETE FROM expenses WHERE series = ? AND paid_at IS NULL', e.series);
+  run('DELETE FROM expenses WHERE id = ?', id);
+}
+
+// ------------------------------------------------------------ fluxo de caixa
+
+/** Entradas (parcelas recebidas + reembolsos de custas) e saídas (despesas pagas) num período. */
+export function cashflow(from, to) {
+  const ins = all(`SELECT p.id, 'honorario' AS type, p.paid_at AS ts, COALESCE(p.paid_amount, p.amount) AS amount, p.method,
+                     COALESCE(p.description, 'Honorários') AS description, c.title AS case_title, (SELECT name FROM clients WHERE id = c.client_id) AS who
+                   FROM payments p JOIN cases c ON c.id = p.case_id WHERE p.paid_at >= ? AND p.paid_at < ?`, from, to);
+  const reimb = all(`SELECT e.id, 'reembolso' AS type, e.reimbursed_at AS ts, e.amount, NULL AS method, 'Reembolso: ' || e.description AS description,
+                       c.title AS case_title, (SELECT name FROM clients WHERE id = c.client_id) AS who
+                     FROM expenses e LEFT JOIN cases c ON c.id = e.case_id WHERE e.reimbursed_at >= ? AND e.reimbursed_at < ?`, from, to);
+  const outs = all(`SELECT e.id, e.kind AS type, e.paid_at AS ts, e.amount, e.method, e.description, e.category,
+                      c.title AS case_title, (SELECT name FROM clients WHERE id = c.client_id) AS who
+                    FROM expenses e LEFT JOIN cases c ON c.id = e.case_id WHERE e.paid_at >= ? AND e.paid_at < ?`, from, to);
+  const sum = (l) => l.reduce((a, x) => a + x.amount, 0);
+  // previsto no período (ainda em aberto)
+  const toReceive = get('SELECT COALESCE(SUM(amount), 0) AS v FROM payments WHERE paid_at IS NULL AND due_at >= ? AND due_at < ?', from, to).v;
+  const toPay = get('SELECT COALESCE(SUM(amount), 0) AS v FROM expenses WHERE paid_at IS NULL AND due_at >= ? AND due_at < ?', from, to).v;
+  const entries = [...ins.map((x) => ({ ...x, dir: 'in' })), ...reimb.map((x) => ({ ...x, dir: 'in' })), ...outs.map((x) => ({ ...x, dir: 'out' }))]
+    .sort((a, b) => a.ts - b.ts);
+  return { entries, totalIn: sum(ins) + sum(reimb), totalOut: sum(outs), toReceive, toPay };
+}
+
+/** Entradas e saídas mês a mês (últimos `months` meses, terminando no mês de `ref`). */
+export function cashflowMonths(months = 12, ref = now()) {
+  const out = [];
+  const d = new Date(ref); d.setDate(1); d.setHours(0, 0, 0, 0);
+  d.setMonth(d.getMonth() - (months - 1));
+  for (let i = 0; i < months; i++) {
+    const from = d.getTime();
+    const e = new Date(d); e.setMonth(e.getMonth() + 1);
+    const to = e.getTime();
+    const inV = get('SELECT COALESCE(SUM(COALESCE(paid_amount, amount)), 0) AS v FROM payments WHERE paid_at >= ? AND paid_at < ?', from, to).v
+      + get('SELECT COALESCE(SUM(amount), 0) AS v FROM expenses WHERE reimbursed_at >= ? AND reimbursed_at < ?', from, to).v;
+    const outV = get('SELECT COALESCE(SUM(amount), 0) AS v FROM expenses WHERE paid_at >= ? AND paid_at < ?', from, to).v;
+    out.push({ month: `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`, in: inV, out: outV });
+    d.setMonth(d.getMonth() + 1);
+  }
+  return out;
+}
+
+/** Painel do financeiro: totais por categoria, por área, próximos vencimentos e previsão. */
+export function financeBreakdown(monthFrom, monthTo, yearFrom) {
+  return {
+    byCategory: all(`SELECT COALESCE(category, CASE kind WHEN 'custa' THEN 'Custas de processo' ELSE 'Outras' END) AS label, SUM(amount) AS value
+                     FROM expenses WHERE COALESCE(paid_at, due_at) >= ? AND COALESCE(paid_at, due_at) < ?
+                     GROUP BY label ORDER BY value DESC`, monthFrom, monthTo),
+    byArea: all(`SELECT COALESCE(NULLIF(TRIM(c.area), ''), 'Sem área') AS label, SUM(COALESCE(p.paid_amount, p.amount)) AS value
+                 FROM payments p JOIN cases c ON c.id = p.case_id WHERE p.paid_at >= ?
+                 GROUP BY label ORDER BY value DESC`, yearFrom),
+    receivables: all(`SELECT p.id, p.amount, p.due_at, COALESCE(p.description, 'Honorários') AS description, c.title AS case_title,
+                        (SELECT name FROM clients WHERE id = c.client_id) AS who
+                      FROM payments p JOIN cases c ON c.id = p.case_id
+                      WHERE p.paid_at IS NULL AND p.due_at >= ? AND p.due_at < ? ORDER BY p.due_at LIMIT 8`, now() - 864e5, now() + 15 * 864e5),
+    payables: all(`SELECT id, amount, due_at, description, category FROM expenses
+                   WHERE paid_at IS NULL AND due_at < ? ORDER BY due_at LIMIT 8`, now() + 15 * 864e5),
+    forecast: [0, 1, 2].map((i) => {
+      const d = new Date(); d.setDate(1); d.setHours(0, 0, 0, 0); d.setMonth(d.getMonth() + i);
+      const e = new Date(d); e.setMonth(e.getMonth() + 1);
+      return {
+        month: `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`,
+        in: get('SELECT COALESCE(SUM(amount), 0) AS v FROM payments WHERE paid_at IS NULL AND due_at >= ? AND due_at < ?', i ? d.getTime() : 0, e.getTime()).v,
+        out: get('SELECT COALESCE(SUM(amount), 0) AS v FROM expenses WHERE paid_at IS NULL AND due_at >= ? AND due_at < ?', i ? d.getTime() : 0, e.getTime()).v,
+      };
+    }),
+  };
+}
+
+/** Inadimplência por cliente: parcelas vencidas, total, maior atraso, última cobrança. */
+export function defaulters() {
+  return all(`SELECT c.client_id, (SELECT name FROM clients WHERE id = c.client_id) AS client_name, MAX(c.jid) AS jid,
+                COUNT(*) AS n, SUM(p.amount) AS total, MIN(p.due_at) AS oldest, MAX(p.charged_at) AS last_charge,
+                group_concat(DISTINCT c.title) AS cases
+              FROM payments p JOIN cases c ON c.id = p.case_id
+              WHERE p.paid_at IS NULL AND p.due_at < ?
+              GROUP BY c.client_id ORDER BY total DESC`, now());
 }
 
 // documentos do caso

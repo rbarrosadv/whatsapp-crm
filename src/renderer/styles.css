@@ -882,3 +882,56 @@ body:not([data-view="inbox"]) .banner-wrap { display: none !important; }
 .unknown-procs summary { cursor: pointer; }
 .unknown-row { display: flex; align-items: center; gap: 10px; padding: 8px 4px; border-top: 1px solid var(--border); }
 .datajud-row { align-items: center; }
+
+/* ---------- Gráficos (paleta validada para os dois temas) ---------- */
+:root, [data-theme="dark"] { --viz-1: #3987e5; --viz-2: #d95926; }
+[data-theme="light"] { --viz-1: #2a78d6; --viz-2: #eb6834; }
+.viz { position: relative; }
+.viz-toggle { position: absolute; right: 0; top: -30px; }
+.link-btn { border: 0; background: none; color: var(--accent); cursor: pointer; padding: 2px 4px; text-decoration: underline; }
+.viz-plot { position: relative; width: 100%; min-height: 240px; }
+.viz-svg { display: block; }
+.viz-grid { stroke: var(--border); stroke-width: 1; }
+.viz-base { stroke: var(--muted); stroke-width: 1; opacity: .5; }
+.viz-axis { fill: var(--muted); font-size: 11px; }
+.viz-mark { transition: opacity .1s; }
+.viz-plot:has(.viz-mark.hover) .viz-mark:not(.hover) { opacity: .45; }
+.viz-hit { cursor: default; outline: none; }
+.viz-hit:focus-visible { stroke: var(--accent); stroke-width: 1; }
+.viz-tip { position: absolute; pointer-events: none; opacity: 0; background: var(--panel); border: 1px solid var(--border); box-shadow: var(--shadow);
+  border-radius: 8px; padding: 6px 10px; font-size: 12.5px; z-index: 5; min-width: 130px; transition: opacity .08s; }
+.viz-tip.on { opacity: 1; }
+.viz-tip-title { color: var(--muted); margin-bottom: 2px; }
+.viz-tip-row { display: flex; align-items: center; gap: 6px; }
+.viz-key { width: 10px; height: 2px; border-radius: 1px; flex: none; }
+.viz-legend { display: flex; gap: 14px; font-size: 12.5px; color: var(--muted); margin-bottom: 4px; }
+.viz-legend > span { display: inline-flex; align-items: center; gap: 6px; }
+.viz-swatch { width: 10px; height: 10px; border-radius: 2px; display: inline-block; }
+.viz-bars { display: flex; flex-direction: column; gap: 6px; }
+.viz-bar-row { display: grid; grid-template-columns: minmax(90px, 34%) 1fr auto; align-items: center; gap: 8px; font-size: 13px; outline: none; }
+.viz-bar-row:hover .viz-bar, .viz-bar-row:focus-visible .viz-bar { filter: brightness(1.12); }
+.viz-bar-label { color: var(--text); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.viz-bar-track { height: 14px; display: block; }
+.viz-bar { display: block; height: 14px; border-radius: 0 4px 4px 0; min-width: 2px; }
+.viz-bar-value { font-variant-numeric: tabular-nums; font-size: 12.5px; }
+
+/* ---------- Financeiro: painel ---------- */
+.fin-alerts { display: flex; flex-direction: column; gap: 6px; margin-bottom: 14px; }
+.fin-alert { text-align: left; border: 0; border-left: 4px solid var(--warn); background: color-mix(in srgb, var(--warn) 12%, var(--panel)); color: var(--text);
+  border-radius: 8px; padding: 9px 12px; cursor: pointer; font-size: 14px; }
+.fin-alert.bad { border-left-color: var(--danger); background: color-mix(in srgb, var(--danger) 12%, var(--panel)); }
+.fin-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 14px; align-items: start; }
+.fin-grid .panel { margin: 0; }
+.fin-wide { grid-column: 1 / -1; }
+@media (max-width: 900px) { .fin-grid { grid-template-columns: 1fr; } }
+.fin-line { display: flex; align-items: center; gap: 6px; padding: 5px 0; border-top: 1px solid var(--border); font-size: 13.5px; }
+.fin-line:first-of-type { border-top: 0; }
+.fin-dir { font-weight: 700; width: 16px; text-align: center; }
+.fin-dir.in { color: #16a34a; }
+.fin-dir.out { color: var(--danger); }
+.cash-month { margin: 0 8px; text-transform: capitalize; min-width: 180px; text-align: center; }
+.receipt-frame { width: 100%; height: 62vh; border: 1px solid var(--border); border-radius: 8px; background: #fff; }
+.case-costs { margin-top: 14px; }
+body.discreet .viz-axis, body.discreet .viz-tip b, body.discreet .viz-bar-value, body.discreet .fin-line b { filter: blur(6px); }
+.money.plain { color: inherit; font-size: inherit; font-weight: inherit; }
+.finance-body .stat-value { font-size: clamp(17px, 1.55vw, 24px); overflow: visible; text-overflow: clip; }

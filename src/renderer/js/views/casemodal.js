@@ -403,7 +403,24 @@ export async function openCase(id, { tab = 'dados' } = {}) {
         ? h('table', { class: 'table compact' },
           h('thead', null, h('tr', null, ['Situação', 'Descrição', 'Vencimento', 'Valor', ''].map((t) => h('th', null, t)))),
           h('tbody', null, pays.map((p) => paymentRow(p))))
-        : h('p', { class: 'muted small' }, 'Nenhuma parcela lançada. Use “Gerar parcelas” para dividir o valor com vencimentos mensais.'));
+        : h('p', { class: 'muted small' }, 'Nenhuma parcela lançada. Use “Gerar parcelas” para dividir o valor com vencimentos mensais.'),
+      costsBlock());
+  }
+
+  function costsBlock() {
+    const box = h('div', { class: 'panel case-costs' }, h('p', { class: 'muted small' }, 'Carregando custas…'));
+    Promise.all([api('finance:expenses', { caseId: id }), import('./finance.js')]).then(([list, fin]) => {
+      const paid = list.filter((e) => e.paid_at).reduce((a, e) => a + e.amount, 0);
+      const pending = list.filter((e) => e.paid_at && e.reimbursable && !e.reimbursed_at).reduce((a, e) => a + e.amount, 0);
+      fill(box,
+        h('div', { class: 'panel-head' }, h('h3', null, '🧾 Custas e despesas do processo'),
+          h('button', { class: 'btn btn-sm', onclick: () => fin.expenseDialog({ kind: 'custa', case_id: id }) }, '＋ Lançar custa')),
+        list.length ? [
+          h('div', { class: 'muted small' }, `Pagas pelo escritório: `, h('b', { class: 'money' }, fmtMoney(paid)), pending ? [' · a reembolsar pelo cliente: ', h('b', { class: 'money bad-text' }, fmtMoney(pending))] : null),
+          h('table', { class: 'table compact' }, h('tbody', null, list.map(fin.expenseRow))),
+        ] : h('p', { class: 'muted small' }, 'Nenhuma custa lançada. Guias, diligências e perícias pagas pelo escritório entram aqui e no fluxo de caixa.'));
+    }).catch((e) => fill(box, h('p', { class: 'muted small' }, e.message)));
+    return box;
   }
 
   // --------------------------------------------------------------- prazos
@@ -478,15 +495,65 @@ export function paymentRow(p, { showCase = false } = {}) {
     h('td', { class: 'actions' },
       p.paid_at
         ? h('button', { class: 'btn btn-sm', title: 'Desfazer pagamento', onclick: () => api('finance:setPaid', p.id, false).catch(errToast) }, '↺')
-        : h('button', { class: 'btn btn-sm btn-ok', onclick: () => api('finance:setPaid', p.id, true).then(() => toast('Parcela marcada como paga', 'success')).catch(errToast) }, '✔ Recebi'),
+        : h('button', { class: 'btn btn-sm btn-ok', onclick: () => receiveDialog(p) }, '✔ Recebi'),
       p.paid_at ? null : h('button', { class: 'btn btn-sm', onclick: () => chargeDialog(p.id) }, '📤 Cobrar'),
       h('button', {
         class: 'icon-btn small', title: 'Mais',
         onclick: (e) => popupMenu(e.currentTarget, [
+          p.paid_at ? { icon: '🧾', label: p.receipt_no ? `Recibo nº ${p.receipt_no}` : 'Emitir recibo', onClick: () => showReceipt(p.id) } : null,
           { icon: '✎', label: 'Editar parcela', onClick: () => paymentDialog(p) },
           { icon: '🗑', label: 'Excluir parcela', danger: true, onClick: async () => { if (await confirmDialog('Excluir esta parcela?', { okLabel: 'Excluir', danger: true })) api('finance:delete', p.id).catch(errToast); } },
         ]),
       }, '⋮')));
+}
+
+/** Registrar o recebimento: data, valor recebido e forma; depois, o recibo. */
+export function receiveDialog(p) {
+  const date = h('input', { class: 'input', type: 'date', value: new Date().toISOString().slice(0, 10) });
+  const value = h('input', { class: 'input', value: Number(p.amount).toLocaleString('pt-BR', { minimumFractionDigits: 2 }), inputmode: 'decimal' });
+  const method = h('select', { class: 'input' }, [['pix', 'Pix'], ['transferencia', 'Transferência'], ['dinheiro', 'Dinheiro'], ['boleto', 'Boleto'], ['cartao', 'Cartão'], ['cheque', 'Cheque']]
+    .map(([v, l]) => h('option', { value: v }, l)));
+  const save = async (thenReceipt) => {
+    const amount = Number(value.value.replace(/\./g, '').replace(',', '.'));
+    try {
+      await api('finance:register', p.id, { paid_at: new Date(`${date.value}T12:00`).getTime(), paid_amount: amount, method: method.value });
+    } catch (e) { errToast(e); return false; }
+    toast('Recebimento registrado', 'success');
+    if (thenReceipt) setTimeout(() => showReceipt(p.id), 50);
+    return true;
+  };
+  modal({
+    title: `Recebimento — ${p.description || 'Honorários'}`,
+    body: h('div', { class: 'form' },
+      h('p', { class: 'muted small' }, `${p.client_name || ''} · ${p.case_title || ''} · parcela de ${fmtMoney(p.amount)}`),
+      h('div', { class: 'grid2' },
+        h('label', { class: 'field' }, h('span', null, 'Data do recebimento'), date),
+        h('label', { class: 'field' }, h('span', null, 'Valor recebido (R$)'), value)),
+      h('label', { class: 'field' }, h('span', null, 'Forma de pagamento'), method)),
+    actions: [
+      { label: 'Cancelar' },
+      { label: 'Registrar', onClick: () => save(false) },
+      { label: 'Registrar e emitir recibo', primary: true, onClick: () => save(true) },
+    ],
+  });
+}
+
+/** Recibo para imprimir ou salvar em PDF (pela janela de impressão). */
+export async function showReceipt(id) {
+  let r;
+  try { r = await api('finance:receipt', id); } catch (e) { errToast(e); return; }
+  const frame = h('iframe', { class: 'receipt-frame', title: `Recibo nº ${r.number}` });
+  frame.srcdoc = r.html;
+  modal({
+    title: `🧾 Recibo nº ${String(r.number).padStart(4, '0')}`,
+    wide: true,
+    body: h('div', { class: 'stack' }, frame,
+      h('p', { class: 'muted small' }, 'Para salvar em PDF: Imprimir → escolha “Salvar como PDF” (ou “Microsoft Print to PDF”).')),
+    actions: [
+      { label: 'Fechar' },
+      { label: '🖨 Imprimir / salvar PDF', primary: true, onClick: () => { frame.contentWindow.focus(); frame.contentWindow.print(); return false; } },
+    ],
+  });
 }
 
 function installmentsDialog(k) {

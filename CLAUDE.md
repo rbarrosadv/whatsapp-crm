@@ -83,7 +83,7 @@ Motor (`src/main`, sem Electron apesar do nome da pasta):
   `legacy_pending`, `meta`, `contact_types`, `chat_filters`, `cases`,
   `payments`, `case_docs`, `users`, `sessions`, `doc_index`, `clients`,
   `case_parties`, `case_moves`, `case_steps`, `case_checklist`, `oabs`,
-  `intimations` (migrações por versão em
+  `intimations`, `expenses` (migrações por versão em
   `migrate()`; `meta.schema` guarda a versão atual).
 - `docs.js` — `DocsService`: pasta "BARROS ADVOGADOS" do OneDrive lida
   direto do disco (`settings.docsRoot`, ou `guessRoot()` em
@@ -137,6 +137,20 @@ Motor (`src/main`, sem Electron apesar do nome da pasta):
   consulta do DataJud (histórico) não avisa; clique abre o processo
   (`action.case`, `notify.js`). DJEN e DataJud rodam a cada 6 h (6h–22h);
   `core.runCourts()` roda na hora (testes).
+- `extenso.js` — valor em reais por extenso (recibo).
+- **Financeiro** (v12): parcelas ganham `method`, `paid_amount`, `paid_by`,
+  `receipt_no` (`registerPayment`, `receiptNumber` sequencial na 1ª emissão);
+  `expenses` = contas a pagar (`kind` escritorio | custa; custa ligada ao
+  processo e `reimbursable` → "reembolso pendente" até `reimbursed_at`;
+  `repeat` cria a conta fixa mês a mês com o mesmo `series`); `cashflow(from,to)`
+  (entradas = parcelas recebidas + reembolsos; saídas = despesas pagas;
+  previsto em aberto), `cashflowMonths`, `defaulters`, `financeBreakdown`
+  (categorias do mês, recebido por área em 12 meses, vencimentos de 15 dias,
+  previsão de 3 meses) → `finance:dashboard`. Recibo = HTML de
+  `finance:receipt` (core `receiptHtml`, dados do escritório `officeName/Doc/
+  Address/City`) mostrado num iframe `srcdoc` e impresso/salvo em PDF pela
+  janela de impressão. Tudo `finance:*` (estagiário não vê); excluir despesa
+  só sócio.
 - `ogg.js` — remux WebM/Opus (MediaRecorder) → OGG/Opus (mensagem de voz).
 - `google.js` — `GoogleService`: Google Agenda pela API oficial com a chave
   (client_secret JSON, tipo "App para computador") do próprio usuário;
@@ -202,6 +216,14 @@ Interface (`src/renderer`, JS puro em módulos ES, sem build):
   fechamento do dia passa pendências para amanhã (`tasks:reschedule`; prazos
   e audiências não mudam). As faixas de data são calculadas na página (fuso
   de quem usa) e mandadas para `today:summary`.
+- `js/views/finance.js` — **Financeiro** em abas: Painel (destaques que pedem
+  ação, KPIs do mês, gráfico de entradas × saídas de 12 meses, previsão,
+  despesas por categoria, recebido por área, inadimplentes, vencimentos) · A
+  receber · A pagar · Fluxo de caixa (mês, saldo acumulado) · Inadimplência.
+  `js/charts.js` = gráficos SVG próprios (colunas agrupadas e barras; legenda,
+  dica ao passar o mouse/foco, "ver tabela"); cores `--viz-1/--viz-2`
+  validadas para os dois temas (skill dataviz). "Recebi" abre `receiveDialog`
+  (data, valor, forma) → `showReceipt`; custas na aba Honorários do processo.
 - `js/views/docs.js` — tela **Documentos** (Buscar · Modelos · Pastas),
   `folderBrowser`, `templatePicker` ("Novo do modelo"), `useAsBaseDialog`,
   `caseFolderPanel` (aba Documentos do caso) e `clientFolderDialog` (ficha do
