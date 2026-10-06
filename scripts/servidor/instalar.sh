@@ -29,6 +29,16 @@ TOKEN="${TOKEN:-${SALVO_TOKEN:-}}"
 RAMO="${RAMO_PEDIDO:-${RAMO:-main}}"
 [ -n "$TOKEN" ] || die "Falta o token do GitHub (TOKEN=...)."
 
+# servidor pequeno (ex.: VM.Standard.E2.1.Micro, 1 GB): cria 2 GB de memória extra em disco
+if [ "$(awk '/MemTotal/ {print $2}' /proc/meminfo)" -lt 2000000 ] && ! swapon --show | grep -q .; then
+  say "Pouca memória: criando 2 GB de memória extra (swap)"
+  fallocate -l 2G /swapfile || dd if=/dev/zero of=/swapfile bs=1M count=2048
+  chmod 600 /swapfile
+  mkswap /swapfile >/dev/null
+  swapon /swapfile
+  grep -q '^/swapfile' /etc/fstab || echo '/swapfile none swap sw 0 0' >> /etc/fstab
+fi
+
 say "Atualizando o Ubuntu e instalando o básico"
 export DEBIAN_FRONTEND=noninteractive
 apt-get update -y
