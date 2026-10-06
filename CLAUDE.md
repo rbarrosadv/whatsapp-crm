@@ -230,6 +230,12 @@ Interface (`src/renderer`, JS puro em módulos ES, sem build):
   manual). Link vencido (403/404/410): o próprio `downloadMedia` pede link
   novo ao celular (`updateMediaMessage`) — o reenvio automático do Baileys
   não dispara porque o erro dele não tem `.status`.
+- **Evitar "atividade suspeita"** (o número do escritório já foi posto em
+  análise uma vez): nada de rajadas ao WhatsApp. Fotos de perfil em fila única
+  (`avatarLookup`, 1,5 s entre consultas, ≤150/dia); downloads automáticos com
+  1,5 s de intervalo e **sem** pedir reenvio ao celular (`downloadMedia(…, {auto})`
+  — só o clique em Baixar pede). Qualquer recurso novo que consulte o WhatsApp
+  em lote deve seguir a mesma regra.
 - **Visualização única**: o conteúdo nunca chega aos aparelhos conectados; o
   Baileys descarta o aviso (`unavailable type=view_once…`), então
   `onRawMessageNode` escuta `CB:message` no socket e grava um texto

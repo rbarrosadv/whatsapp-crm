@@ -426,6 +426,7 @@ test('contato "Cliente" baixa todos os arquivos automaticamente; os outros só m
   const s = new WhatsAppService({ dataDir: dir, logFile: path.join(dir, 'logs', 'dl.log') });
   const baixados = [];
   s.state = { state: 'open' };
+  s.dlPauseMs = 0;
   s.downloadMedia = async (jid, mid) => { baixados.push(mid); db.updateMessage(jid, mid, { media_file: `${mid}.pdf` }); };
 
   assert.equal(db.listContactTypes().find((t) => t.id === 'cliente').autodownload, 1, 'Cliente vem ligado');
@@ -626,4 +627,22 @@ test('correção automática em português do Brasil', async () => {
   assert.equal(autocorrectBefore('Segue a procuracao.').before, 'Segue a procuração.');
   assert.equal(autocorrectBefore('vou pega-la '), null, 'pedaço com hífen fica');
   assert.equal(autocorrectBefore('ok '), null);
+});
+
+test('fotos de perfil: uma consulta por vez ao WhatsApp, sem repetir a mesma', async () => {
+  const s = new WhatsAppService({ dataDir: dir, logFile: path.join(dir, 'logs', 'av.log') });
+  let active = 0;
+  let max = 0;
+  let calls = 0;
+  s.state = { state: 'open' };
+  s.sock = { profilePictureUrl: async () => { calls++; active++; max = Math.max(max, active); await new Promise((r) => setTimeout(r, 5)); active--; return null; } };
+  const orig = global.setTimeout;
+  const jids = ['5511900000001@s.whatsapp.net', '5511900000002@s.whatsapp.net'];
+  for (const jid of jids) db.upsertChat({ jid, name: jid });
+  global.setTimeout = (fn, ms, ...a) => orig(fn, ms === 1500 ? 0 : ms, ...a);
+  try {
+    await Promise.all([s.avatar(jids[0]), s.avatar(jids[0]), s.avatar(jids[1])]);
+  } finally { global.setTimeout = orig; }
+  assert.equal(max, 1, 'nunca duas consultas ao mesmo tempo');
+  assert.equal(calls, 2, 'a mesma foto pedida duas vezes = uma consulta');
 });

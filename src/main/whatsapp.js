@@ -938,8 +938,10 @@ export class WhatsAppService extends EventEmitter {
       while (this.dlQueue.length && this.state.state === 'open') {
         const [chatJid, id] = this.dlQueue.shift();
         try {
-          await this.downloadMedia(chatJid, id);
+          await this.downloadMedia(chatJid, id, { auto: true });
           this.emit('message', { chatJid, id, isNew: false });
+          // sem rajadas: o WhatsApp desconfia de muitos pedidos seguidos
+          if (this.dlPauseMs !== 0) await new Promise((r) => setTimeout(r, this.dlPauseMs ?? 1500));
         } catch (e) {
           // não tenta de novo para sempre: depois de 2 falhas fica só no botão "Baixar"
           db.markDownloadFailed(chatJid, id);
@@ -964,7 +966,7 @@ export class WhatsAppService extends EventEmitter {
     return n;
   }
 
-  async downloadMedia(chatJid, id) {
+  async downloadMedia(chatJid, id, { auto = false } = {}) {
     const m = db.getMessage(chatJid, id);
     if (!m) throw new Error('Mensagem não encontrada');
     if (m.media_file && fs.existsSync(path.join(this.mediaDir, m.media_file))) return m.media_file;
@@ -979,6 +981,9 @@ export class WhatsAppService extends EventEmitter {
       // erro dele vem com output.statusCode — então pedimos aqui ao celular um link novo
       const status = e?.status ?? e?.output?.statusCode;
       if (![403, 404, 410].includes(status)) throw e;
+      // pedir ao celular o reenvio de arquivo antigo, em série, para centenas de
+      // arquivos, parece robô ao WhatsApp: no automático, só quando a pessoa clica
+      if (auto) throw new Error('link vencido (baixe pelo botão)');
       try {
         // o celular precisa estar ligado e com internet; não espera mais que 20 s
         msg = await Promise.race([
@@ -1008,6 +1013,33 @@ export class WhatsAppService extends EventEmitter {
     }
     if (Date.now() - (c.avatar_checked_at || 0) < dayMs && !c.avatar_file) return null;
     if (!this.sock || this.state.state !== 'open') return c.avatar_file || null;
+    if (this.avatarPending?.has(jid)) return this.avatarPending.get(jid);
+    const p = this.avatarLookup(jid, c).finally(() => this.avatarPending.delete(jid));
+    (this.avatarPending ||= new Map()).set(jid, p);
+    return p;
+  }
+
+  /**
+   * Busca a foto no WhatsApp. Uma de cada vez, com 1,5 s entre elas e no máximo
+   * 150 por dia: centenas de consultas seguidas (ex.: logo após sincronizar)
+   * são um dos motivos de o WhatsApp marcar o número como "atividade suspeita".
+   */
+  avatarLookup(jid, c) {
+    const run = async () => {
+      const day = new Date().toDateString();
+      if (this.avatarDay !== day) { this.avatarDay = day; this.avatarCount = 0; }
+      if (this.avatarCount >= 150 || !this.sock || this.state.state !== 'open') return c.avatar_file || null;
+      this.avatarCount++;
+      const r = await this.fetchAvatar(jid);
+      await new Promise((ok) => setTimeout(ok, 1500));
+      return r;
+    };
+    const p = (this.avatarChain || Promise.resolve()).then(run, run);
+    this.avatarChain = p.catch(() => null);
+    return p;
+  }
+
+  async fetchAvatar(jid) {
     let url = null;
     try { url = await this.sock.profilePictureUrl(jid, 'preview', 8000); } catch { url = null; }
     let rel = null;
