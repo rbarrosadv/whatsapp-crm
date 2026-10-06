@@ -9,9 +9,7 @@ $places = @(
   (Join-Path ([Environment]::GetFolderPath('StartMenu')) 'Programs')
 )
 foreach ($dir in $places) {
-  # atalho do app antigo (mesmo programa, nome novo)
-  $old = Join-Path $dir 'WhatsApp CRM.lnk'
-  if (Test-Path $old) { Remove-Item $old -ErrorAction SilentlyContinue }
+  # o atalho "WhatsApp CRM" (app antigo, WhatsApp pessoal) fica: são programas separados
   try {
     $lnk = $shell.CreateShortcut((Join-Path $dir 'Barros Associados.lnk'))
     $lnk.TargetPath = $exe

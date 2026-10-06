@@ -35,12 +35,13 @@ export const DEFAULT_CHARGE_TEMPLATE = 'Olá, {nome}! Tudo bem? Passando para le
 export const RISKY_EXT = new Set(['exe', 'bat', 'cmd', 'com', 'scr', 'msi', 'msp', 'ps1', 'vbs', 'vbe', 'js', 'jse', 'wsf', 'wsh',
   'lnk', 'hta', 'jar', 'reg', 'pif', 'cpl', 'msc', 'dll', 'appx', 'msix', 'url', 'scf', 'inf', 'sys']);
 
-/** Pasta de dados padrão (a mesma do app antigo no Windows, para não perder nada). */
+/** Pasta de dados padrão quando CRM_DATA_DIR não é informado. */
 export function defaultDataDir(demo) {
   const base = process.env.APPDATA || (process.platform === 'darwin'
     ? path.join(os.homedir(), 'Library', 'Application Support')
     : path.join(os.homedir(), '.config'));
-  return path.join(base, demo ? 'WhatsAppCRM-Demo' : 'WhatsAppCRM');
+  // própria do sistema novo: o WhatsApp CRM antigo (pasta WhatsAppCRM) continua à parte
+  return path.join(base, demo ? 'BarrosAssociados-Demo' : 'BarrosAssociados', 'dados');
 }
 
 /** Criptografia do token do Google quando não há o cofre do sistema (servidor). */
@@ -342,6 +343,8 @@ export async function createCore({ dataDir, demo = false, version = '', safeStor
       return id;
     },
     'users:roles': () => auth.ROLES,
+    /** Equipe ativa (para escolher responsável) — qualquer perfil vê. */
+    'team:list': () => auth.listUsers().filter((u) => u.active).map((u) => ({ id: u.id, name: u.name })),
     'me:update': (ctx, { name, signature }) => {
       const u = ctx.user;
       auth.saveUser({ id: u.id, name: name ?? u.name, login: u.login, signature: signature ?? u.signature });
@@ -520,7 +523,9 @@ export async function createCore({ dataDir, demo = false, version = '', safeStor
 
     // tarefas
     'tasks:list': (_c, opts) => db.listTasks(opts || {}),
-    'tasks:save': async (_c, task) => {
+    'tasks:save': async (ctx, task) => {
+      // tarefa nova sem responsável escolhido fica com quem criou (nada fica sem dono)
+      if (!task.id && task.assignee_id === undefined) task = { ...task, assignee_id: ctx.user.id };
       const id = db.saveTask(task);
       if (task.calendar_id) {
         // escolheu outra agenda do Google: move o evento para lá
@@ -545,6 +550,43 @@ export async function createCore({ dataDir, demo = false, version = '', safeStor
       db.deleteTask(id);
       if (t?.jid) wa.markChanged(t.jid);
       send('tasks:changed', null);
+    },
+
+    /** Muda a data de várias tarefas de uma vez (ex.: passar as pendentes para amanhã). */
+    'tasks:reschedule': (_c, list) => {
+      for (const { id, due_at } of list || []) {
+        if (!id || !due_at) continue;
+        db.saveTask({ id, due_at });
+        syncTaskLater(id);
+        const jid = db.getTask(id)?.jid;
+        if (jid) wa.markChanged(jid);
+      }
+      send('tasks:changed', null);
+    },
+
+    // painel "Hoje": o que cada pessoa precisa ver ao abrir o sistema.
+    // As faixas de data vêm da janela (fuso de quem está usando, não do servidor).
+    'today:summary': (ctx, { dayStart, dayEnd, weekStart, weekEnd, scope } = {}) => {
+      if (![dayStart, dayEnd, weekStart, weekEnd].every(Number.isFinite)) throw new Error('período inválido');
+      const assignee = scope === 'all' ? null : ctx.user.id;
+      const tasks = db.tasksForDay({ dayStart, dayEnd, weekStart, weekEnd, assignee });
+      const staleDays = Number(settings.staleCaseDays ?? 15);
+      const out = {
+        ...tasks,
+        staleCases: staleDays > 0 ? db.casesWithoutUpdate(staleDays * DAY) : [],
+        staleDays,
+        payments: null,
+      };
+      if (auth.can(ctx.user.role, 'finance:list')) {
+        const soon = dayStart + 8 * DAY;
+        const open = db.listPayments({ status: 'open' });
+        out.payments = {
+          overdue: open.filter((p) => p.due_at && p.due_at < dayStart),
+          dueSoon: open.filter((p) => p.due_at && p.due_at >= dayStart && p.due_at < soon),
+          weekTotal: open.filter((p) => p.due_at && p.due_at >= weekStart && p.due_at < weekEnd).reduce((a, p) => a + p.amount, 0),
+        };
+      }
+      return out;
     },
 
     // configurações do CRM

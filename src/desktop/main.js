@@ -18,9 +18,11 @@ const DEMO = process.argv.includes('--demo') || process.env.CRM_DEMO === '1';
 const NAME = 'Barros Associados';
 const LOCAL_PORT = Number(process.env.CRM_PORT || (DEMO ? 3211 : 3210));
 
-// Pasta de dados do modo local: a mesma do app antigo (nada se perde).
+// Pasta de dados do modo local: própria do sistema novo. NÃO usa a do
+// WhatsApp CRM antigo (%APPDATA%\WhatsAppCRM), que continua rodando à parte
+// com outro WhatsApp (o pessoal).
 const DATA_DIR = process.env.CRM_DATA_DIR
-  || path.join(app.getPath('appData'), DEMO ? 'WhatsAppCRM-Demo' : 'WhatsAppCRM');
+  || path.join(app.getPath('appData'), DEMO ? 'BarrosAssociados-Demo' : 'BarrosAssociados', 'dados');
 app.setPath('userData', path.join(app.getPath('appData'), DEMO ? 'BarrosAssociados-Demo' : 'BarrosAssociados'));
 
 // Identidade no Windows: faz as notificações aparecerem como "Barros Associados".
@@ -45,8 +47,7 @@ let config = {};
 
 function loadConfig() {
   try { config = JSON.parse(fs.readFileSync(CONFIG_FILE(), 'utf-8')); } catch { config = {}; }
-  // primeira vez num computador que já usava o app antigo: continua local, com os mesmos dados
-  if (!config.mode && (DEMO || fs.existsSync(path.join(DATA_DIR, 'crm.sqlite')))) config.mode = 'local';
+  if (!config.mode && DEMO) config.mode = 'local';
 }
 function saveConfig() {
   fs.mkdirSync(path.dirname(CONFIG_FILE()), { recursive: true });

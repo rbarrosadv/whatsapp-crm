@@ -4,14 +4,16 @@
 
 NOVIDADE DA VERSAO 5
 --------------------
-- O programa agora se chama "Barros Associados" (o atalho antigo
-  "WhatsApp CRM" e trocado sozinho pelo novo).
-- Cada pessoa entra com login e senha. Na primeira vez que abrir,
-  o programa pede para criar a conta do socio administrador
-  (nome, login e senha). Depois, em Configuracoes -> Equipe, voce
-  cadastra os advogados e a estagiaria.
-- Neste computador nada muda nos dados: as conversas, casos e a
-  conexao do WhatsApp continuam os mesmos.
+- O sistema novo se chama "Barros Associados" e e um programa
+  SEPARADO do "WhatsApp CRM" antigo. Os dois podem ficar instalados
+  e abertos ao mesmo tempo: o antigo com o WhatsApp pessoal, o novo
+  com o WhatsApp do escritorio. Cada um tem seus dados e seu atalho.
+- Instale o novo numa pasta propria, por exemplo C:\barros-associados
+  (NAO extraia por cima da pasta C:\whatsapp-crm do antigo).
+- Cada pessoa entra com login e senha. Na primeira vez, escolha
+  "Neste computador" (para testar) ou o endereco do servidor do
+  escritorio, e crie a conta do socio administrador. Depois, em
+  Configuracoes -> Equipe, cadastre os advogados e a estagiaria.
 
 O QUE PRECISA
 -------------

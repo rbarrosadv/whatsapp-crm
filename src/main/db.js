@@ -8,7 +8,7 @@ import fs from 'node:fs';
 
 let db;
 
-const SCHEMA_VERSION = 6;
+const SCHEMA_VERSION = 7;
 
 const DEFAULT_PIPELINES = [
   {
@@ -332,6 +332,9 @@ function migrate() {
     );
   `);
   addColumn('activity', 'user_name', 'TEXT');
+  // versão 7: responsável pela tarefa e quando foi concluída (painel do dia)
+  addColumn('tasks', 'assignee_id', 'INTEGER');
+  addColumn('tasks', 'done_at', 'INTEGER');
 
   const version = Number(get('SELECT value FROM meta WHERE key = ?', 'schema')?.value || 0);
   if (version < 1) seedDefaults();
@@ -1178,19 +1181,45 @@ export function addNote(jid, text, caseId) {
 export function deleteNote(id) { run('DELETE FROM notes WHERE id = ?', id); }
 
 // tasks
-export function listTasks({ jid, caseId, includeDone = false } = {}) {
+const TASK_SELECT = `SELECT k.*, c.title AS case_title, c.process_number, u.name AS assignee_name
+  FROM tasks k LEFT JOIN cases c ON c.id = k.case_id LEFT JOIN users u ON u.id = k.assignee_id`;
+
+/** `assignee`: id de uma pessoa → as dela e as sem responsável. */
+export function listTasks({ jid, caseId, includeDone = false, assignee } = {}) {
   const where = [];
   const args = [];
   if (jid) { where.push('k.jid = ?'); args.push(jid); }
   if (caseId) { where.push('k.case_id = ?'); args.push(caseId); }
+  if (assignee) { where.push('(k.assignee_id = ? OR k.assignee_id IS NULL)'); args.push(assignee); }
   if (!includeDone) where.push('k.done = 0');
-  return all(`SELECT k.*, c.title AS case_title, c.process_number FROM tasks k LEFT JOIN cases c ON c.id = k.case_id ${where.length ? `WHERE ${where.join(' AND ')}` : ''}
+  return all(`${TASK_SELECT} ${where.length ? `WHERE ${where.join(' AND ')}` : ''}
               ORDER BY k.done, CASE WHEN k.due_at IS NULL THEN 1 ELSE 0 END, k.due_at, k.id DESC`, ...args);
 }
-export function saveTask({ id, jid, title, due_at, done, case_id, kind, end_at }) {
+
+/** Painel do dia: atrasadas, de hoje (abertas e concluídas hoje) e da semana. */
+export function tasksForDay({ dayStart, dayEnd, weekStart, weekEnd, assignee }) {
+  const mine = assignee ? ' AND (k.assignee_id = ? OR k.assignee_id IS NULL)' : '';
+  const a = assignee ? [assignee] : [];
+  return {
+    overdue: all(`${TASK_SELECT} WHERE k.done = 0 AND k.due_at IS NOT NULL AND k.due_at < ?${mine} ORDER BY k.due_at`, dayStart, ...a),
+    today: all(`${TASK_SELECT} WHERE k.due_at >= ? AND k.due_at < ?${mine} ORDER BY k.done, k.due_at`, dayStart, dayEnd, ...a),
+    week: all(`${TASK_SELECT} WHERE k.due_at >= ? AND k.due_at < ?${mine} ORDER BY k.due_at`, weekStart, weekEnd, ...a),
+    doneToday: get(`SELECT COUNT(*) AS n FROM tasks k WHERE k.done = 1 AND k.done_at >= ? AND k.done_at < ?${mine}`, dayStart, dayEnd, ...a)?.n || 0,
+    noDate: get(`SELECT COUNT(*) AS n FROM tasks k WHERE k.done = 0 AND k.due_at IS NULL${mine}`, ...a)?.n || 0,
+  };
+}
+
+/** Casos abertos sem retorno ao cliente há mais de `ms` (para o painel; não marca aviso). */
+export function casesWithoutUpdate(ms, limit = 20) {
+  return all(`SELECT id, jid, title, COALESCE(last_update_at, created_at) AS since FROM cases
+              WHERE status = 'aberto' AND COALESCE(last_update_at, created_at) < ? ORDER BY since LIMIT ?`, now() - ms, limit);
+}
+export function saveTask({ id, jid, title, due_at, done, case_id, kind, end_at, assignee_id }) {
   if (id) {
     const cur = get('SELECT * FROM tasks WHERE id = ?', id);
     if (!cur) return id;
+    if (assignee_id !== undefined) run('UPDATE tasks SET assignee_id = ? WHERE id = ?', assignee_id || null, id);
+    if (done !== undefined && !!done !== !!cur.done) run('UPDATE tasks SET done_at = ? WHERE id = ?', done ? now() : null, id);
     const newDue = due_at === undefined ? cur.due_at : due_at;
     if (end_at !== undefined || due_at !== undefined) {
       // mantém a duração quando só o início muda
@@ -1206,12 +1235,13 @@ export function saveTask({ id, jid, title, due_at, done, case_id, kind, end_at }
     return id;
   }
   if (case_id && !jid) jid = get('SELECT jid FROM cases WHERE id = ?', case_id)?.jid;
-  return Number(run('INSERT INTO tasks (jid, title, due_at, created_at, case_id, kind, end_at) VALUES (?, ?, ?, ?, ?, ?, ?)',
-    jid || null, title, due_at || null, now(), case_id || null, kind || 'tarefa', end_at || null).lastInsertRowid);
+  return Number(run('INSERT INTO tasks (jid, title, due_at, created_at, case_id, kind, end_at, assignee_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?)',
+    jid || null, title, due_at || null, now(), case_id || null, kind || 'tarefa', end_at || null, assignee_id || null).lastInsertRowid);
 }
 export function deleteTask(id) { run('DELETE FROM tasks WHERE id = ?', id); }
 export function getTask(id) {
-  return get(`SELECT k.*, c.title AS case_title, c.process_number, c.court FROM tasks k LEFT JOIN cases c ON c.id = k.case_id WHERE k.id = ?`, id);
+  return get(`SELECT k.*, c.title AS case_title, c.process_number, c.court, u.name AS assignee_name
+              FROM tasks k LEFT JOIN cases c ON c.id = k.case_id LEFT JOIN users u ON u.id = k.assignee_id WHERE k.id = ?`, id);
 }
 export function setTaskGcal(id, eventId, calendarId) {
   run('UPDATE tasks SET gcal_event_id = ?, gcal_calendar_id = ?, gcal_synced_at = ? WHERE id = ?', eventId, calendarId, now(), id);
