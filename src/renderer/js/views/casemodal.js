@@ -539,9 +539,9 @@ export function receiveDialog(p) {
 }
 
 /** Recibo para imprimir ou salvar em PDF (pela janela de impressão). */
-export async function showReceipt(id) {
+export async function showReceipt(id, { income = false } = {}) {
   let r;
-  try { r = await api('finance:receipt', id); } catch (e) { errToast(e); return; }
+  try { r = await api(income ? 'finance:incomeReceipt' : 'finance:receipt', id); } catch (e) { errToast(e); return; }
   const frame = h('iframe', { class: 'receipt-frame', title: `Recibo nº ${r.number}` });
   frame.srcdoc = r.html;
   modal({

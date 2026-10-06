@@ -83,7 +83,7 @@ Motor (`src/main`, sem Electron apesar do nome da pasta):
   `legacy_pending`, `meta`, `contact_types`, `chat_filters`, `cases`,
   `payments`, `case_docs`, `users`, `sessions`, `doc_index`, `clients`,
   `case_parties`, `case_moves`, `case_steps`, `case_checklist`, `oabs`,
-  `intimations`, `expenses` (migrações por versão em
+  `intimations`, `expenses`, `incomes` (migrações por versão em
   `migrate()`; `meta.schema` guarda a versão atual).
 - `docs.js` — `DocsService`: pasta "BARROS ADVOGADOS" do OneDrive lida
   direto do disco (`settings.docsRoot`, ou `guessRoot()` em
@@ -149,8 +149,12 @@ Motor (`src/main`, sem Electron apesar do nome da pasta):
   previsão de 3 meses) → `finance:dashboard`. Recibo = HTML de
   `finance:receipt` (core `receiptHtml`, dados do escritório `officeName/Doc/
   Address/City`) mostrado num iframe `srcdoc` e impresso/salvo em PDF pela
-  janela de impressão. Tudo `finance:*` (estagiário não vê); excluir despesa
-  só sócio.
+  janela de impressão. **Receita avulsa** (`incomes`, v13): entrada sem
+  processo (consulta, parecer…), cliente opcional (`client_id` ou só
+  `payer_name`); entra no resumo, no caixa (`type='avulsa'`), nos 12 meses e
+  no "recebido por área" como `Avulsa: <categoria>`; recibo pela mesma
+  numeração (`lastReceiptNo` olha parcelas e avulsas). Tudo `finance:*`
+  (estagiário não vê); excluir despesa/receita só sócio.
 - `ogg.js` — remux WebM/Opus (MediaRecorder) → OGG/Opus (mensagem de voz).
 - `google.js` — `GoogleService`: Google Agenda pela API oficial com a chave
   (client_secret JSON, tipo "App para computador") do próprio usuário;

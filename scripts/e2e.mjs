@@ -401,6 +401,18 @@ try {
   await page.click('.view.active .seg:has-text("Fluxo de caixa")');
   await page.waitForSelector('.view.active .table tbody tr:has-text("Aluguel da sala")');
   check(true, 'despesa paga entra no fluxo de caixa');
+  // receita avulsa (sem processo), com recibo
+  await page.click('.view.active .page-head button:has-text("Receita")');
+  await page.fill('.modal .field:has-text("Quem pagou") input', 'João Avulso');
+  await page.fill('.modal label:has-text("Descrição") input', 'Consulta sobre inventário');
+  await page.fill('.modal label:has-text("Valor") input', '350,00');
+  await page.click('.modal button:has-text("Salvar e emitir recibo")');
+  await page.waitForSelector('.modal iframe.receipt-frame');
+  const rec2 = await page.locator('.modal iframe.receipt-frame').evaluate((f) => f.contentDocument.body.innerText);
+  check(/João Avulso/.test(rec2) && /trezentos e cinquenta reais/.test(rec2), 'receita avulsa com recibo');
+  await page.click('.modal:has(iframe.receipt-frame) button:has-text("Fechar")');
+  await page.waitForSelector('.view.active .table tbody tr:has-text("Consulta sobre inventário")');
+  check(true, 'receita avulsa entra no fluxo de caixa');
   await shot(page, '05m-fluxo-caixa');
   await page.click('.view.active .seg:has-text("Inadimplência")');
   await page.waitForSelector('.view.active .table tbody tr:has-text("Carlos Pereira")');

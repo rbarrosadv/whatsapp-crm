@@ -420,18 +420,34 @@ export async function createCore({ dataDir, demo = false, version = '', safeStor
     const p = db.getPayment(id);
     if (!p) throw new Error('Parcela não encontrada');
     if (!p.paid_at) throw new Error('Registre o recebimento antes de emitir o recibo.');
-    const no = db.receiptNumber(id);
     const k = db.getCase(p.case_id);
     const cl = k?.client_id ? db.getClient(k.client_id) : null;
-    const esc = (t) => String(t ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
-    const value = p.paid_amount ?? p.amount;
-    const money = (v) => Number(v).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' });
-    const date = new Date(p.paid_at).toLocaleDateString('pt-BR', { day: 'numeric', month: 'long', year: 'numeric' });
-    const office = settings.officeName || 'Barros Associados';
-    const methods = { pix: 'Pix', dinheiro: 'dinheiro', transferencia: 'transferência bancária', boleto: 'boleto', cartao: 'cartão', cheque: 'cheque' };
     const desc = p.description || 'honorários advocatícios';
     const ref = [desc, p.of_total > 1 && !/parcela/i.test(desc) ? `parcela ${p.seq}/${p.of_total}` : null, k?.title ? `caso “${k.title}”` : null,
       k?.process_number ? `processo nº ${k.process_number}` : null].filter(Boolean).join(', ');
+    return receiptDoc({
+      no: db.receiptNumber(id), value: p.paid_amount ?? p.amount, at: p.paid_at, method: p.method,
+      who: cl?.name || k?.client_name || 'cliente', doc: cl?.cpf ? `${cl.kind === 'pj' ? 'CNPJ' : 'CPF'} ${cl.cpf}` : '', ref,
+    });
+  }
+
+  /** Recibo de receita avulsa (consulta, parecer…). */
+  function incomeReceiptHtml(id) {
+    const i = db.getIncome(id);
+    if (!i) throw new Error('Receita não encontrada');
+    return receiptDoc({
+      no: db.incomeReceiptNumber(id), value: i.amount, at: i.received_at, method: i.method,
+      who: i.who || 'cliente', doc: i.cpf ? `${i.client_kind === 'pj' ? 'CNPJ' : 'CPF'} ${i.cpf}` : '',
+      ref: [i.description, i.category && !i.description.toLowerCase().includes(i.category.toLowerCase()) ? i.category.toLowerCase() : null].filter(Boolean).join(' — '),
+    });
+  }
+
+  function receiptDoc({ no, value, at, method, who, doc, ref }) {
+    const esc = (t) => String(t ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+    const money = (v) => Number(v).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' });
+    const date = new Date(at).toLocaleDateString('pt-BR', { day: 'numeric', month: 'long', year: 'numeric' });
+    const office = settings.officeName || 'Barros Associados';
+    const methods = { pix: 'Pix', dinheiro: 'dinheiro', transferencia: 'transferência bancária', boleto: 'boleto', cartao: 'cartão', cheque: 'cheque' };
     const html = `<!doctype html><html lang="pt-BR"><head><meta charset="utf-8"><title>Recibo nº ${no}</title><style>
       @page { size: A4; margin: 22mm; }
       body { font-family: Georgia, 'Times New Roman', serif; color: #111; font-size: 13.5pt; line-height: 1.6; margin: 0; padding: 24px; background: #fff; }
@@ -449,8 +465,8 @@ export async function createCore({ dataDir, demo = false, version = '', safeStor
       <div class="top"><img src="/assets/logo-barros.jpg" alt=""><div class="office"><b>${esc(office)}</b>${settings.officeDoc ? `<br>${esc(settings.officeDoc)}` : ''}${settings.officeAddress ? `<br>${esc(settings.officeAddress)}` : ''}</div></div>
       <h1>RECIBO</h1><div class="no">Nº ${String(no).padStart(4, '0')}</div>
       <div class="value">${money(value)}</div>
-      <p>Recebemos de <b>${esc(cl?.name || k?.client_name || 'cliente')}</b>${cl?.cpf ? `, ${cl.kind === 'pj' ? 'CNPJ' : 'CPF'} ${esc(cl.cpf)}` : ''}, a importância de
-      <b>${money(value)}</b> (${esc(reais(value))}), referente a ${esc(ref)}${p.method ? `, paga em ${esc(methods[p.method] || p.method)}` : ''}.</p>
+      <p>Recebemos de <b>${esc(who)}</b>${doc ? `, ${esc(doc)}` : ''}, a importância de
+      <b>${money(value)}</b> (${esc(reais(value))}), referente a ${esc(ref)}${method ? `, paga em ${esc(methods[method] || method)}` : ''}.</p>
       <p>Para clareza, firmamos o presente recibo, dando plena quitação do valor acima.</p>
       <p style="text-align:right">${esc(settings.officeCity || 'Cuiabá-MT')}, ${esc(date)}.</p>
       <div class="sign"><div class="line"></div>${esc(office)}${settings.officeDoc ? `<div class="small">${esc(settings.officeDoc)}</div>` : ''}</div>
@@ -998,6 +1014,11 @@ export async function createCore({ dataDir, demo = false, version = '', safeStor
       send('finance:changed');
     },
     'finance:receipt': (_c, id) => receiptHtml(id),
+    // receitas avulsas (sem processo)
+    'finance:incomes': (_c, opts) => db.listIncomes(opts || {}),
+    'finance:saveIncome': (ctx, i) => { const id = db.saveIncome({ ...i, created_by: ctx.user.name }); if (i.client_id) clientChanged(i.client_id); send('finance:changed'); return id; },
+    'finance:deleteIncome': (_c, id) => { db.deleteIncome(id); send('finance:changed'); },
+    'finance:incomeReceipt': (_c, id) => incomeReceiptHtml(id),
     'finance:expenses': (_c, opts) => db.listExpenses(opts || {}),
     'finance:saveExpense': (ctx, e) => {
       const ids = db.saveExpense({ ...e, created_by: ctx.user.name });

@@ -8,7 +8,7 @@ import fs from 'node:fs';
 
 let db;
 
-const SCHEMA_VERSION = 12;
+const SCHEMA_VERSION = 13;
 
 const DEFAULT_PIPELINES = [
   {
@@ -408,6 +408,17 @@ function migrate() {
     );
     CREATE INDEX IF NOT EXISTS expenses_due ON expenses(paid_at, due_at);
     CREATE INDEX IF NOT EXISTS expenses_case ON expenses(case_id);
+  `);
+  // versão 13: receitas avulsas (sem processo: consulta, parecer, acordo…)
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS incomes (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      client_id INTEGER REFERENCES clients(id) ON DELETE SET NULL,
+      payer_name TEXT, description TEXT NOT NULL, category TEXT,
+      amount REAL NOT NULL, received_at INTEGER NOT NULL, method TEXT,
+      receipt_no INTEGER, created_by TEXT, created_at INTEGER NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS incomes_received ON incomes(received_at);
   `);
   addColumn('cases', 'datajud_checked_at', 'INTEGER');
   addColumn('cases', 'datajud_error', 'TEXT');
@@ -1242,8 +1253,45 @@ export function registerPayment(id, { paid_at, paid_amount, method, user_name } 
 export function receiptNumber(id) {
   const p = get('SELECT receipt_no FROM payments WHERE id = ?', id);
   if (p?.receipt_no) return p.receipt_no;
-  const next = (get('SELECT COALESCE(MAX(receipt_no), 0) AS n FROM payments').n || 0) + 1;
+  const next = lastReceiptNo() + 1;
   run('UPDATE payments SET receipt_no = ? WHERE id = ?', next, id);
+  return next;
+}
+const lastReceiptNo = () => Math.max(get('SELECT COALESCE(MAX(receipt_no), 0) AS n FROM payments').n || 0,
+  get('SELECT COALESCE(MAX(receipt_no), 0) AS n FROM incomes').n || 0);
+
+// ------------------------------------------------------------ receitas avulsas
+
+const INCOME_SELECT = `SELECT i.*, COALESCE(cl.name, i.payer_name) AS who, cl.cpf, cl.kind AS client_kind
+  FROM incomes i LEFT JOIN clients cl ON cl.id = i.client_id`;
+export function listIncomes({ clientId, from, to } = {}) {
+  const where = [];
+  const args = [];
+  if (clientId) { where.push('i.client_id = ?'); args.push(clientId); }
+  if (from) { where.push('i.received_at >= ?'); args.push(from); }
+  if (to) { where.push('i.received_at < ?'); args.push(to); }
+  return all(`${INCOME_SELECT} ${where.length ? `WHERE ${where.join(' AND ')}` : ''} ORDER BY i.received_at DESC`, ...args);
+}
+export function getIncome(id) { return get(`${INCOME_SELECT} WHERE i.id = ?`, id); }
+export function saveIncome(i) {
+  const amount = Number(String(i.amount ?? '').replace(/\./g, (m, k, str) => (str.includes(',') ? '' : m)).replace(',', '.'));
+  if (!String(i.description || '').trim()) throw new Error('Descreva a receita.');
+  if (!(amount > 0)) throw new Error('Informe o valor.');
+  const vals = [i.client_id || null, i.client_id ? null : (String(i.payer_name || '').trim() || null), i.description.trim(), i.category || null,
+    amount, i.received_at || now(), i.method || null];
+  if (i.id) {
+    run('UPDATE incomes SET client_id = ?, payer_name = ?, description = ?, category = ?, amount = ?, received_at = ?, method = ? WHERE id = ?', ...vals, i.id);
+    return i.id;
+  }
+  return Number(run(`INSERT INTO incomes (client_id, payer_name, description, category, amount, received_at, method, created_by, created_at)
+                     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`, ...vals, i.created_by || null, now()).lastInsertRowid);
+}
+export function deleteIncome(id) { run('DELETE FROM incomes WHERE id = ?', id); }
+export function incomeReceiptNumber(id) {
+  const r = get('SELECT receipt_no FROM incomes WHERE id = ?', id);
+  if (r?.receipt_no) return r.receipt_no;
+  const next = lastReceiptNo() + 1;
+  run('UPDATE incomes SET receipt_no = ? WHERE id = ?', next, id);
   return next;
 }
 export function markPaymentCharged(id) { run('UPDATE payments SET charged_at = ? WHERE id = ?', now(), id); }
@@ -1273,7 +1321,8 @@ export function financeSummary() {
     overdue: one('SELECT COALESCE(SUM(amount), 0) AS v FROM payments WHERE paid_at IS NULL AND due_at < ?', now()),
     overdueCount: one('SELECT COUNT(*) AS v FROM payments WHERE paid_at IS NULL AND due_at < ?', now()),
     dueMonth: one('SELECT COALESCE(SUM(amount), 0) AS v FROM payments WHERE paid_at IS NULL AND due_at >= ? AND due_at < ?', now(), monthEnd),
-    receivedMonth: one('SELECT COALESCE(SUM(COALESCE(paid_amount, amount)), 0) AS v FROM payments WHERE paid_at >= ? AND paid_at < ?', monthStart, monthEnd),
+    receivedMonth: one('SELECT COALESCE(SUM(COALESCE(paid_amount, amount)), 0) AS v FROM payments WHERE paid_at >= ? AND paid_at < ?', monthStart, monthEnd)
+      + one('SELECT COALESCE(SUM(amount), 0) AS v FROM incomes WHERE received_at >= ? AND received_at < ?', monthStart, monthEnd),
     payableMonth: one('SELECT COALESCE(SUM(amount), 0) AS v FROM expenses WHERE paid_at IS NULL AND due_at < ?', monthEnd),
     payableOverdue: one('SELECT COUNT(*) AS v FROM expenses WHERE paid_at IS NULL AND due_at < ?', now()),
     paidOutMonth: one('SELECT COALESCE(SUM(amount), 0) AS v FROM expenses WHERE paid_at >= ? AND paid_at < ?', monthStart, monthEnd),
@@ -1351,6 +1400,9 @@ export function cashflow(from, to) {
   const reimb = all(`SELECT e.id, 'reembolso' AS type, e.reimbursed_at AS ts, e.amount, NULL AS method, 'Reembolso: ' || e.description AS description,
                        c.title AS case_title, (SELECT name FROM clients WHERE id = c.client_id) AS who
                      FROM expenses e LEFT JOIN cases c ON c.id = e.case_id WHERE e.reimbursed_at >= ? AND e.reimbursed_at < ?`, from, to);
+  const extra = all(`SELECT i.id, 'avulsa' AS type, i.received_at AS ts, i.amount, i.method, i.description, i.category, i.receipt_no,
+                       NULL AS case_title, COALESCE(cl.name, i.payer_name) AS who
+                     FROM incomes i LEFT JOIN clients cl ON cl.id = i.client_id WHERE i.received_at >= ? AND i.received_at < ?`, from, to);
   const outs = all(`SELECT e.id, e.kind AS type, e.paid_at AS ts, e.amount, e.method, e.description, e.category,
                       c.title AS case_title, (SELECT name FROM clients WHERE id = c.client_id) AS who
                     FROM expenses e LEFT JOIN cases c ON c.id = e.case_id WHERE e.paid_at >= ? AND e.paid_at < ?`, from, to);
@@ -1358,9 +1410,9 @@ export function cashflow(from, to) {
   // previsto no período (ainda em aberto)
   const toReceive = get('SELECT COALESCE(SUM(amount), 0) AS v FROM payments WHERE paid_at IS NULL AND due_at >= ? AND due_at < ?', from, to).v;
   const toPay = get('SELECT COALESCE(SUM(amount), 0) AS v FROM expenses WHERE paid_at IS NULL AND due_at >= ? AND due_at < ?', from, to).v;
-  const entries = [...ins.map((x) => ({ ...x, dir: 'in' })), ...reimb.map((x) => ({ ...x, dir: 'in' })), ...outs.map((x) => ({ ...x, dir: 'out' }))]
-    .sort((a, b) => a.ts - b.ts);
-  return { entries, totalIn: sum(ins) + sum(reimb), totalOut: sum(outs), toReceive, toPay };
+  const entries = [...ins.map((x) => ({ ...x, dir: 'in' })), ...reimb.map((x) => ({ ...x, dir: 'in' })), ...extra.map((x) => ({ ...x, dir: 'in' })),
+    ...outs.map((x) => ({ ...x, dir: 'out' }))].sort((a, b) => a.ts - b.ts);
+  return { entries, totalIn: sum(ins) + sum(reimb) + sum(extra), totalOut: sum(outs), toReceive, toPay };
 }
 
 /** Entradas e saídas mês a mês (últimos `months` meses, terminando no mês de `ref`). */
@@ -1373,7 +1425,8 @@ export function cashflowMonths(months = 12, ref = now()) {
     const e = new Date(d); e.setMonth(e.getMonth() + 1);
     const to = e.getTime();
     const inV = get('SELECT COALESCE(SUM(COALESCE(paid_amount, amount)), 0) AS v FROM payments WHERE paid_at >= ? AND paid_at < ?', from, to).v
-      + get('SELECT COALESCE(SUM(amount), 0) AS v FROM expenses WHERE reimbursed_at >= ? AND reimbursed_at < ?', from, to).v;
+      + get('SELECT COALESCE(SUM(amount), 0) AS v FROM expenses WHERE reimbursed_at >= ? AND reimbursed_at < ?', from, to).v
+      + get('SELECT COALESCE(SUM(amount), 0) AS v FROM incomes WHERE received_at >= ? AND received_at < ?', from, to).v;
     const outV = get('SELECT COALESCE(SUM(amount), 0) AS v FROM expenses WHERE paid_at >= ? AND paid_at < ?', from, to).v;
     out.push({ month: `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`, in: inV, out: outV });
     d.setMonth(d.getMonth() + 1);
@@ -1387,9 +1440,12 @@ export function financeBreakdown(monthFrom, monthTo, yearFrom) {
     byCategory: all(`SELECT COALESCE(category, CASE kind WHEN 'custa' THEN 'Custas de processo' ELSE 'Outras' END) AS label, SUM(amount) AS value
                      FROM expenses WHERE COALESCE(paid_at, due_at) >= ? AND COALESCE(paid_at, due_at) < ?
                      GROUP BY label ORDER BY value DESC`, monthFrom, monthTo),
-    byArea: all(`SELECT COALESCE(NULLIF(TRIM(c.area), ''), 'Sem área') AS label, SUM(COALESCE(p.paid_amount, p.amount)) AS value
-                 FROM payments p JOIN cases c ON c.id = p.case_id WHERE p.paid_at >= ?
-                 GROUP BY label ORDER BY value DESC`, yearFrom),
+    byArea: all(`SELECT label, SUM(value) AS value FROM (
+                   SELECT COALESCE(NULLIF(TRIM(c.area), ''), 'Sem área') AS label, COALESCE(p.paid_amount, p.amount) AS value
+                   FROM payments p JOIN cases c ON c.id = p.case_id WHERE p.paid_at >= ?
+                   UNION ALL
+                   SELECT 'Avulsa: ' || COALESCE(category, 'outras') AS label, amount AS value FROM incomes WHERE received_at >= ?
+                 ) GROUP BY label ORDER BY value DESC`, yearFrom, yearFrom),
     receivables: all(`SELECT p.id, p.amount, p.due_at, COALESCE(p.description, 'Honorários') AS description, c.title AS case_title,
                         (SELECT name FROM clients WHERE id = c.client_id) AS who
                       FROM payments p JOIN cases c ON c.id = p.case_id

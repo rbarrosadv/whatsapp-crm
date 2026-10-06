@@ -259,7 +259,7 @@ function clientDocs(el, c) {
 }
 
 async function clientFinance(el, c) {
-  const all = await api('finance:list', {}).catch(() => []);
+  const [all, incomes, fin] = await Promise.all([api('finance:list', {}).catch(() => []), api('finance:incomes', { clientId: c.id }).catch(() => []), import('./finance.js')]);
   const mine = all.filter((p) => p.client_id === c.id);
   const open = mine.filter((p) => !p.paid_at);
   const total = (l) => l.reduce((a, p) => a + p.amount, 0);
@@ -269,7 +269,11 @@ async function clientFinance(el, c) {
       h('div', { class: 'stat' }, h('div', { class: 'stat-value money' }, fmtMoney(total(mine) - total(open))), h('div', { class: 'stat-label' }, 'Recebido')),
       h('div', { class: `stat ${open.some((p) => p.due_at < Date.now()) ? 'stat-bad' : ''}` }, h('div', { class: 'stat-value money' }, fmtMoney(total(open))), h('div', { class: 'stat-label' }, 'A receber'))),
     mine.length ? h('table', { class: 'table' }, h('tbody', null, mine.map((p) => paymentRow(p, { showCase: true }))))
-      : h('p', { class: 'muted' }, 'Nenhuma parcela. Os honorários são lançados na ficha de cada processo.'));
+      : h('p', { class: 'muted' }, 'Nenhuma parcela. Os honorários são lançados na ficha de cada processo.'),
+    h('div', { class: 'panel' },
+      h('div', { class: 'panel-head' }, h('h3', null, '➕ Receitas avulsas (consultas, pareceres…)'),
+        h('button', { class: 'btn btn-sm', onclick: () => fin.incomeDialog({ client_id: c.id, who: c.name }) }, '＋ Receita')),
+      incomes.length ? h('table', { class: 'table compact' }, h('tbody', null, incomes.map(fin.incomeRow))) : h('p', { class: 'muted small' }, 'Nenhuma.')));
 }
 
 async function clientHistory(el, c) {

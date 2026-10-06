@@ -4,7 +4,7 @@
 import { h, fill, fmtMoney, normalize, debounce, errToast, toast, confirmDialog, modal, toLocalInput } from '../util.js';
 import { state, on, api, openClient } from '../store.js';
 import { emptyState } from '../components.js';
-import { paymentRow, newCaseDialog, openCase } from './casemodal.js';
+import { paymentRow, newCaseDialog, openCase, showReceipt } from './casemodal.js';
 import { columnChart, barChart } from '../charts.js';
 
 let root;
@@ -21,6 +21,7 @@ const day = (ts) => (ts ? new Date(ts).toLocaleDateString('pt-BR') : '—');
 export const EXPENSE_CATEGORIES = ['Aluguel', 'Condomínio', 'Energia', 'Água', 'Internet e telefone', 'Sistemas e assinaturas', 'Material de escritório',
   'Contador', 'Impostos', 'Salários e encargos', 'Pró-labore', 'OAB e anuidades', 'Marketing', 'Deslocamento', 'Outras'];
 export const COST_CATEGORIES = ['Custas judiciais', 'Diligência de oficial', 'Perícia', 'Cópias e autenticações', 'Cartório', 'Correios', 'Deslocamento', 'Outras'];
+export const INCOME_CATEGORIES = ['Consulta', 'Parecer', 'Acordo extrajudicial', 'Contrato ou documento avulso', 'Audiência ou diligência avulsa', 'Outras'];
 export const METHODS = [['pix', 'Pix'], ['transferencia', 'Transferência'], ['dinheiro', 'Dinheiro'], ['boleto', 'Boleto'], ['cartao', 'Cartão'], ['cheque', 'Cheque']];
 
 export function mountFinance(el) {
@@ -49,6 +50,7 @@ async function render() {
         [['painel', '📊 Painel'], ['receber', '⬇ A receber'], ['pagar', '⬆ A pagar'], ['caixa', '💵 Fluxo de caixa'], ['inadimplencia', '⚠ Inadimplência']]
           .map(([id, label]) => h('button', { class: `seg ${tab === id ? 'active' : ''}`, onclick: () => { tab = id; render(); } }, label))),
       h('div', { class: 'row' },
+        h('button', { class: 'btn', title: 'Entrada sem processo: consulta, parecer, acordo…', onclick: () => incomeDialog({}) }, '＋ Receita'),
         h('button', { class: 'btn', onclick: () => expenseDialog({}) }, '＋ Despesa'),
         h('button', { class: 'btn', onclick: () => newCaseDialog(null) }, '＋ Processo'))),
     body);
@@ -131,6 +133,7 @@ async function renderDashboard(el, my) {
 // ------------------------------------------------------------ a receber
 
 async function renderReceivables(el, my) {
+  if (filter === 'avulsas') return renderIncomes(el, my);
   const [sum, pays] = await Promise.all([api('finance:summary'), api('finance:list', { status: filter === 'all' ? undefined : filter })]);
   if (my !== loading) return;
   const nq = normalize(q);
@@ -144,7 +147,7 @@ async function renderReceivables(el, my) {
       stat('Recebido este mês', fmtMoney(sum.receivedMonth), 'stat-ok', null, () => { filter = 'paid'; render(); }),
       stat('Total em aberto', fmtMoney(sum.openTotal), '', null, () => { filter = 'open'; render(); })),
     h('div', { class: 'row wrap finance-bar' },
-      h('div', { class: 'chips' }, chip('overdue', '⚠ Vencidas'), chip('upcoming', '📅 A vencer'), chip('open', 'Em aberto'), chip('paid', '✔ Pagas'), chip('all', 'Todas')),
+      h('div', { class: 'chips' }, chip('overdue', '⚠ Vencidas'), chip('upcoming', '📅 A vencer'), chip('open', 'Em aberto'), chip('paid', '✔ Pagas'), chip('all', 'Todas'), chip('avulsas', '➕ Receitas avulsas')),
       h('input', { class: 'input search', type: 'search', placeholder: 'Cliente, processo…', value: q, oninput: debounce((e) => { q = e.target.value; render(); }, 250) }),
       h('div', { class: 'grow' }),
       h('span', { class: 'muted' }, `${list.length} parcela(s) · `, h('span', { class: 'money-total' }, fmtMoney(total))),
@@ -155,6 +158,92 @@ async function renderReceivables(el, my) {
         h('tbody', null, list.map((p) => paymentRow(p, { showCase: true })))))
       : emptyState('💰', filter === 'overdue' ? 'Nenhuma parcela vencida 🎉' : 'Nenhuma parcela aqui',
         'Os honorários são lançados dentro de cada processo (aba 💰 Honorários da ficha).'));
+}
+
+async function renderIncomes(el, my) {
+  const list = await api('finance:incomes', {}).catch((e) => { errToast(e); return []; });
+  if (my !== loading) return;
+  const chip = (key, label) => h('button', { class: `chip ${filter === key ? 'active' : ''}`, onclick: () => { filter = key; render(); } }, label);
+  fill(el,
+    h('div', { class: 'row wrap finance-bar' },
+      h('div', { class: 'chips' }, chip('overdue', '⚠ Vencidas'), chip('upcoming', '📅 A vencer'), chip('open', 'Em aberto'), chip('paid', '✔ Pagas'), chip('all', 'Todas'), chip('avulsas', '➕ Receitas avulsas')),
+      h('div', { class: 'grow' }),
+      h('span', { class: 'muted' }, `${list.length} receita(s) · `, h('span', { class: 'money-total' }, fmtMoney(list.reduce((a, i) => a + i.amount, 0)))),
+      h('button', { class: 'btn btn-primary btn-sm', onclick: () => incomeDialog({}) }, '＋ Receita avulsa')),
+    list.length ? h('div', { class: 'table-wrap' }, h('table', { class: 'table' },
+      h('thead', null, h('tr', null, ['Data', 'Quem pagou', 'Descrição', 'Forma', 'Valor', ''].map((t) => h('th', null, t)))),
+      h('tbody', null, list.map(incomeRow))))
+      : emptyState('➕', 'Nenhuma receita avulsa', 'Consultas, pareceres e outros valores recebidos sem processo entram aqui (botão “＋ Receita”).'));
+}
+
+export function incomeRow(i) {
+  const methods = Object.fromEntries(METHODS);
+  return h('tr', null,
+    h('td', null, day(i.received_at)),
+    h('td', null, i.client_id ? h('a', { href: '#', onclick: (e) => { e.preventDefault(); openClient(i.client_id); } }, i.who) : (i.who || h('span', { class: 'muted' }, '—'))),
+    h('td', null, i.description, i.category ? h('div', { class: 'muted small' }, i.category) : null),
+    h('td', { class: 'small' }, methods[i.method] || ''),
+    h('td', { class: 'num' }, h('b', null, fmtMoney(i.amount))),
+    h('td', { class: 'actions' },
+      h('button', { class: 'btn btn-sm', onclick: () => showReceipt(i.id, { income: true }) }, i.receipt_no ? `🧾 nº ${i.receipt_no}` : '🧾 Recibo'),
+      h('button', { class: 'icon-btn small', title: 'Editar', onclick: () => incomeDialog(i) }, '✎'),
+      state.can.admin ? h('button', {
+        class: 'icon-btn small', title: 'Excluir',
+        onclick: async () => { if (await confirmDialog(`Excluir “${i.description}”?`, { okLabel: 'Excluir', danger: true })) api('finance:deleteIncome', i.id).catch(errToast); },
+      }, '🗑') : null));
+}
+
+/** Receita avulsa: entrada sem processo (consulta, parecer, acordo…). Cliente é opcional. */
+export async function incomeDialog(i = {}) {
+  let clientId = i.client_id || null;
+  const who = h('input', { class: 'input', type: 'search', value: i.who || '', placeholder: 'Nome do cliente (ou de quem pagou)' });
+  const picks = h('div', { class: 'picker-list short' });
+  const tag = h('div', { class: 'small muted' });
+  const showTag = () => fill(tag, clientId ? ['👤 cliente cadastrado ', h('a', { href: '#', onclick: (e) => { e.preventDefault(); clientId = null; showTag(); } }, '(desligar)')] : 'Sem cadastro: o nome vai só no recibo.');
+  const search = debounce(async () => {
+    const qv = who.value.trim();
+    if (qv.length < 2) { fill(picks); return; }
+    const list = await api('clients:list', { q: qv }).catch(() => []);
+    fill(picks, list.slice(0, 6).map((c) => h('div', {
+      class: `picker-item ${clientId === c.id ? 'active' : ''}`,
+      onclick: () => { clientId = c.id; who.value = c.name; fill(picks); showTag(); },
+    }, h('div', null, h('b', null, c.name), c.cpf ? h('span', { class: 'muted small' }, ` · ${c.cpf}`) : null))));
+  }, 200);
+  who.addEventListener('input', () => { clientId = null; showTag(); search(); });
+  showTag();
+  const desc = h('input', { class: 'input', value: i.description || '', placeholder: 'Ex.: Consulta sobre inventário' });
+  const cat = h('select', { class: 'input' }, INCOME_CATEGORIES.map((c) => h('option', { value: c, selected: c === i.category }, c)));
+  const amount = h('input', { class: 'input', value: i.amount != null ? Number(i.amount).toLocaleString('pt-BR', { minimumFractionDigits: 2 }) : '', placeholder: '0,00', inputmode: 'decimal' });
+  const date = h('input', { class: 'input', type: 'date', value: toLocalInput(i.received_at || Date.now()).slice(0, 10) });
+  const method = h('select', { class: 'input' }, METHODS.map(([v, l]) => h('option', { value: v, selected: v === (i.method || 'pix') }, l)));
+  const save = async (receipt) => {
+    try {
+      const id = await api('finance:saveIncome', {
+        id: i.id, client_id: clientId, payer_name: clientId ? null : who.value, description: desc.value, category: cat.value,
+        amount: amount.value, received_at: new Date(`${date.value}T12:00`).getTime(), method: method.value,
+      });
+      toast('Receita registrada', 'success');
+      if (receipt) setTimeout(() => showReceipt(id, { income: true }), 50);
+      return true;
+    } catch (e) { errToast(e); return false; }
+  };
+  modal({
+    title: i.id ? 'Editar receita avulsa' : '➕ Receita avulsa',
+    body: h('div', { class: 'form' },
+      h('div', { class: 'field' }, h('span', null, 'Quem pagou'), who, picks, tag),
+      h('label', { class: 'field' }, h('span', null, 'Descrição'), desc),
+      h('div', { class: 'grid2' },
+        h('label', { class: 'field' }, h('span', null, 'Categoria'), cat),
+        h('label', { class: 'field' }, h('span', null, 'Valor (R$)'), amount),
+        h('label', { class: 'field' }, h('span', null, 'Recebido em'), date),
+        h('label', { class: 'field' }, h('span', null, 'Forma'), method)),
+      h('p', { class: 'muted small' }, 'Para honorários de um processo, lance na ficha do processo (aba Honorários).')),
+    actions: [
+      { label: 'Cancelar' },
+      { label: 'Salvar', onClick: () => save(false) },
+      { label: 'Salvar e emitir recibo', primary: true, onClick: () => save(true) },
+    ],
+  });
 }
 
 // ------------------------------------------------------------ a pagar
@@ -269,7 +358,7 @@ async function renderCash(el, my) {
       stat('Saldo', h('span', { class: 'money plain' }, fmtMoney(cf.totalIn - cf.totalOut)), cf.totalIn - cf.totalOut < 0 ? 'stat-bad' : 'stat-ok'),
       stat('Ainda previsto no mês', h('span', { class: 'money plain' }, fmtMoney(cf.toReceive - cf.toPay)), '', `a receber ${fmtMoney(cf.toReceive)} · a pagar ${fmtMoney(cf.toPay)}`)),
     cf.entries.length ? h('div', { class: 'table-wrap' }, h('table', { class: 'table' },
-      h('thead', null, h('tr', null, ['Data', 'Descrição', 'Forma', 'Entrada', 'Saída', 'Saldo'].map((t) => h('th', { class: ['Entrada', 'Saída', 'Saldo'].includes(t) ? 'num' : '' }, t)))),
+      h('thead', null, h('tr', null, ['Data', 'Descrição', 'Forma', 'Entrada', 'Saída', 'Saldo', ''].map((t) => h('th', { class: ['Entrada', 'Saída', 'Saldo'].includes(t) ? 'num' : '' }, t)))),
       h('tbody', null, cf.entries.map((x) => {
         running += x.dir === 'in' ? x.amount : -x.amount;
         return h('tr', null,
@@ -278,7 +367,9 @@ async function renderCash(el, my) {
           h('td', { class: 'small' }, methods[x.method] || x.method || ''),
           h('td', { class: 'num' }, x.dir === 'in' ? fmtMoney(x.amount) : ''),
           h('td', { class: 'num' }, x.dir === 'out' ? fmtMoney(x.amount) : ''),
-          h('td', { class: `num ${running < 0 ? 'bad-text' : ''}` }, fmtMoney(running)));
+          h('td', { class: `num ${running < 0 ? 'bad-text' : ''}` }, fmtMoney(running)),
+          h('td', null, x.type === 'honorario' || x.type === 'avulsa'
+            ? h('button', { class: 'icon-btn small', title: 'Recibo', onclick: () => showReceipt(x.id, { income: x.type === 'avulsa' }) }, '🧾') : null));
       }))))
       : emptyState('💵', 'Nenhuma movimentação neste mês', 'Entram aqui as parcelas recebidas, os reembolsos de custas e as despesas pagas.'));
 }

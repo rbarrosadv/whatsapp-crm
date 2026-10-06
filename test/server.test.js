@@ -492,3 +492,26 @@ test('painel do financeiro: mês atual x anterior, 12 meses, categorias, áreas,
   assert.ok(Array.isArray(d.payables) && Array.isArray(d.receivables));
   assert.ok(d.defaulters.length >= 1);
 });
+
+test('receita avulsa: com cliente ou só o nome, entra no caixa e no painel, recibo na mesma numeração', async () => {
+  const c = client();
+  await c.req('/auth/login', { body: { login: 'barros', password: 'segredo1' } });
+  const cid = await c.call('clients:save', { name: 'Consulente Cadastrado', cpf: '222.222.222-22' });
+  const a = await c.call('finance:saveIncome', { client_id: cid, description: 'Consulta jurídica', category: 'Consulta', amount: '350,00', method: 'pix' });
+  const b = await c.call('finance:saveIncome', { payer_name: 'João Avulso', description: 'Parecer sobre contrato', category: 'Parecer', amount: 1200, method: 'dinheiro' });
+  await assert.rejects(c.call('finance:saveIncome', { description: 'x', amount: 0 }), /valor/);
+  const ra = await c.call('finance:incomeReceipt', a);
+  const rb = await c.call('finance:incomeReceipt', b);
+  assert.equal(rb.number, ra.number + 1, 'mesma sequência de recibos');
+  assert.match(ra.html, /Consulente Cadastrado<\/b>, CPF 222\.222\.222-22/);
+  assert.match(ra.html, /trezentos e cinquenta reais/);
+  assert.match(rb.html, /João Avulso/);
+  const from = new Date(); from.setDate(1); from.setHours(0, 0, 0, 0);
+  const to = new Date(from); to.setMonth(to.getMonth() + 1);
+  const cf = await c.call('finance:cashflow', { from: from.getTime(), to: to.getTime() });
+  assert.ok(cf.entries.some((e) => e.type === 'avulsa' && e.who === 'João Avulso' && e.amount === 1200));
+  const y = new Date(from); y.setMonth(y.getMonth() - 11);
+  const d = await c.call('finance:dashboard', { monthFrom: from.getTime(), monthTo: to.getTime(), yearFrom: y.getTime() });
+  assert.ok(d.byArea.some((x) => x.label === 'Avulsa: Parecer' && x.value === 1200));
+  assert.equal((await c.call('finance:incomes', { clientId: cid })).length, 1, 'aparece na ficha do cliente');
+});
