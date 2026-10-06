@@ -36,7 +36,7 @@ const SOCIO = { name: 'Rafael Barros', login: 'barros', password: 'segredo1' };
 async function startServer(extraEnv, dir) {
   const port = nextPort++;
   const srv = spawn(process.execPath, ['src/server/server.js', '--demo', '--port', String(port)], {
-    cwd: ROOT, env: { ...process.env, CRM_DATA_DIR: dir, CRM_DEMO_QR_MS: '1500', ...extraEnv },
+    cwd: ROOT, env: { ...process.env, CRM_DATA_DIR: dir, CRM_DEMO_QR_MS: '5000', ...extraEnv },
   });
   srv.stderr.on('data', (d) => { const t = String(d); if (/Error|erro/i.test(t) && !/Experimental/.test(t)) errors.push(`servidor: ${t.trim()}`); });
   for (let i = 0; i < 60; i++) {
@@ -87,6 +87,10 @@ try {
 
   // 2) conecta e sincroniza conversas
   await page.waitForSelector('.connect-overlay.hidden', { state: 'attached', timeout: 15000 });
+  // o sistema abre no painel "Hoje"
+  await page.waitForSelector('.view-today.active .today-alert', { timeout: 15000 });
+  check(true, 'abre no painel Hoje');
+  await page.click('.rail-btn[title="Conversas"]');
   await page.waitForSelector('.chat-row', { timeout: 15000 });
   const rows = await page.locator('.chat-row').count();
   check(rows >= 5, `lista de conversas sincronizada (${rows})`);
@@ -337,11 +341,11 @@ try {
   await page.waitForTimeout(300);
   check(await page.locator('.tg-event:has-text("Reunião com sócio")').count() === 0, 'esconder uma agenda some com os eventos dela');
   await page.locator('.cal-item', { hasText: 'Escritório' }).locator('input').check();
-  await page.click('.segmented .seg:has-text("Mês")');
+  await page.click('.view-agenda .segmented .seg:has-text("Mês")');
   await page.waitForSelector('.mo-grid .ev-chip');
   await shot(page, '05a-agenda-mes');
   check(true, 'visão de mês');
-  await page.click('.segmented .seg:has-text("Semana")');
+  await page.click('.view-agenda .segmented .seg:has-text("Semana")');
   await page.locator('.tg-event:has-text("Audiência Carlos x Transportes")').click();
   await page.waitForSelector('.modal button:has-text("Carlos Pereira")');
   check(true, 'detalhes do compromisso ligam ao cliente');
@@ -354,8 +358,8 @@ try {
   const blur = await page.locator('.chat-row .chat-preview').first().evaluate((el) => getComputedStyle(el).filter);
   check(blur.includes('blur'), 'modo discreto embaça as prévias (Ctrl+Shift+D)');
   await page.click('.rail-btn[title="Financeiro"]');
-  await page.waitForSelector('.stat-value');
-  check((await page.locator('.stat-value').first().evaluate((el) => getComputedStyle(el).filter)).includes('blur'), 'modo discreto embaça os valores');
+  await page.waitForSelector('.view.active .stat-value');
+  check((await page.locator('.view.active .stat-value').first().evaluate((el) => getComputedStyle(el).filter)).includes('blur'), 'modo discreto embaça os valores');
   await shot(page, '05c-modo-discreto');
   await page.click('.rail-btn[title^="Modo discreto"]');
   await page.waitForSelector('body:not(.discreet)');
@@ -363,7 +367,7 @@ try {
 
   // 6b) financeiro
   await page.click('.rail-btn[title="Financeiro"]');
-  await page.waitForSelector('.stat');
+  await page.waitForSelector('.view.active .stat');
   await page.click('.chips .chip:has-text("Vencidas")');
   await page.waitForSelector('.table tbody tr:has-text("Carlos Pereira")');
   check(true, 'parcela vencida aparece no Financeiro');
@@ -372,7 +376,21 @@ try {
   await page.waitForSelector('.table tbody tr:has-text("Mariana Souza")');
   check(true, 'parcela recebida aparece em Pagas');
 
-  // 7) outras telas
+  // 7) painel Hoje com o que foi criado até aqui
+  await page.click('.rail-btn[title="Hoje"]');
+  await page.waitForSelector('.today-grid');
+  check(await page.locator('.view-today .stat').count() >= 5, 'painel Hoje com os números do dia (sócio vê o a receber)');
+  await page.waitForSelector('.today-group .action-row:has-text("Responder"), .today-group .task', { timeout: 5000 });
+  check(true, 'painel Hoje lista as próximas ações');
+  await shot(page, '05b-hoje');
+  await page.click('.view-today .seg:has-text("Minha semana")');
+  await page.waitForSelector('.week-cols .week-col.today');
+  await shot(page, '05c-semana');
+  check(await page.locator('.week-cols .week-col').count() >= 5, 'semana com os dias úteis');
+  await page.click('.view-today .seg:has-text("Meu dia")');
+  await page.waitForSelector('.today-grid');
+
+  // outras telas
   await page.click('.rail-btn[title="Contatos"]');
   await page.waitForSelector('.table tbody tr');
   await shot(page, '06-contacts');
@@ -382,7 +400,7 @@ try {
   await shot(page, '07-tasks');
   check(true, 'tela de tarefas');
   await page.click('.rail-btn[title="Painel"]');
-  await page.waitForSelector('.stat');
+  await page.waitForSelector('.view.active .stat');
   await shot(page, '08-dashboard');
   await page.click('.rail-btn[title="Configurações"]');
   await page.waitForSelector('.settings-grid');
@@ -431,6 +449,9 @@ try {
   await shot(page, '15-equipe');
   const est = await newPage(app.url);
   await login(est.page, { login: 'isabella', password: 'estagio1' });
+  await est.page.waitForSelector('.view-today .stats');
+  check(await est.page.locator('.view-today .stat:has-text("A receber")').count() === 0, 'painel da estagiária sem valores');
+  await est.page.click('.rail-btn[title="Conversas"]');
   await est.page.waitForSelector('.chat-row');
   check(await est.page.locator('.rail-btn[title="Financeiro"]').count() === 0, 'estagiária não vê o Financeiro');
   const denied = await est.page.evaluate(() => window.api.call('finance:list').then(() => 'ok', (e) => e.message));
@@ -460,6 +481,7 @@ await app.close();
 // 9) reabre: deve entrar direto (sessão salva), com tudo guardado
 ({ app, page } = await launch());
 try {
+  await page.click('.rail-btn[title="Conversas"]');
   await page.waitForSelector('.chat-row', { timeout: 15000 });
   const overlayVisible = await page.locator('.connect-overlay:not(.hidden)').count();
   check(overlayVisible === 0, 'ao reabrir, entra direto sem pedir QR code');
@@ -492,6 +514,7 @@ try {
   await shot(page, '13-pairing');
   check(true, 'mostra código de pareamento pelo número');
   await page.waitForSelector('.connect-overlay.hidden', { state: 'attached', timeout: 10000 });
+  await page.click('.rail-btn[title="Conversas"]');
   await page.waitForSelector('.chat-row');
   check(true, 'conecta após digitar o código no celular');
   // sessão recusada pelo WhatsApp → botão para ler o QR code de novo

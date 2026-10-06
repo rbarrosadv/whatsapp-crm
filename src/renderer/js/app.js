@@ -14,8 +14,10 @@ import { mountFinance } from './views/finance.js';
 import { mountAgenda } from './views/agenda.js';
 import { mountSettings, applyTheme } from './views/settings.js';
 import { mountConnect } from './views/connect.js';
+import { mountToday } from './views/today.js';
 
 const NAV = [
+  ['today', '🏠', 'Hoje'],
   ['inbox', '💬', 'Conversas'],
   ['board', '📊', 'Funil'],
   ['contacts', '👥', 'Contatos'],
@@ -32,6 +34,7 @@ async function main() {
   window.matchMedia('(prefers-color-scheme: dark)').addEventListener('change', applyTheme);
 
   const views = {
+    today: h('div', { class: 'view view-page view-today' }),
     inbox: h('div', { class: 'view view-inbox' }),
     board: h('div', { class: 'view view-board' }),
     contacts: h('div', { class: 'view view-page' }),
@@ -79,6 +82,7 @@ async function main() {
   const main_ = h('main', { class: 'main' }, banner, ...Object.values(views));
   document.getElementById('app').append(nav, main_, overlay);
 
+  mountToday(views.today);
   mountChatList(listCol);
   mountChatView(chatCol, { onTogglePanel: togglePanel });
   mountCrmPanel(crmCol);
@@ -131,7 +135,7 @@ async function main() {
       toggleDiscreet();
       return;
     }
-    if (e.ctrlKey && !e.shiftKey && !e.altKey && /^[1-8]$/.test(e.key)) {
+    if (e.ctrlKey && !e.shiftKey && !e.altKey && /^[1-9]$/.test(e.key)) {
       e.preventDefault();
       const target = [...nav_.map((n) => n[0]), 'settings'][Number(e.key) - 1];
       if (target) setView(target);
@@ -142,7 +146,8 @@ async function main() {
     }
   });
 
-  const initial = nav_.some(([id]) => id === state.settings.lastView) ? state.settings.lastView : 'inbox';
+  // o sistema sempre abre no painel do dia de cada pessoa
+  const initial = 'today';
   state.view = null;
   setView(initial);
   showView(initial);

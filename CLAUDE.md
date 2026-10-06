@@ -124,6 +124,13 @@ Interface (`src/renderer`, JS puro em módulos ES, sem build):
   ignorando null — **não use `el.append(null)`**, imprime "null"),
   formatação, modais, menus, toasts, e arquivos: `mediaUrl`, `openMedia`,
   `saveMedia`, `pickFiles`, `uploadFiles`, `downloadUrl/Blob`, `openExternal`.
+- `js/views/today.js` — tela **Hoje** (entrada do sistema, sempre a 1ª ao
+  abrir): Meu dia (agenda + próximas ações: atrasados, para hoje, clientes
+  aguardando, cobranças — só com `can.finance` —, casos sem retorno) e Minha
+  semana (colunas por dia); "Meus compromissos" × "Escritório todo";
+  fechamento do dia passa pendências para amanhã (`tasks:reschedule`; prazos
+  e audiências não mudam). As faixas de data são calculadas na página (fuso
+  de quem usa) e mandadas para `today:summary`.
 - `js/views/*` — `chatlist`, `chatview` (mensagens + composer + gravação;
   faixa "Fulano está respondendo / também está com esta conversa aberta"),
   `crmpanel` (ficha do contato, com a lista de casos), `casemodal` (ficha do
@@ -144,6 +151,9 @@ Interface (`src/renderer`, JS puro em módulos ES, sem build):
   cada pessoa (`core.USER_KEYS`: tema, avisos, modo discreto…) ficam em
   `users.prefs`; as do escritório (`OFFICE_KEYS`) em `settings`, só sócio muda.
   Opções do computador (bandeja, abrir com o Windows) ficam no app de desktop.
+- **Responsável** (`tasks.assignee_id`, padrão = quem criou; vazio =
+  qualquer pessoa da equipe; `tasks.done_at` conta o que foi feito no dia).
+  `team:list` (todos os perfis) dá nomes para o seletor.
 - **Assinatura**: mensagens enviadas pela equipe saem com `*Assinatura:*` na
   1ª linha (`users.signature`, padrão = primeiro nome; `signMessages` desliga).
   Ao editar, a interface tira e recoloca a assinatura original.

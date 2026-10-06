@@ -161,7 +161,8 @@ export function taskRow(t, { showChat = false } = {}) {
       h('div', { class: 'task-title' }, t.kind && t.kind !== 'tarefa' ? `${TASK_KINDS[t.kind]?.icon || ''} ` : '', t.title),
       h('div', { class: 'task-sub' }, t.due_at ? `${late ? '⚠ ' : ''}${fmtDue(t.due_at)}` : 'Sem data',
         showChat && chat ? h('a', { class: 'link', onclick: (e) => { e.stopPropagation(); openChat(chat.jid); } }, ` · ${chat.display_name}`) : null,
-        t.case_title ? h('a', { class: 'link', onclick: (e) => { e.stopPropagation(); openCase(t.case_id, { tab: 'prazos' }); } }, ` · 📁 ${t.case_title}`) : null)),
+        t.case_title ? h('a', { class: 'link', onclick: (e) => { e.stopPropagation(); openCase(t.case_id, { tab: 'prazos' }); } }, ` · 📁 ${t.case_title}`) : null,
+        t.assignee_name && t.assignee_id !== state.me?.id ? ` · 👤 ${t.assignee_name}` : null)),
     h('button', {
       class: 'icon-btn small', title: 'Excluir',
       onclick: async () => { await api('tasks:delete', t.id).catch(errToast); emitTasks(); },
@@ -193,6 +194,12 @@ export function taskDialog(task = {}) {
   const kindSel = h('select', { class: 'input' },
     Object.entries(TASK_KINDS).map(([k, v]) => h('option', { value: k, selected: (task.kind || 'tarefa') === k }, `${v.icon} ${v.label}`)));
   const caseSel = h('select', { class: 'input' });
+  // responsável: quem cria fica como responsável, a não ser que escolha outra pessoa
+  const assigneeSel = h('select', { class: 'input' }, h('option', { value: '' }, '— Qualquer pessoa da equipe —'));
+  api('team:list').then((team) => {
+    const current = task.id ? task.assignee_id : state.me?.id;
+    assigneeSel.append(...team.map((u) => h('option', { value: String(u.id), selected: u.id === current }, u.id === state.me?.id ? `${u.name} (eu)` : u.name)));
+  }).catch(() => {});
   const loadCases = async () => {
     const list = chatSel.value ? await api('cases:list', { jid: chatSel.value, includeClosed: false }).catch(() => []) : [];
     fill(caseSel, h('option', { value: '' }, list.length ? '— Sem caso —' : '— Contato sem casos —'),
@@ -210,7 +217,8 @@ export function taskDialog(task = {}) {
       quick,
       h('div', { class: 'row' },
         h('label', { class: 'field grow' }, h('span', null, 'Contato'), chatSel),
-        h('label', { class: 'field grow' }, h('span', null, 'Caso'), caseSel))),
+        h('label', { class: 'field grow' }, h('span', null, 'Caso'), caseSel)),
+      h('label', { class: 'field' }, h('span', null, 'Responsável'), assigneeSel)),
     actions: [
       { label: 'Cancelar' },
       {
@@ -221,6 +229,7 @@ export function taskDialog(task = {}) {
           await api('tasks:save', {
             id: task.id, jid: chatSel.value || null, title: title.value.trim(), due_at: fromLocalInput(due.value),
             kind: kindSel.value, case_id: caseSel.value ? Number(caseSel.value) : null,
+            assignee_id: assigneeSel.value ? Number(assigneeSel.value) : null,
           });
           emitTasks();
           return true;

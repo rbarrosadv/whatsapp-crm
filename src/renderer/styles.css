@@ -139,7 +139,7 @@ textarea.input { resize: vertical; }
   border: 0; background: var(--panel-2); color: var(--muted); padding: 5px 12px; border-radius: 16px; cursor: pointer; font-size: 13px;
 }
 .chip:hover { color: var(--text); }
-.chip.active { background: rgba(0, 168, 132, .18); color: var(--accent-2); }
+.chip.active { background: rgba(75, 117, 144, .25); color: var(--accent-2); }
 [data-theme="light"] .chip.active { color: var(--accent); }
 
 /* ------------------------------------------------------------ inbox */
@@ -660,7 +660,7 @@ body.discreet .money,
 body.discreet .money-total,
 body.discreet .fee-late,
 body.discreet .fee-summary b,
-body.discreet .view-page .stat-value,
+body.discreet .view-page:not(.view-today) .stat-value,
 body.discreet .col-total,
 body.discreet .table td.num,
 body.discreet .case-card-foot,
@@ -736,3 +736,42 @@ body.discreet-msgs .reply-bar .quoted:hover {
 .word-chip:hover { background: var(--panel-3); }
 .word-hint { font-size: 11px; opacity: .6; }
 .word-fixed { border: 1px solid var(--border); background: var(--panel); border-radius: 14px; padding: 3px 12px; font-size: 13px; box-shadow: var(--shadow); color: var(--accent); }
+
+/* ---------- Hoje (Meu dia / Minha semana) ---------- */
+.view-today { max-width: 1280px; }
+.stat.clickable { cursor: pointer; }
+.stat.clickable:hover { outline: 1px solid var(--accent); }
+.stat-warn .stat-value { color: #f59e0b; }
+.today-alert { background: color-mix(in srgb, var(--danger) 14%, var(--panel)); border-left: 4px solid var(--danger); border-radius: 10px; padding: 10px 14px; margin-bottom: 16px; font-weight: 500; }
+.today-alert.ok { background: color-mix(in srgb, #22c55e 12%, var(--panel)); border-left-color: #22c55e; }
+.today-grid { display: grid; grid-template-columns: minmax(260px, 1fr) minmax(0, 2fr); gap: 16px; align-items: start; }
+@media (max-width: 900px) { .today-grid { grid-template-columns: 1fr; } }
+.today-title { margin: 0 0 10px; font-size: 16px; }
+.today-group .task-row { margin: 0; }
+.agenda-row { display: flex; gap: 10px; align-items: stretch; padding: 8px 6px; border-radius: 8px; cursor: pointer; }
+.agenda-row:hover { background: var(--panel-2); }
+.agenda-row.done { opacity: .55; }
+.agenda-row.done .agenda-title { text-decoration: line-through; }
+.agenda-time { width: 62px; flex-shrink: 0; font-weight: 600; font-variant-numeric: tabular-nums; }
+.agenda-bar { width: 4px; border-radius: 2px; background: var(--c); flex-shrink: 0; }
+.agenda-title { font-weight: 500; }
+.kind-tag { display: inline-block; font-size: 11px; padding: 1px 7px; border-radius: 10px; background: var(--panel-2); margin-bottom: 2px; }
+.kind-prazo { background: color-mix(in srgb, var(--danger) 20%, var(--panel)); }
+.kind-audiencia { background: color-mix(in srgb, var(--accent) 25%, var(--panel)); }
+.action-row { display: flex; align-items: center; gap: 10px; padding: 8px 4px; border-top: 1px solid var(--border); }
+.action-row:first-of-type { border-top: 0; }
+.action-main { min-width: 0; cursor: pointer; }
+.action-who { font-weight: 600; }
+.action-text { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; color: var(--muted); font-size: 13px; }
+.bad-text { color: var(--danger); }
+.today-week-sum { margin-bottom: 12px; }
+.week-cols { display: grid; grid-template-columns: repeat(var(--n), minmax(140px, 1fr)); gap: 10px; overflow-x: auto; }
+.week-col { background: var(--panel); border-radius: 12px; padding: 10px; display: flex; flex-direction: column; gap: 8px; min-height: 180px; }
+.week-col.today { outline: 2px solid var(--accent); }
+.week-col.past { opacity: .7; }
+.week-head { display: flex; flex-direction: column; text-transform: capitalize; }
+.week-ev { background: var(--panel-2); border-left: 3px solid var(--c); border-radius: 6px; padding: 6px 8px; cursor: pointer; }
+.week-ev.done { opacity: .5; }
+.week-ev-title { font-size: 13px; font-weight: 500; }
+.week-empty { text-align: center; margin-top: 12px; }
+.day-close { display: flex; justify-content: space-between; align-items: center; gap: 12px; flex-wrap: wrap; background: var(--panel); border-radius: 12px; padding: 14px 18px; margin-top: 16px; }

@@ -186,3 +186,37 @@ test('arquivos: envio por /upload e mídia só de dentro da pasta', async () => 
   assert.equal((await c.req('/media/..%2F..%2Fcrm.sqlite')).status, 404);
   await assert.rejects(c.call('messages:sendFiles', chat.jid, ['0'.repeat(32)]), /não encontrado/);
 });
+
+test('painel do dia: compromissos de cada pessoa, atrasados e passar para amanhã', async () => {
+  const c = client();
+  await c.req('/auth/login', { body: { login: 'barros', password: 'segredo1' } });
+  const me = (await c.call('bootstrap')).me;
+  const team = await c.call('team:list');
+  assert.ok(team.some((u) => u.id === me.id), 'equipe lista quem está ativo');
+  assert.ok(team.every((u) => !('password_hash' in u) && !('login' in u)), 'sem dados sensíveis');
+
+  const dayStart = new Date().setHours(0, 0, 0, 0);
+  const DAY = 864e5;
+  const range = { dayStart, dayEnd: dayStart + DAY, weekStart: dayStart - 2 * DAY, weekEnd: dayStart + 5 * DAY };
+  const mine = await c.call('tasks:save', { title: 'Ligar para o cliente', due_at: dayStart + 15 * 3600e3, kind: 'tarefa' });
+  const late = await c.call('tasks:save', { title: 'Protocolar petição', due_at: dayStart - DAY + 10 * 3600e3, kind: 'tarefa' });
+  const other = await c.call('tasks:save', { title: 'Tarefa de outra pessoa', due_at: dayStart + 11 * 3600e3, assignee_id: 999 });
+
+  const s = await c.call('today:summary', { ...range, scope: 'mine' });
+  assert.ok(s.today.some((t) => t.id === mine), 'tarefa nova fica com quem criou');
+  assert.ok(!s.today.some((t) => t.id === other), '"meus" não mostra a de outra pessoa');
+  assert.ok(s.overdue.some((t) => t.id === late), 'atrasada aparece');
+  assert.ok(s.payments, 'sócio recebe o resumo de cobranças');
+  const all = await c.call('today:summary', { ...range, scope: 'all' });
+  assert.ok(all.today.some((t) => t.id === other), 'escritório todo mostra todas');
+  await assert.rejects(c.call('today:summary', {}), /período/);
+
+  await c.call('tasks:save', { id: mine, done: true });
+  assert.ok((await c.call('today:summary', { ...range, scope: 'mine' })).doneToday >= 1, 'conta o que foi concluído hoje');
+
+  const tomorrow = dayStart + DAY + 10 * 3600e3;
+  await c.call('tasks:reschedule', [{ id: late, due_at: tomorrow }]);
+  const after = await c.call('today:summary', { ...range, scope: 'mine' });
+  assert.ok(!after.overdue.some((t) => t.id === late), 'saiu dos atrasados');
+  assert.ok(after.week.some((t) => t.id === late && t.due_at === tomorrow), 'foi para amanhã');
+});
