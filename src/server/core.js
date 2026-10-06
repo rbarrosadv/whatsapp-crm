@@ -165,7 +165,7 @@ export async function createCore({ dataDir, demo = false, version = '', safeStor
     const names = list.slice(0, 3).map((c) => db.getChat(c.jid)?.display_name).filter(Boolean);
     const more = list.length > 3 ? ` e mais ${list.length - 3}` : '';
     notify({
-      kind: 'forgotten', title: `⏳ ${list.length} conversa(s) aguardando resposta há mais de ${hours} h`,
+      kind: 'forgotten', title: `${list.length} conversa(s) aguardando resposta há mais de ${hours} h`,
       body: `${names.join(', ')}${more}`, discreet: '⏳ Conversas aguardando resposta',
       action: list.length === 1 ? { chat: list[0].jid } : { filter: 'awaiting' },
     });
@@ -260,7 +260,7 @@ export async function createCore({ dataDir, demo = false, version = '', safeStor
         db.markTaskNotified(t.id);
         const chat = t.jid ? db.getChat(t.jid) : null;
         notify({
-          kind: 'reminder', title: `⏰ Lembrete${chat ? ` — ${chat.display_name}` : ''}`, body: t.title,
+          kind: 'reminder', title: `Lembrete${chat ? ` — ${chat.display_name}` : ''}`, body: t.title,
           discreet: '⏰ Lembrete', action: t.jid ? { chat: t.jid } : { view: 'tasks' },
         });
         send('tasks:changed', null);
