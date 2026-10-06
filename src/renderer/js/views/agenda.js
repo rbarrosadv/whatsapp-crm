@@ -5,6 +5,7 @@ import {
 } from '../util.js';
 import { state, on, api, openChat, setSetting, setView } from '../store.js';
 import { openCase, TASK_KINDS } from './casemodal.js';
+import { icon } from '../icons.js';
 
 const HOUR_PX = 48;
 const DAY = 864e5;
@@ -93,7 +94,7 @@ function render() {
   fill(root,
     h('div', { class: 'agenda' },
       h('aside', { class: 'agenda-side' },
-        h('button', { class: 'btn btn-primary wide', onclick: () => eventDialog({ start: nextSlot() }) }, '＋ Novo compromisso'),
+        h('button', { class: 'btn btn-primary wide', onclick: () => eventDialog({ start: nextSlot() }) }, [icon('plus', 15), 'Novo compromisso']),
         googleCard(),
         calendarLegend()),
       h('section', { class: 'agenda-body' },
@@ -106,7 +107,7 @@ function render() {
           h('div', { class: 'grow' }),
           h('div', { class: 'segmented' }, seg('day', 'Dia'), seg('week', 'Semana'), seg('month', 'Mês'),
             h('button', { class: 'seg', title: 'Tarefas, prazos e audiências em lista, com filtros', onclick: () => setView('tasks') }, 'Lista'))),
-        lastData.error ? h('div', { class: 'banner warn' }, '⚠ ', lastData.error) : null,
+        lastData.error ? h('div', { class: 'banner warn' }, icon('alert', 16), lastData.error) : null,
         main)));
   if (view === 'month') renderMonth(main); else renderTimeGrid(main, view === 'day' ? 1 : 7);
 }
@@ -136,7 +137,7 @@ function googleCard() {
   const st = gstatus;
   if (!st.configured) {
     return h('div', { class: 'gcard' },
-      h('b', null, '📅 Google Agenda'),
+      h('b', null, 'Google Agenda'),
       h('p', { class: 'muted small' }, 'Conecte para ver todas as suas agendas aqui e enviar prazos e audiências para o Google automaticamente.'),
       h('button', { class: 'btn btn-sm wide', onclick: importKey }, '1. Escolher a chave (.json)'),
       h('button', { class: 'btn btn-sm wide', disabled: true }, '2. Entrar com o Google'),
@@ -144,7 +145,7 @@ function googleCard() {
   }
   if (!st.connected) {
     return h('div', { class: `gcard ${st.needsReconnect ? 'bad' : ''}` },
-      h('b', null, st.needsReconnect ? '⚠ Google Agenda desconectado' : '📅 Google Agenda'),
+      h('b', null, st.needsReconnect ? 'Google Agenda desconectado' : 'Google Agenda'),
       h('p', { class: 'muted small' }, st.needsReconnect
         ? 'A autorização do Google venceu (no modo de teste isso acontece a cada 7 dias). É só reconectar — nada se perde.'
         : 'Chave carregada. Agora entre com a sua conta Google. O navegador vai abrir; se aparecer “O Google não verificou este app”, clique em Avançado → Acessar.'),
@@ -155,12 +156,12 @@ function googleCard() {
           try { gstatus = await api('google:connect'); toast('Google Agenda conectado!', 'success'); } catch (e) { errToast(e); }
           connecting = false; load(true);
         },
-      }, connecting ? 'Aguardando o navegador…' : st.needsReconnect ? '🔄 Reconectar Google' : '2. Entrar com o Google'),
+      }, connecting ? 'Aguardando o navegador…' : st.needsReconnect ? 'Reconectar Google' : '2. Entrar com o Google'),
       h('button', { class: 'btn btn-sm wide', onclick: importKey }, 'Trocar arquivo da chave'));
   }
   const writable = calendars.filter((c) => c.writable);
   return h('div', { class: 'gcard ok' },
-    h('b', null, '✅ Google Agenda conectado'),
+    h('b', null, 'Google Agenda conectado'),
     st.email ? h('div', { class: 'muted small ellipsis' }, st.email) : null,
     h('label', { class: 'check small' },
       h('input', { type: 'checkbox', checked: state.settings.googleSync !== false, onchange: (e) => setSetting('googleSync', e.target.checked).then(() => e.target.checked && api('google:syncAll')).catch(errToast) }),
@@ -192,7 +193,7 @@ function calendarLegend() {
       h('input', { type: 'checkbox', checked: !hid.has(c.id), style: { accentColor: c.color }, onchange: (e) => toggle(c.id, e.target.checked) }),
       h('span', { class: 'cal-dot', style: { background: c.color } }),
       h('span', { class: 'ellipsis' }, c.name))),
-    h('div', { class: 'cal-kinds muted small' }, Object.values(TASK_KINDS).map((k) => `${k.icon} ${k.label}`).join('  ·  ')));
+    h('div', { class: 'cal-kinds muted small' }, Object.values(TASK_KINDS).map((k) => `${k.label}`).join('  ·  ')));
 }
 
 // ---------------------------------------------------------- dia/semana
@@ -320,13 +321,13 @@ function eventDetails(e) {
   const m = modal({
     title: e.title,
     body: h('div', { class: 'form' },
-      h('div', null, '🕘 ', whenText(e)),
+      h('div', null, icon('clock', 16), whenText(e)),
       h('div', null, h('span', { class: 'cal-dot', style: { background: e.color } }), ' ', e.calendarName),
-      e.location ? h('div', null, '📍 ', e.location) : null,
+      e.location ? h('div', null, icon('compass', 16), e.location) : null,
       e.description ? h('div', { class: 'muted small pre' }, e.description) : null,
       h('div', { class: 'row wrap' },
-        chat ? h('button', { class: 'btn btn-sm', onclick: () => { m.close(); openChat(chat.jid); } }, `💬 ${chat.display_name}`) : null,
-        e.caseId ? h('button', { class: 'btn btn-sm', onclick: () => { m.close(); openCase(e.caseId, { tab: 'prazos' }); } }, '📁 Abrir caso') : null,
+        chat ? h('button', { class: 'btn btn-sm', onclick: () => { m.close(); openChat(chat.jid); } }, `${chat.display_name}`) : null,
+        e.caseId ? h('button', { class: 'btn btn-sm', onclick: () => { m.close(); openCase(e.caseId, { tab: 'prazos' }); } }, 'Abrir caso') : null,
         e.htmlLink ? h('button', { class: 'btn btn-sm', onclick: () => openExternal(e.htmlLink) }, 'Abrir no Google') : null)),
     actions: [
       ...(e.writable ? [{
@@ -385,7 +386,7 @@ export async function eventDialog(e = {}) {
   const allDayRow = h('label', { class: 'check' }, allDay, ' Dia todo');
   const kinds = h('div', { class: 'segmented wrap' });
   const drawKinds = () => {
-    const opts = [['evento', '📅 Compromisso'], ...Object.entries(TASK_KINDS).map(([k, v]) => [k, `${v.icon} ${v.label}`])];
+    const opts = [['evento', 'Compromisso'], ...Object.entries(TASK_KINDS).map(([k, v]) => [k, `${v.label}`])];
     fill(kinds, ...opts.filter(([k]) => !(isEdit && ((task && k === 'evento') || (!task && k !== 'evento'))))
       .map(([k, label]) => h('button', {
         class: `seg ${kind === k ? 'active' : ''}`, disabled: k === 'evento' && !canGoogle,

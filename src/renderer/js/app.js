@@ -17,17 +17,18 @@ import { mountConnect } from './views/connect.js';
 import { mountToday } from './views/today.js';
 import { mountDocs } from './views/docs.js';
 import { mountLegal } from './views/legal.js';
+import { icon } from './icons.js';
 
 // O escritório no centro; o WhatsApp é o módulo de Atendimento (um canal).
 // `also`: outras telas que acendem o mesmo botão (sub-telas do módulo).
 const NAV = [
-  ['today', '🏠', 'Hoje'],
-  ['agenda', '📅', 'Agenda', ['tasks']],
-  ['legal', '⚖️', 'Jurídico', ['board']],
-  ['inbox', '💬', 'Atendimento', ['contacts']],
-  ['docs', '📂', 'Documentos'],
-  ['finance', '💰', 'Financeiro'],
-  ['dashboard', '📈', 'Relatórios'],
+  ['today', 'home', 'Hoje'],
+  ['agenda', 'calendar', 'Agenda', ['tasks']],
+  ['legal', 'scale', 'Jurídico', ['board']],
+  ['inbox', 'message', 'Atendimento', ['contacts']],
+  ['docs', 'folder', 'Documentos'],
+  ['finance', 'wallet', 'Financeiro'],
+  ['dashboard', 'chart', 'Relatórios'],
 ]
 
 async function main() {
@@ -58,16 +59,16 @@ async function main() {
   const statusDot = h('span', { class: 'status-dot' });
   const nav = h('nav', { class: 'rail' },
     h('img', { class: 'rail-logo', src: '/assets/icon.png', alt: 'Barros Associados', title: `Barros Associados${state.demo ? ' — demonstração' : ''} · ${state.me.name}` }),
-    ...nav_.map(([id, icon, label]) => {
+    ...nav_.map(([id, ico, label]) => {
       navBtns[id] = h('button', { class: 'rail-btn', title: label, onclick: () => setView(id) },
-        h('span', { class: 'rail-icon' }, icon), h('span', { class: 'rail-label' }, label), id === 'inbox' ? unreadBadge : null);
+        h('span', { class: 'rail-icon' }, icon(ico, 20)), h('span', { class: 'rail-label' }, label), id === 'inbox' ? unreadBadge : null);
       return navBtns[id];
     }),
     h('div', { class: 'grow' }),
     discreetBtn = h('button', { class: 'rail-btn', title: 'Modo discreto (Ctrl+Shift+D): esconde valores e prévias das mensagens', onclick: () => toggleDiscreet() },
-      h('span', { class: 'rail-icon' }, '🕶'), h('span', { class: 'rail-label' }, 'Discreto')),
+      h('span', { class: 'rail-icon' }, icon('eyeOff', 20)), h('span', { class: 'rail-label' }, 'Discreto')),
     navBtns.settings = h('button', { class: 'rail-btn', title: 'Configurações', onclick: () => setView('settings') },
-      h('span', { class: 'rail-icon' }, '⚙️'), h('span', { class: 'rail-label' }, 'Ajustes')),
+      h('span', { class: 'rail-icon' }, icon('settings', 20)), h('span', { class: 'rail-label' }, 'Ajustes')),
     h('div', { class: 'rail-status', title: 'Status da conexão' }, statusDot));
 
   // caixa de entrada: lista | conversa | ficha
@@ -131,7 +132,7 @@ async function main() {
     document.body.classList.toggle('discreet', !!state.settings.discreet);
     document.body.classList.toggle('discreet-msgs', !!state.settings.discreet && !!state.settings.discreetMessages);
     discreetBtn.classList.toggle('on', !!state.settings.discreet);
-    discreetBtn.querySelector('.rail-label').textContent = state.settings.discreet ? 'Discreto ✓' : 'Discreto';
+    discreetBtn.querySelector('.rail-label').textContent = state.settings.discreet ? 'Discreto ligado' : 'Discreto';
   };
   const toggleDiscreet = () => setSetting('discreet', !state.settings.discreet).catch(() => {});
   on('settings', applyDiscreet);

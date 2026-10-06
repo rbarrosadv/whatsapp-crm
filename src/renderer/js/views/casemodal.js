@@ -8,12 +8,13 @@ import { state, on, api, stageById, openChat, openClient } from '../store.js';
 import { avatarEl, caseStageMenu, stagePicker } from '../components.js';
 import { taskRow, taskDialog } from './crmpanel.js';
 import { caseFolderPanel } from './docs.js';
+import { icon } from '../icons.js';
 
 export const TASK_KINDS = {
-  prazo: { icon: '⚠️', label: 'Prazo' },
-  audiencia: { icon: '⚖️', label: 'Audiência' },
-  reuniao: { icon: '🤝', label: 'Reunião' },
-  tarefa: { icon: '✅', label: 'Tarefa' },
+  prazo: { icon: '', label: 'Prazo' },
+  audiencia: { icon: '', label: 'Audiência' },
+  reuniao: { icon: '', label: 'Reunião' },
+  tarefa: { icon: '', label: 'Tarefa' },
 };
 
 const TRIBUNAIS = ['TJMT', 'TRT23', 'TRF1', 'JEF', 'JEC', 'STJ', 'STF', 'TST', 'TRE-MT', 'INSS (administrativo)', 'PROCON'];
@@ -70,7 +71,7 @@ export function newCaseDialog(jid, { stageId, clientId } = {}) {
       input.value.trim() ? h('div', {
         class: 'picker-item',
         onclick: async () => { chosen = await api('clients:save', { name: input.value.trim(), origin: 'Cadastro' }); input.value = ''; draw(); },
-      }, h('div', null, `＋ Cadastrar novo cliente “${input.value.trim()}”`)) : null);
+      }, h('div', null, `Cadastrar novo cliente “${input.value.trim()}”`)) : null);
     };
     input.addEventListener('input', debounceLocal(draw, 200));
     draw();
@@ -136,17 +137,17 @@ export async function openCase(id, { tab = 'dados' } = {}) {
     const st = stageById(k.stage_id);
     const closed = k.status !== 'aberto';
     const since = Date.now() - (k.last_update_at || k.created_at);
-    m.box.querySelector('.modal-head h3').textContent = `📁 ${k.title}`;
+    m.box.querySelector('.modal-head h3').textContent = `${k.title}`;
 
     const pend = full.checklist.filter((i) => i.status !== 'recebido').length;
     const tabs = [
-      ['dados', '📋 Resumo'],
-      ['fluxo', `🧭 Fluxo ${full.flow.done}/${full.flow.total}${pend ? ` · 📄${pend}` : ''}`],
-      ['andamentos', `📜 Andamentos${full.moves.length ? ` (${full.moves.length})` : ''}`],
-      ['prazos', `📅 Prazos${k.open_tasks ? ` (${k.open_tasks})` : ''}`],
-      ['docs', `📎 Documentos${k.docs_count ? ` (${k.docs_count})` : ''}`],
-      state.can.finance ? ['honorarios', `💰 Honorários${k.overdue_payments ? ` ⚠${k.overdue_payments}` : ''}`] : null,
-      ['notas', '📝 Notas'],
+      ['dados', 'Resumo'],
+      ['fluxo', `Fluxo ${full.flow.done}/${full.flow.total}${pend ? ` · ${pend} doc.` : ''}`],
+      ['andamentos', `Andamentos${full.moves.length ? ` (${full.moves.length})` : ''}`],
+      ['prazos', `Prazos${k.open_tasks ? ` (${k.open_tasks})` : ''}`],
+      ['docs', `Documentos${k.docs_count ? ` (${k.docs_count})` : ''}`],
+      state.can.finance ? ['honorarios', `Honorários${k.overdue_payments ? ` ${k.overdue_payments}` : ''}`] : null,
+      ['notas', 'Notas'],
     ].filter(Boolean);
     if (current === 'honorarios' && !state.can.finance) current = 'dados';
     const content = h('div', { class: 'case-content' });
@@ -154,33 +155,33 @@ export async function openCase(id, { tab = 'dados' } = {}) {
       h('div', { class: 'case-head' },
         h('div', { class: 'case-client', onclick: () => { m.close(); if (k.client_id) openClient(k.client_id); }, title: 'Abrir a ficha do cliente' },
           avatarEl(chat, 36), h('div', null, h('b', null, k.client_name || chat.display_name),
-            h('div', { class: 'muted small' }, '👤 ficha do cliente',
-              k.client_jid ? h('a', { href: '#', class: 'case-wa', onclick: (e) => { e.preventDefault(); e.stopPropagation(); m.close(); openChat(k.client_jid); } }, ' · 💬 WhatsApp') : null))),
+            h('div', { class: 'muted small' }, 'ficha do cliente',
+              k.client_jid ? h('a', { href: '#', class: 'case-wa', onclick: (e) => { e.preventDefault(); e.stopPropagation(); m.close(); openChat(k.client_jid); } }, ' · WhatsApp') : null))),
         h('button', {
           class: `stage-btn ${st ? '' : 'unset'}`, style: st ? { '--c': st.color } : null,
           onclick: (e) => caseStageMenu(e.currentTarget, k),
         }, st ? `${st.pipeline.icon || ''} ${st.pipeline.name} → ${st.name}` : 'Escolher etapa', ' ▾'),
         closed ? h('span', { class: 'status-pill muted' }, 'Encerrado') : null,
         h('div', { class: 'case-next', title: 'Próximo passo do fluxo do caso', onclick: () => { current = 'fluxo'; render(); } },
-          h('span', { class: 'muted small' }, 'Próximo passo'), h('b', null, full.flow.next || '✓ Fluxo concluído')),
+          h('span', { class: 'muted small' }, 'Próximo passo'), h('b', null, full.flow.next || 'Fluxo concluído')),
         h('div', { class: 'case-resp' }, h('span', { class: 'muted small' }, 'Responsável'), h('b', null, k.responsible_name || '—')),
         h('button', {
           class: 'icon-btn', title: 'Mais opções',
           onclick: (e) => popupMenu(e.currentTarget, [
-            { icon: '✎', label: 'Renomear caso', onClick: async () => { const t = await promptDialog('Nome do caso', { value: k.title }); if (t) api('cases:save', { id, title: t }).catch(errToast); } },
+            { icon: '', label: 'Renomear caso', onClick: async () => { const t = await promptDialog('Nome do caso', { value: k.title }); if (t) api('cases:save', { id, title: t }).catch(errToast); } },
             closed
               ? { icon: '↺', label: 'Reabrir caso', onClick: () => api('cases:setStatus', id, 'aberto').catch(errToast) }
-              : { icon: '✔', label: 'Encerrar caso', onClick: () => api('cases:setStatus', id, 'encerrado').catch(errToast) },
+              : { icon: '', label: 'Encerrar caso', onClick: () => api('cases:setStatus', id, 'encerrado').catch(errToast) },
             '-',
-            { icon: '🗑', label: 'Excluir caso', danger: true, onClick: async () => {
+            { icon: '', label: 'Excluir caso', danger: true, onClick: async () => {
               if (!await confirmDialog(`Excluir o caso “${k.title}”? As parcelas e a lista de documentos dele também serão apagadas (os arquivos e as mensagens continuam).`, { okLabel: 'Excluir', danger: true })) return;
               await api('cases:delete', id).catch(errToast);
               m.close();
             } },
           ]),
-        }, '⋮')),
+        }, icon('more', 16))),
       closed ? null : h('div', { class: `case-return ${since > (state.settings.staleCaseDays ?? 15) * 864e5 ? 'late' : ''}` },
-        `📣 Último retorno ao cliente: há ${fmtDuration(since)}`,
+        `Último retorno ao cliente: há ${fmtDuration(since)}`,
         h('button', { class: 'btn btn-sm', onclick: () => api('cases:touch', id).then(() => toast('Retorno registrado', 'success')).catch(errToast) }, 'Registrar retorno agora'),
         h('span', { class: 'muted small' }, '(atualiza sozinho quando você manda mensagem para o cliente)')),
       h('div', { class: 'tabs' }, tabs.map(([key, label]) => h('button', {
@@ -234,19 +235,19 @@ export async function openCase(id, { tab = 'dados' } = {}) {
       try { await api('parties:save', { case_id: id, role: role.value, name: name.value, doc: doc.value }); } catch (e) { errToast(e); }
     };
     return h('div', { class: 'panel parties' },
-      h('div', { class: 'panel-head' }, h('h3', null, '👥 Partes')),
+      h('div', { class: 'panel-head' }, h('h3', null, 'Partes')),
       full.parties.length ? h('table', { class: 'table compact' }, h('tbody', null, full.parties.map((p) => h('tr', null,
         h('td', { class: 'muted small' }, roles.get(p.role) || p.role), h('td', null, h('b', null, p.name)), h('td', { class: 'mono small' }, p.doc || ''),
-        h('td', { class: 'num' }, h('button', { class: 'icon-btn small', title: 'Tirar', onclick: () => api('parties:delete', p.id, id).catch(errToast) }, '🗑'))))))
+        h('td', { class: 'num' }, h('button', { class: 'icon-btn small', title: 'Tirar', onclick: () => api('parties:delete', p.id, id).catch(errToast) }, icon('trash', 16)))))))
         : h('p', { class: 'muted small' }, 'Nenhuma parte cadastrada além do cliente.'),
-      h('div', { class: 'row wrap' }, role, name, doc, h('button', { class: 'btn btn-sm', onclick: add }, '＋ Adicionar')));
+      h('div', { class: 'row wrap' }, role, name, doc, h('button', { class: 'btn btn-sm', onclick: add }, [icon('plus', 15), 'Adicionar'])));
   }
 
   // --------------------------------------------------------------- fluxo
   function renderFluxo(el) {
-    const icon = (s) => (s.status === 'done' ? '✅' : s.status === 'na' ? '➖' : '⬜');
+    const stepIcon = (s) => (s.status === 'done' ? icon('check', 16) : s.status === 'na' ? icon('x', 16) : icon('clock', 16));
     const steps = h('div', { class: 'flow' }, full.flow.steps.map((s, i) => h('div', { class: `flow-step ${s.status} ${full.flow.next === s.label ? 'next' : ''}` },
-      h('span', { class: 'flow-icon' }, icon(s)),
+      h('span', { class: 'flow-icon' }, stepIcon(s)),
       h('div', { class: 'grow' },
         h('div', null, h('b', null, `${i + 1}. ${s.label}`), s.progress ? h('span', { class: 'muted small' }, ` · ${s.progress}`) : null),
         h('div', { class: 'muted small' }, s.status === 'done' ? (s.auto ? 'concluída automaticamente' : `concluída${s.by ? ` por ${s.by}` : ''}${s.at ? ` em ${new Date(s.at).toLocaleDateString('pt-BR')}` : ''}`)
@@ -258,7 +259,7 @@ export async function openCase(id, { tab = 'dados' } = {}) {
         : s.auto ? null : h('button', { class: 'btn btn-sm', onclick: () => api('cases:setStep', id, s.key, null).catch(errToast) }, 'Desfazer'))));
     fill(el,
       h('div', { class: 'flow-wrap' },
-        h('div', { class: 'panel' }, h('div', { class: 'panel-head' }, h('h3', null, '🧭 Etapas do caso'), h('span', { class: 'muted small' }, `${full.flow.done} de ${full.flow.total}`)), steps),
+        h('div', { class: 'panel' }, h('div', { class: 'panel-head' }, h('h3', null, 'Etapas do caso'), h('span', { class: 'muted small' }, `${full.flow.done} de ${full.flow.total}`)), steps),
         checklistPanel()));
   }
 
@@ -270,8 +271,8 @@ export async function openCase(id, { tab = 'dados' } = {}) {
     const addItem = async () => { if (newItem.value.trim()) await api('checklist:add', id, [newItem.value]).catch(errToast); };
     newItem.addEventListener('keydown', (e) => { if (e.key === 'Enter') addItem(); });
     return h('div', { class: 'panel' },
-      h('div', { class: 'panel-head' }, h('h3', null, '📄 Documentos do cliente'),
-        full.checklist.length ? h('button', { class: 'btn btn-sm btn-primary', onclick: () => requestDocs([...selected]) }, '📨 Solicitar selecionados') : null),
+      h('div', { class: 'panel-head' }, h('h3', null, 'Documentos do cliente'),
+        full.checklist.length ? h('button', { class: 'btn btn-sm btn-primary', onclick: () => requestDocs([...selected]) }, 'Solicitar selecionados') : null),
       !full.checklist.length && full.suggested ? h('div', { class: 'docs-empty' },
         h('p', { class: 'small' }, `Lista sugerida${full.suggested.area ? ` para ${full.suggested.area}` : ''}:`),
         h('ul', { class: 'small' }, full.suggested.items.map((i) => h('li', null, i))),
@@ -281,10 +282,10 @@ export async function openCase(id, { tab = 'dados' } = {}) {
         h('span', { class: 'grow' }, i.label),
         statusPill(i),
         i.status !== 'recebido'
-          ? h('button', { class: 'btn btn-sm', title: 'Marcar como recebido (e guardar o arquivo, se quiser)', onclick: () => receiveDialog(i) }, '✓ Recebido')
+          ? h('button', { class: 'btn btn-sm', title: 'Marcar como recebido (e guardar o arquivo, se quiser)', onclick: () => receiveDocDialog(i) }, 'Recebido')
           : h('button', { class: 'btn btn-sm', onclick: () => api('checklist:set', [i.id], 'pendente').catch(errToast) }, 'Desfazer'),
-        h('button', { class: 'icon-btn small', title: 'Tirar da lista', onclick: () => api('checklist:delete', i.id).catch(errToast) }, '🗑'))),
-      h('div', { class: 'row' }, newItem, h('button', { class: 'btn btn-sm', onclick: addItem }, '＋')));
+        h('button', { class: 'icon-btn small', title: 'Tirar da lista', onclick: () => api('checklist:delete', i.id).catch(errToast) }, icon('trash', 16)))),
+      h('div', { class: 'row' }, newItem, h('button', { class: 'btn btn-sm', onclick: addItem }, icon('plus', 16))));
   }
 
   async function requestDocs(ids) {
@@ -300,7 +301,7 @@ export async function openCase(id, { tab = 'dados' } = {}) {
       return true;
     };
     modal({
-      title: '📨 Solicitar documentos ao cliente',
+      title: 'Solicitar documentos ao cliente',
       wide: true,
       body: h('div', { class: 'stack' },
         h('p', { class: 'muted small' }, 'Revise o texto. Nada é enviado sem você confirmar.'), ta,
@@ -308,19 +309,19 @@ export async function openCase(id, { tab = 'dados' } = {}) {
       actions: [
         { label: 'Cancelar' },
         { label: 'Copiar e marcar como pedido', onClick: async () => { try { await navigator.clipboard.writeText(ta.value); } catch { /* sem área de transferência */ } return go(false); } },
-        k.client_jid ? { label: '💬 Enviar pelo WhatsApp', primary: true, onClick: () => go(true) } : null,
+        k.client_jid ? { label: 'Enviar pelo WhatsApp', primary: true, onClick: () => go(true) } : null,
       ].filter(Boolean),
     });
   }
 
-  async function receiveDialog(item) {
+  async function receiveDocDialog(item) {
     let files = [];
     const info = h('div', { class: 'muted small' }, 'Nenhum arquivo escolhido (opcional).');
     modal({
       title: `Recebido: ${item.label}`,
       body: h('div', { class: 'stack' },
         h('p', { class: 'small' }, k.folder ? 'O arquivo vai para a pasta do caso no OneDrive, com o nome do documento.' : 'O arquivo fica nos anexos do caso.'),
-        h('div', { class: 'row' }, h('button', { class: 'btn btn-sm', onclick: async () => { files = await pickFiles(); info.textContent = files.length ? files.map((f) => f.name).join(', ') : 'Nenhum arquivo escolhido (opcional).'; } }, '📎 Escolher arquivo'), info)),
+        h('div', { class: 'row' }, h('button', { class: 'btn btn-sm', onclick: async () => { files = await pickFiles(); info.textContent = files.length ? files.map((f) => f.name).join(', ') : 'Nenhum arquivo escolhido (opcional).'; } }, 'Escolher arquivo'), info)),
       actions: [
         { label: 'Cancelar' },
         { label: 'Marcar como recebido', primary: true, onClick: async () => {
@@ -346,7 +347,7 @@ export async function openCase(id, { tab = 'dados' } = {}) {
             const ts = date.value ? new Date(`${date.value}T12:00:00`).getTime() : Date.now();
             try { await api('moves:add', { case_id: id, text: text.value, ts }); } catch (e) { errToast(e); }
           },
-        }, '＋ Registrar andamento')),
+        }, [icon('plus', 15), 'Registrar andamento'])),
         h('div', { class: 'row wrap datajud-row' },
           h('button', {
             class: 'btn btn-sm', disabled: !k.process_number,
@@ -359,14 +360,14 @@ export async function openCase(id, { tab = 'dados' } = {}) {
               } catch (err) { errToast(err); }
               reload();
             },
-          }, '🔄 Atualizar do tribunal (DataJud)'),
+          }, 'Atualizar do tribunal (DataJud)'),
           h('span', { class: `small ${k.datajud_error ? 'bad-text' : 'muted'}` },
             k.datajud_checked_at ? `Consultado em ${fmtDateTime(k.datajud_checked_at)}${k.datajud_error ? ` — ${k.datajud_error}` : ''}` : 'Andamentos do DataJud e intimações do DJEN entram aqui sozinhos.'))),
       full.moves.length ? h('div', { class: 'timeline' }, full.moves.map((mv) => h('div', { class: `tl-item src-${mv.source}` },
         h('div', { class: 'tl-date' }, new Date(mv.ts).toLocaleDateString('pt-BR')),
         h('div', { class: 'grow' }, h('div', { class: 'tl-text' }, mv.text),
           h('div', { class: 'muted small' }, mv.source === 'manual' ? `registrado por ${mv.user_name || 'equipe'}` : mv.source.toUpperCase())),
-        mv.source === 'manual' ? h('button', { class: 'icon-btn small', title: 'Apagar', onclick: async () => { if (await confirmDialog('Apagar este andamento?', { okLabel: 'Apagar', danger: true })) api('moves:delete', mv.id, id).catch(errToast); } }, '🗑') : null)))
+        mv.source === 'manual' ? h('button', { class: 'icon-btn small', title: 'Apagar', onclick: async () => { if (await confirmDialog('Apagar este andamento?', { okLabel: 'Apagar', danger: true })) api('moves:delete', mv.id, id).catch(errToast); } }, icon('trash', 16)) : null)))
         : h('p', { class: 'muted small' }, 'Nenhum andamento registrado.'));
   }
 
@@ -396,9 +397,9 @@ export async function openCase(id, { tab = 'dados' } = {}) {
         overdue ? h('div', null, h('div', { class: 'muted small' }, 'Vencido'), h('b', { class: 'bad-text' }, fmtMoney(overdue))) : null,
         h('div', { class: 'progress', title: `${pct}% recebido` }, h('div', { style: { width: `${pct}%` } }))),
       h('div', { class: 'row wrap' },
-        h('button', { class: 'btn btn-primary btn-sm', onclick: async () => installmentsDialog((await api('cases:get', id).catch(() => null)) || k) }, '＋ Gerar parcelas'),
-        h('button', { class: 'btn btn-sm', onclick: () => paymentDialog({ case_id: id }) }, '＋ Lançar valor avulso'),
-        k.fee_success ? h('button', { class: 'btn btn-sm', onclick: () => successDialog(k) }, '🏆 Lançar êxito') : null),
+        h('button', { class: 'btn btn-primary btn-sm', onclick: async () => installmentsDialog((await api('cases:get', id).catch(() => null)) || k) }, [icon('plus', 15), 'Gerar parcelas']),
+        h('button', { class: 'btn btn-sm', onclick: () => paymentDialog({ case_id: id }) }, [icon('plus', 15), 'Lançar valor avulso']),
+        k.fee_success ? h('button', { class: 'btn btn-sm', onclick: () => successDialog(k) }, 'Lançar êxito') : null),
       pays.length
         ? h('table', { class: 'table compact' },
           h('thead', null, h('tr', null, ['Situação', 'Descrição', 'Vencimento', 'Valor', ''].map((t) => h('th', null, t)))),
@@ -413,8 +414,8 @@ export async function openCase(id, { tab = 'dados' } = {}) {
       const paid = list.filter((e) => e.paid_at).reduce((a, e) => a + e.amount, 0);
       const pending = list.filter((e) => e.paid_at && e.reimbursable && !e.reimbursed_at).reduce((a, e) => a + e.amount, 0);
       fill(box,
-        h('div', { class: 'panel-head' }, h('h3', null, '🧾 Custas e despesas do processo'),
-          h('button', { class: 'btn btn-sm', onclick: () => fin.expenseDialog({ kind: 'custa', case_id: id }) }, '＋ Lançar custa')),
+        h('div', { class: 'panel-head' }, h('h3', null, 'Custas e despesas do processo'),
+          h('button', { class: 'btn btn-sm', onclick: () => fin.expenseDialog({ kind: 'custa', case_id: id }) }, [icon('plus', 15), 'Lançar custa'])),
         list.length ? [
           h('div', { class: 'muted small' }, `Pagas pelo escritório: `, h('b', { class: 'money' }, fmtMoney(paid)), pending ? [' · a reembolsar pelo cliente: ', h('b', { class: 'money bad-text' }, fmtMoney(pending))] : null),
           h('table', { class: 'table compact' }, h('tbody', null, list.map(fin.expenseRow))),
@@ -429,7 +430,7 @@ export async function openCase(id, { tab = 'dados' } = {}) {
     fill(el,
       h('div', { class: 'row wrap' }, Object.entries(TASK_KINDS).map(([kind, v]) => h('button', {
         class: 'btn btn-sm', onclick: () => taskDialog({ jid: k.jid, case_id: id, kind }),
-      }, `＋ ${v.icon} ${v.label}`))),
+      }, `${v.label}`))),
       tasks.length ? h('div', { class: 'task-list' }, tasks.map((t) => taskRow(t)))
         : h('p', { class: 'muted small' }, 'Nenhum prazo ou compromisso. Você recebe um aviso na hora marcada (e, com a agenda do Google conectada, eles aparecem lá também).'));
   }
@@ -448,17 +449,17 @@ export async function openCase(id, { tab = 'dados' } = {}) {
           const files = await pickFiles();
           if (!files.length) return;
           try { toast('Enviando…'); await api('cases:addFiles', id, await uploadFiles(files)); } catch (e) { errToast(e); }
-        } }, '＋ Adicionar do computador'),
+        } }, [icon('plus', 15), 'Adicionar do computador']),
         h('span', { class: 'muted small' }, 'Para guardar um arquivo que o cliente mandou no WhatsApp: na conversa, clique em ▾ na mensagem → “Anexar ao caso” (vai também para a pasta do caso).')),
       docs.length ? h('div', { class: 'doc-list' }, docs.map((d) => h('div', { class: 'doc-row' },
-        h('span', { class: 'doc-icon' }, /image/.test(d.mime || d.name) || /\.(jpe?g|png|webp)$/i.test(d.name) ? '🖼' : /pdf/i.test(d.mime || d.name) ? '📕' : /audio|ogg|mp3/i.test(d.mime || '') ? '🎤' : '📄'),
+        h('span', { class: 'doc-icon' }, /image/.test(d.mime || d.name) || /\.(jpe?g|png|webp)$/i.test(d.name) ? icon('file', 16) : /pdf/i.test(d.mime || d.name) ? icon('file', 16) : /audio|ogg|mp3/i.test(d.mime || '') ? icon('file', 16) : icon('file', 16)),
         h('div', { class: 'grow' }, h('div', { class: 'ellipsis' }, d.name), h('div', { class: 'muted small' }, [fmtDateTime(d.created_at), fmtSize(d.size), d.msg_id ? 'do WhatsApp' : 'do computador'].filter(Boolean).join(' · '))),
         h('button', { class: 'btn btn-sm', onclick: () => openMedia(d.file, d.name).catch(errToast) }, 'Abrir'),
         h('button', { class: 'btn btn-sm', onclick: () => saveMedia(d.file, d.name) }, 'Salvar como…'),
         h('button', {
           class: 'icon-btn small', title: 'Tirar da lista do caso',
           onclick: async () => { if (await confirmDialog(`Tirar “${d.name}” dos documentos do caso?`, { okLabel: 'Tirar', danger: true })) api('cases:deleteDoc', d.id); },
-        }, '🗑'))))
+        }, icon('trash', 16)))))
         : h('p', { class: 'muted small' }, 'Nenhum documento neste caso ainda.'));
   }
 
@@ -473,7 +474,7 @@ export async function openCase(id, { tab = 'dados' } = {}) {
       }, 'Salvar nota')),
       ...notes.map((n) => h('div', { class: 'note' }, h('div', { class: 'note-text' }, n.text),
         h('div', { class: 'note-foot' }, h('span', null, fmtDateTime(n.created_at)),
-          h('button', { class: 'icon-btn small', onclick: async () => { if (await confirmDialog('Apagar esta nota?', { okLabel: 'Apagar', danger: true })) { await api('notes:delete', n.id); reload(); } } }, '🗑')))));
+          h('button', { class: 'icon-btn small', onclick: async () => { if (await confirmDialog('Apagar esta nota?', { okLabel: 'Apagar', danger: true })) { await api('notes:delete', n.id); reload(); } } }, icon('trash', 16))))));
   }
 
   await reload();
@@ -488,23 +489,23 @@ export function paymentRow(p, { showCase = false } = {}) {
     h('td', null, h('span', { class: `status-pill ${st.cls}` }, st.label)),
     showCase ? h('td', null, h('a', { class: 'link', onclick: () => (p.client_id ? openClient(p.client_id) : openChat(p.jid)) }, p.client_name || chat?.display_name || 'Cliente'),
       h('div', { class: 'muted small ellipsis' }, h('a', { class: 'link', onclick: () => openCase(p.case_id, { tab: 'honorarios' }) }, p.case_title))) : null,
-    h('td', null, p.description || 'Honorários', p.charged_at ? h('div', { class: 'muted small' }, `📤 cobrado em ${new Date(p.charged_at).toLocaleDateString('pt-BR')}`) : null),
+    h('td', null, p.description || 'Honorários', p.charged_at ? h('div', { class: 'muted small' }, `cobrado em ${new Date(p.charged_at).toLocaleDateString('pt-BR')}`) : null),
     h('td', null, p.due_at ? new Date(p.due_at).toLocaleDateString('pt-BR') : '—',
       p.paid_at ? h('div', { class: 'muted small' }, `paga em ${new Date(p.paid_at).toLocaleDateString('pt-BR')}`) : null),
     h('td', { class: 'num' }, h('b', null, fmtMoney(p.amount))),
     h('td', { class: 'actions' },
       p.paid_at
-        ? h('button', { class: 'btn btn-sm', title: 'Desfazer pagamento', onclick: () => api('finance:setPaid', p.id, false).catch(errToast) }, '↺')
-        : h('button', { class: 'btn btn-sm btn-ok', onclick: () => receiveDialog(p) }, '✔ Recebi'),
-      p.paid_at ? null : h('button', { class: 'btn btn-sm', onclick: () => chargeDialog(p.id) }, '📤 Cobrar'),
+        ? h('button', { class: 'btn btn-sm', title: 'Desfazer pagamento', onclick: () => api('finance:setPaid', p.id, false).catch(errToast) }, icon('undo', 16))
+        : h('button', { class: 'btn btn-sm btn-ok', onclick: () => receiveDialog(p) }, 'Recebi'),
+      p.paid_at ? null : h('button', { class: 'btn btn-sm', onclick: () => chargeDialog(p.id) }, 'Cobrar'),
       h('button', {
         class: 'icon-btn small', title: 'Mais',
         onclick: (e) => popupMenu(e.currentTarget, [
-          p.paid_at ? { icon: '🧾', label: p.receipt_no ? `Recibo nº ${p.receipt_no}` : 'Emitir recibo', onClick: () => showReceipt(p.id) } : null,
-          { icon: '✎', label: 'Editar parcela', onClick: () => paymentDialog(p) },
-          { icon: '🗑', label: 'Excluir parcela', danger: true, onClick: async () => { if (await confirmDialog('Excluir esta parcela?', { okLabel: 'Excluir', danger: true })) api('finance:delete', p.id).catch(errToast); } },
+          p.paid_at ? { icon: '', label: p.receipt_no ? `Recibo nº ${p.receipt_no}` : 'Emitir recibo', onClick: () => showReceipt(p.id) } : null,
+          { icon: '', label: 'Editar parcela', onClick: () => paymentDialog(p) },
+          { icon: '', label: 'Excluir parcela', danger: true, onClick: async () => { if (await confirmDialog('Excluir esta parcela?', { okLabel: 'Excluir', danger: true })) api('finance:delete', p.id).catch(errToast); } },
         ]),
-      }, '⋮')));
+      }, icon('more', 16))));
 }
 
 /** Registrar o recebimento: data, valor recebido e forma; depois, o recibo. */
@@ -545,13 +546,13 @@ export async function showReceipt(id, { income = false } = {}) {
   const frame = h('iframe', { class: 'receipt-frame', title: `Recibo nº ${r.number}` });
   frame.srcdoc = r.html;
   modal({
-    title: `🧾 Recibo nº ${String(r.number).padStart(4, '0')}`,
+    title: `Recibo nº ${String(r.number).padStart(4, '0')}`,
     wide: true,
     body: h('div', { class: 'stack' }, frame,
       h('p', { class: 'muted small' }, 'Para salvar em PDF: Imprimir → escolha “Salvar como PDF” (ou “Microsoft Print to PDF”).')),
     actions: [
       { label: 'Fechar' },
-      { label: '🖨 Imprimir / salvar PDF', primary: true, onClick: () => { frame.contentWindow.focus(); frame.contentWindow.print(); return false; } },
+      { label: 'Imprimir / salvar PDF', primary: true, onClick: () => { frame.contentWindow.focus(); frame.contentWindow.print(); return false; } },
     ],
   });
 }
@@ -642,7 +643,7 @@ export async function chargeDialog(paymentId) {
   try { text = await api('finance:chargeText', paymentId); } catch (e) { errToast(e); return; }
   const ta = h('textarea', { class: 'input', rows: 7 }, text);
   modal({
-    title: '📤 Enviar cobrança pelo WhatsApp',
+    title: 'Enviar cobrança pelo WhatsApp',
     body: h('div', { class: 'form' },
       h('p', { class: 'muted small' }, 'Confira a mensagem antes de enviar. O modelo e a chave PIX ficam em Configurações → Honorários e cobrança.'),
       ta),

@@ -5,6 +5,7 @@ import { state, on, api, openChat, setSetting } from '../store.js';
 import { avatarEl, caseStageMenu, emptyState } from '../components.js';
 import { pipelineEditor } from './settings.js';
 import { openCase, newCaseDialog, feeLabel } from './casemodal.js';
+import { icon } from '../icons.js';
 
 let root;
 let q = '';
@@ -28,8 +29,8 @@ async function render() {
   const scrollLeft = root.querySelector('.board-cols')?.scrollLeft || 0;
   const pipe = currentPipeline();
   if (!pipe) {
-    fill(root, emptyState('📊', 'Nenhum funil criado', 'Crie um funil com as etapas do seu trabalho.',
-      h('button', { class: 'btn btn-primary', onclick: () => pipelineEditor() }, '＋ Criar funil')));
+    fill(root, emptyState(icon('kanban', 16), 'Nenhum funil criado', 'Crie um funil com as etapas do seu trabalho.',
+      h('button', { class: 'btn btn-primary', onclick: () => pipelineEditor() }, [icon('plus', 15), 'Criar funil'])));
     return;
   }
   const cases = await api('cases:list', { pipelineId: pipe.id, includeClosed: showClosed }).catch(() => []);
@@ -43,12 +44,12 @@ async function render() {
       class: `tab ${p.id === pipe.id ? 'active' : ''}`,
       onclick: () => setSetting('lastPipeline', p.id).then(render),
     }, `${p.icon || ''} ${p.name}`)),
-    h('button', { class: 'tab add', title: 'Novo funil', onclick: () => pipelineEditor() }, '＋')),
+    h('button', { class: 'tab add', title: 'Novo funil', onclick: () => pipelineEditor() }, icon('plus', 16))),
     h('div', { class: 'row' },
       search,
       h('label', { class: 'check small' }, h('input', { type: 'checkbox', checked: showClosed, onchange: (e) => { showClosed = e.target.checked; render(); } }), ' Mostrar encerrados'),
-      h('button', { class: 'btn', onclick: () => pipelineEditor(pipe) }, '✎ Editar etapas'),
-      h('button', { class: 'btn btn-primary', onclick: () => newCaseDialog(null, { stageId: pipe.stages[0]?.id }) }, '＋ Novo caso')));
+      h('button', { class: 'btn', onclick: () => pipelineEditor(pipe) }, 'Editar etapas'),
+      h('button', { class: 'btn btn-primary', onclick: () => newCaseDialog(null, { stageId: pipe.stages[0]?.id }) }, [icon('plus', 15), 'Novo caso'])));
   const cols = h('div', { class: 'board-cols' });
   root.append(head, cols);
 
@@ -83,7 +84,7 @@ function column(pipe, stage, cases) {
     h('div', { class: 'col-title' }, h('span', { class: 'dot' }), stage.name, h('span', { class: 'count' }, cases.length)),
     total ? h('div', { class: 'col-total' }, fmtMoney(total)) : null),
   h('div', { class: 'col-cards' }, cases.map(card)),
-  h('button', { class: 'col-add', onclick: () => newCaseDialog(null, { stageId: stage.id }) }, '＋ Novo caso'));
+  h('button', { class: 'col-add', onclick: () => newCaseDialog(null, { stageId: stage.id }) }, [icon('plus', 15), 'Novo caso']));
   return col;
 }
 
@@ -106,13 +107,13 @@ function card(k) {
     h('button', {
       class: 'icon-btn small', title: c.unread ? `${c.unread} mensagem(ns) não lida(s) — abrir conversa` : 'Abrir conversa',
       onclick: (e) => { e.stopPropagation(); openChat(k.jid); },
-    }, c.unread ? h('span', { class: 'badge' }, c.unread) : '💬')),
+    }, c.unread ? h('span', { class: 'badge' }, c.unread) : icon('message', 16))),
   k.process_number ? h('div', { class: 'muted small mono ellipsis' }, k.process_number) : null,
   k.area || k.court ? h('div', { class: 'muted small ellipsis' }, [k.area, k.court].filter(Boolean).join(' · ')) : null,
   h('div', { class: 'card-foot' },
     k.billed_total
-      ? h('span', { class: k.overdue_payments ? 'bad-text small' : 'money' }, k.overdue_payments ? `⚠ ${k.overdue_payments} vencida(s)` : `${fmtMoney(k.paid_total)} / ${fmtMoney(k.billed_total)}`)
+      ? h('span', { class: k.overdue_payments ? 'bad-text small' : 'money' }, k.overdue_payments ? `${k.overdue_payments} vencida(s)` : `${fmtMoney(k.paid_total)} / ${fmtMoney(k.billed_total)}`)
       : k.fee_total ? h('span', { class: 'money' }, fmtMoney(k.fee_total)) : h('span', { class: 'muted small' }, feeLabel(k)),
-    k.next_due ? h('span', { class: `task-flag ${late ? 'late' : ''}`, title: 'Próximo prazo/compromisso' }, `📅 ${fmtDue(k.next_due)}`) : null,
+    k.next_due ? h('span', { class: `task-flag ${late ? 'late' : ''}`, title: 'Próximo prazo/compromisso' }, `${fmtDue(k.next_due)}`) : null,
     h('span', { class: 'muted small', title: 'Tempo nesta etapa' }, `⏱ ${fmtDuration(Date.now() - (k.stage_changed_at || k.created_at))}`)));
 }

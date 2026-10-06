@@ -151,7 +151,7 @@ export async function createCore({ dataDir, demo = false, version = '', safeStor
     const who = chat.is_group ? `${chat.display_name} — ${msg.sender_name || 'alguém'}` : chat.display_name;
     notify({
       kind: 'message', chatJid, title: who, body: db.previewOf(msg).slice(0, 180),
-      discreet: '💬 Nova mensagem', action: { chat: chatJid },
+      discreet: 'Nova mensagem', action: { chat: chatJid },
     });
   }
 
@@ -178,16 +178,16 @@ export async function createCore({ dataDir, demo = false, version = '', safeStor
       db.markPaymentsNotified(upcoming.map((p) => p.id), 'upcoming');
       const total = upcoming.reduce((a, p) => a + p.amount, 0);
       notify({
-        kind: 'finance', audience: 'finance', title: `💰 ${upcoming.length} parcela(s) de honorários vencendo em até ${days} dia(s)`,
-        body: `Total ${money(total)}`, discreet: '💰 Honorários vencendo', action: { view: 'finance' },
+        kind: 'finance', audience: 'finance', title: `${upcoming.length} parcela(s) de honorários vencendo em até ${days} dia(s)`,
+        body: `Total ${money(total)}`, discreet: 'Honorários vencendo', action: { view: 'finance' },
       });
     }
     if (overdue.length) {
       db.markPaymentsNotified(overdue.map((p) => p.id), 'overdue');
       const total = overdue.reduce((a, p) => a + p.amount, 0);
       notify({
-        kind: 'finance', audience: 'finance', title: `⚠ ${overdue.length} parcela(s) de honorários vencida(s)`,
-        body: `Total ${money(total)} — abra o Financeiro para cobrar`, discreet: '⚠ Honorários vencidos', action: { view: 'finance' },
+        kind: 'finance', audience: 'finance', title: `${overdue.length} parcela(s) de honorários vencida(s)`,
+        body: `Total ${money(total)} — abra o Financeiro para cobrar`, discreet: 'Honorários vencidos', action: { view: 'finance' },
       });
     }
     const staleDays = Number(settings.staleCaseDays ?? 15);
@@ -197,9 +197,9 @@ export async function createCore({ dataDir, demo = false, version = '', safeStor
         db.markCasesAlerted(stale.map((c) => c.id));
         const names = stale.slice(0, 3).map((c) => `${db.getChat(c.jid)?.display_name || ''} (${c.title})`);
         notify({
-          kind: 'cases', title: `📣 ${stale.length} caso(s) sem notícia ao cliente há mais de ${staleDays} dias`,
+          kind: 'cases', title: `${stale.length} caso(s) sem notícia ao cliente há mais de ${staleDays} dias`,
           body: `${names.join(', ')}${stale.length > 3 ? ` e mais ${stale.length - 3}` : ''}`,
-          discreet: '📣 Casos sem retorno ao cliente',
+          discreet: 'Casos sem retorno ao cliente',
           action: stale.length === 1 ? { chat: stale[0].jid } : { view: 'board' },
         });
       }
@@ -243,7 +243,7 @@ export async function createCore({ dataDir, demo = false, version = '', safeStor
     if (st.needsReconnect && !warnedReconnect) {
       warnedReconnect = true;
       notify({
-        kind: 'google', title: '📅 Reconectar Google Agenda',
+        kind: 'google', title: 'Reconectar Google Agenda',
         body: 'A conexão com o Google expirou (acontece a cada 7 dias no modo de teste). Clique para reconectar.',
         action: { view: 'agenda' },
       });
@@ -331,8 +331,8 @@ export async function createCore({ dataDir, demo = false, version = '', safeStor
             if (result.new <= 10) {
               notifyCase(kc, {
                 kind: 'intimation',
-                title: `📣 Intimação${it.doc_kind ? ` (${it.doc_kind})` : ''} — ${kc ? `${kc.client_name || ''}: ${kc.title}` : it.process_number}`,
-                body: short(it.text), discreet: '📣 Nova intimação',
+                title: `Intimação${it.doc_kind ? ` (${it.doc_kind})` : ''} — ${kc ? `${kc.client_name || ''}: ${kc.title}` : it.process_number}`,
+                body: short(it.text), discreet: 'Nova intimação',
               }, { fallbackUserId: o.user_id });
             }
             if (row.case_id) {
@@ -350,7 +350,7 @@ export async function createCore({ dataDir, demo = false, version = '', safeStor
       db.setSetting('djenLastRun', Date.now());
       settings.djenLastRun = Date.now();
       if (result.new) {
-        if (result.new > 10) notify({ kind: 'intimation', title: `📣 ${result.new} intimações novas no DJEN`, body: 'Abra Jurídico → Intimações para conferir e criar os prazos.', action: { view: 'legal', tab: 'intimacoes' } });
+        if (result.new > 10) notify({ kind: 'intimation', title: `${result.new} intimações novas no DJEN`, body: 'Abra Jurídico → Intimações para conferir e criar os prazos.', action: { view: 'legal', tab: 'intimacoes' } });
         send('intimations:changed', null);
         for (const id of touched) caseChanged(db.getCase(id));
       }
@@ -399,9 +399,9 @@ export async function createCore({ dataDir, demo = false, version = '', safeStor
       for (const { k, n, last } of changed) {
         notifyCase(k, {
           kind: 'moves',
-          title: `📜 Andamento novo — ${k.client_name ? `${k.client_name}: ` : ''}${k.title}`,
+          title: `Andamento novo — ${k.client_name ? `${k.client_name}: ` : ''}${k.title}`,
           body: `${last ? short(last.text) : ''}${n > 1 ? ` (e mais ${n - 1})` : ''}`,
-          discreet: '📜 Andamento novo em processo',
+          discreet: 'Andamento novo em processo',
         });
       }
     } finally { datajudRunning = false; }
@@ -1194,7 +1194,7 @@ export async function createCore({ dataDir, demo = false, version = '', safeStor
       googleRequester = ctx.conn;
       const st = await google.connect();
       calSync.syncAll().then((n) => {
-        if (n) notify({ kind: 'google', title: '📅 Google Agenda conectado', body: `${n} compromisso(s) do CRM enviados para a sua agenda.` }, { conn: ctx.conn });
+        if (n) notify({ kind: 'google', title: 'Google Agenda conectado', body: `${n} compromisso(s) do CRM enviados para a sua agenda.` }, { conn: ctx.conn });
       }).catch(() => {});
       return st;
     },

@@ -7,6 +7,7 @@ import {
 import { state, on, emit, api, stageById, openChat, openClient, typeById } from '../store.js';
 import { avatarEl, typeMenu } from '../components.js';
 import { openCase, newCaseDialog, TASK_KINDS, feeLabel } from './casemodal.js';
+import { icon } from '../icons.js';
 
 let root;
 let jid = null;
@@ -85,7 +86,7 @@ function renderTop() {
         class: `stage-btn wide ${typeById(chat.type_id) ? '' : 'unset'}`,
         style: typeById(chat.type_id) ? { '--c': typeById(chat.type_id).color } : null,
         onclick: (e) => typeMenu(e.currentTarget, chat),
-      }, typeById(chat.type_id) ? `${typeById(chat.type_id).icon || ''} ${typeById(chat.type_id).name}` : '❓ Não classificado', ' ▾')),
+      }, typeById(chat.type_id) ? `${typeById(chat.type_id).icon || ''} ${typeById(chat.type_id).name}` : 'Não classificado', ' ▾')),
     h('div', { class: 'crm-block' }, h('div', { class: 'crm-label' }, 'Etiquetas'), tagBox),
     h('div', { class: 'crm-block crm-fields' },
       field('Nome no CRM', 'custom_name', chat, { placeholder: chat.contact_name || chat.notify || chat.name || '' }),
@@ -100,7 +101,7 @@ function clientBlock(chat) {
   if (chat.client_id) {
     return h('div', { class: 'crm-block client-link' },
       h('div', { class: 'crm-label' }, 'Cliente do escritório'),
-      h('button', { class: 'btn wide', onclick: () => openClient(chat.client_id) }, '👤 Abrir ficha do cliente'));
+      h('button', { class: 'btn wide', onclick: () => openClient(chat.client_id) }, 'Abrir ficha do cliente'));
   }
   return h('div', { class: 'crm-block client-link' },
     h('div', { class: 'crm-label' }, 'Cliente do escritório'),
@@ -109,7 +110,7 @@ function clientBlock(chat) {
       h('button', {
         class: 'btn btn-sm btn-primary',
         onclick: async () => { try { const id = await api('clients:fromChat', chat.jid); toast('Cliente cadastrado', 'success'); openClient(id); } catch (e) { errToast(e); } },
-      }, '＋ Cadastrar como cliente'),
+      }, [icon('plus', 15), 'Cadastrar como cliente']),
       h('button', { class: 'btn btn-sm', onclick: () => linkToExisting(chat) }, 'Ligar a cliente existente')));
 }
 
@@ -143,8 +144,8 @@ async function renderCases() {
   const closed = cases.filter((k) => k.status !== 'aberto');
   fill(el,
     h('div', { class: 'crm-section-head' },
-      h('h4', null, `📁 Casos${open.length ? ` (${open.length})` : ''}`),
-      h('button', { class: 'btn btn-sm', onclick: () => newCaseDialog(myJid) }, '＋ Novo caso')),
+      h('h4', null, `Casos${open.length ? ` (${open.length})` : ''}`),
+      h('button', { class: 'btn btn-sm', onclick: () => newCaseDialog(myJid) }, [icon('plus', 15), 'Novo caso'])),
     cases.length ? null : h('div', { class: 'muted small' }, 'Nenhum caso. Crie um para acompanhar processo, prazos, documentos e honorários.'),
     ...open.map(caseCard),
     closed.length ? h('details', { class: 'closed-cases' }, h('summary', { class: 'muted small' }, `${closed.length} caso(s) encerrado(s)`), ...closed.map(caseCard)) : null);
@@ -157,9 +158,9 @@ function caseCard(k) {
     st ? h('div', { class: 'small' }, h('span', { class: 'stage-pill small', style: { '--c': st.color } }, st.name), h('span', { class: 'muted' }, ` ${st.pipeline.name}`)) : null,
     k.process_number ? h('div', { class: 'muted small mono' }, k.process_number) : null,
     h('div', { class: 'case-card-foot small' },
-      k.billed_total ? h('span', null, `💰 ${fmtMoney(k.paid_total)} / ${fmtMoney(k.billed_total)}`) : (feeLabel(k) ? h('span', { class: 'muted' }, feeLabel(k)) : null),
-      k.overdue_payments ? h('span', { class: 'bad-text' }, `⚠ ${k.overdue_payments} vencida(s)`) : null,
-      k.next_due ? h('span', { class: k.next_due < Date.now() ? 'bad-text' : 'muted' }, `📅 ${fmtDue(k.next_due)}`) : null));
+      k.billed_total ? h('span', null, `${fmtMoney(k.paid_total)} / ${fmtMoney(k.billed_total)}`) : (feeLabel(k) ? h('span', { class: 'muted' }, feeLabel(k)) : null),
+      k.overdue_payments ? h('span', { class: 'bad-text' }, `${k.overdue_payments} vencida(s)`) : null,
+      k.next_due ? h('span', { class: k.next_due < Date.now() ? 'bad-text' : 'muted' }, `${fmtDue(k.next_due)}`) : null));
 }
 
 // ---------------------------------------------------------------- tarefas
@@ -175,7 +176,7 @@ async function renderTasks() {
   fill(el, 
     h('div', { class: 'crm-section-head' },
       h('h4', null, '⏰ Tarefas e lembretes'),
-      h('button', { class: 'btn btn-sm', onclick: () => taskDialog({ jid }) }, '＋ Nova')),
+      h('button', { class: 'btn btn-sm', onclick: () => taskDialog({ jid }) }, [icon('plus', 15), 'Nova'])),
     open.length || done.length ? null : h('div', { class: 'muted small' }, 'Nenhuma tarefa. Crie lembretes para retornar ao contato.'),
     ...open.map(taskRow),
     ...done.map(taskRow),
@@ -193,16 +194,16 @@ export function taskRow(t, { showChat = false } = {}) {
       },
     }),
     h('div', { class: 'task-main', onclick: () => taskDialog(t) },
-      h('div', { class: 'task-title' }, t.kind && t.kind !== 'tarefa' ? `${TASK_KINDS[t.kind]?.icon || ''} ` : '', t.title),
-      h('div', { class: 'task-sub' }, t.due_at ? `${late ? '⚠ ' : ''}${fmtDue(t.due_at)}` : 'Sem data',
-        showChat && t.client_id ? h('a', { class: 'link', onclick: (e) => { e.stopPropagation(); openClient(t.client_id); } }, ` · 👤 ${t.client_name}`)
+      h('div', { class: 'task-title' }, t.kind && t.kind !== 'tarefa' ? '' : '', t.title),
+      h('div', { class: 'task-sub' }, t.due_at ? `${late ? 'Atrasado · ' : ''}${fmtDue(t.due_at)}` : 'Sem data',
+        showChat && t.client_id ? h('a', { class: 'link', onclick: (e) => { e.stopPropagation(); openClient(t.client_id); } }, ` · ${t.client_name}`)
           : showChat && chat ? h('a', { class: 'link', onclick: (e) => { e.stopPropagation(); openChat(chat.jid); } }, ` · ${chat.display_name}`) : null,
-        t.case_title ? h('a', { class: 'link', onclick: (e) => { e.stopPropagation(); openCase(t.case_id, { tab: 'prazos' }); } }, ` · 📁 ${t.case_title}`) : null,
-        t.assignee_name && t.assignee_id !== state.me?.id ? ` · 👤 ${t.assignee_name}` : null)),
+        t.case_title ? h('a', { class: 'link', onclick: (e) => { e.stopPropagation(); openCase(t.case_id, { tab: 'prazos' }); } }, ` · ${t.case_title}`) : null,
+        t.assignee_name && t.assignee_id !== state.me?.id ? ` · ${t.assignee_name}` : null)),
     h('button', {
       class: 'icon-btn small', title: 'Excluir',
       onclick: async () => { await api('tasks:delete', t.id).catch(errToast); emitTasks(); },
-    }, '🗑'));
+    }, icon('trash', 16)));
 }
 
 function emitTasks() {
@@ -230,11 +231,11 @@ export function taskDialog(task = {}) {
     // conversa que ainda não é cliente (tarefa criada na ficha do WhatsApp)
     if (task.jid && !list.some((c) => c.key === task.jid)) {
       const chat = state.chats.get(task.jid);
-      if (chat) chatSel.append(h('option', { value: task.jid, selected: true }, `💬 ${chat.display_name}`));
+      if (chat) chatSel.append(h('option', { value: task.jid, selected: true }, `${chat.display_name}`));
     }
   }).catch(() => {});
   const kindSel = h('select', { class: 'input' },
-    Object.entries(TASK_KINDS).map(([k, v]) => h('option', { value: k, selected: (task.kind || 'tarefa') === k }, `${v.icon} ${v.label}`)));
+    Object.entries(TASK_KINDS).map(([k, v]) => h('option', { value: k, selected: (task.kind || 'tarefa') === k }, `${v.label}`)));
   const caseSel = h('select', { class: 'input' });
   // responsável: quem cria fica como responsável, a não ser que escolha outra pessoa
   const assigneeSel = h('select', { class: 'input' }, h('option', { value: '' }, '— Qualquer pessoa da equipe —'));
@@ -297,7 +298,7 @@ async function renderNotes() {
   };
   ta.addEventListener('keydown', (e) => { if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) add(); });
   fill(el, 
-    h('div', { class: 'crm-section-head' }, h('h4', null, '📝 Notas')),
+    h('div', { class: 'crm-section-head' }, h('h4', null, 'Notas')),
     ta,
     h('div', { class: 'row end' }, h('button', { class: 'btn btn-sm btn-primary', onclick: add }, 'Salvar nota')),
     ...notes.map((n) => h('div', { class: 'note' },
@@ -310,7 +311,7 @@ async function renderNotes() {
             if (!await confirmDialog('Apagar esta nota?', { okLabel: 'Apagar', danger: true })) return;
             await api('notes:delete', n.id); renderNotes();
           },
-        }, '🗑')))),
+        }, icon('trash', 16))))),
   );
 }
 
@@ -320,20 +321,20 @@ async function renderGroup() {
   const el = sections.group;
   const chat = state.chats.get(jid);
   if (!el || !chat?.is_group) { el && clear(el); return; }
-  fill(el, h('div', { class: 'crm-section-head' }, h('h4', null, '👥 Participantes')), h('div', { class: 'muted small' }, 'Carregando…'));
+  fill(el, h('div', { class: 'crm-section-head' }, h('h4', null, 'Participantes')), h('div', { class: 'muted small' }, 'Carregando…'));
   const myJid = jid;
   try {
     const info = await api('chats:groupInfo', myJid);
     if (myJid !== jid) return;
     fill(el, 
-      h('div', { class: 'crm-section-head' }, h('h4', null, `👥 Participantes (${info.participants.length})`)),
+      h('div', { class: 'crm-section-head' }, h('h4', null, `Participantes (${info.participants.length})`)),
       info.desc ? h('div', { class: 'muted small pre' }, info.desc) : null,
       h('div', { class: 'participants' }, info.participants.slice(0, 200).map((p) => h('div', { class: 'participant' },
         h('span', null, p.name || formatPhone(phoneOf(p.jid)) || p.jid),
         p.admin ? h('span', { class: 'muted small' }, 'admin') : null))),
     );
   } catch {
-    fill(el, h('div', { class: 'crm-section-head' }, h('h4', null, '👥 Participantes')), h('div', { class: 'muted small' }, 'Disponível quando o WhatsApp estiver conectado.'));
+    fill(el, h('div', { class: 'crm-section-head' }, h('h4', null, 'Participantes')), h('div', { class: 'muted small' }, 'Disponível quando o WhatsApp estiver conectado.'));
   }
 }
 
@@ -346,7 +347,7 @@ async function renderActivity() {
   const items = await api('crm:activity', myJid).catch(() => []);
   if (myJid !== jid) return;
   fill(el, 
-    h('div', { class: 'crm-section-head' }, h('h4', null, '🕘 Histórico')),
+    h('div', { class: 'crm-section-head' }, h('h4', null, 'Histórico')),
     items.length ? null : h('div', { class: 'muted small' }, 'Sem movimentações ainda.'),
     ...items.slice(0, 30).map((a) => h('div', { class: 'activity' },
       h('span', { class: 'muted small' }, fmtDateTime(a.ts)), h('span', null, a.detail))),

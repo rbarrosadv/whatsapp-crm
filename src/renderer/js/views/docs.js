@@ -5,12 +5,14 @@ import {
   h, fill, modal, toast, errToast, promptDialog, fmtSize, fmtDateTime, pickFiles, uploadFiles, openDoc, showDoc, debounce, normalize,
 } from '../util.js';
 import { state, on, api, openChat } from '../store.js';
+import { icon } from '../icons.js';
 
-const ICONS = [
-  [/\.(docx?|odt|rtf)$/i, '📘'], [/\.pdf$/i, '📕'], [/\.(xlsx?|csv|ods)$/i, '📗'], [/\.(pptx?)$/i, '📙'],
-  [/\.(jpe?g|png|gif|webp|heic)$/i, '🖼'], [/\.(mp3|ogg|opus|m4a|wav)$/i, '🎤'], [/\.(mp4|mov|avi|mkv)$/i, '🎬'], [/\.(zip|rar|7z)$/i, '🗜'],
+const KINDS = [
+  [/\.(docx?|odt|rtf)$/i, 'doc'], [/\.pdf$/i, 'pdf'], [/\.(xlsx?|csv|ods)$/i, 'sheet'], [/\.(pptx?)$/i, 'slides'],
+  [/\.(jpe?g|png|gif|webp|heic)$/i, 'img'], [/\.(mp3|ogg|opus|m4a|wav|mp4|mov|avi|mkv)$/i, 'media'], [/\.(zip|rar|7z)$/i, 'zip'],
 ];
-export const docIcon = (d) => (d.dir ? '📁' : (ICONS.find(([re]) => re.test(d.name))?.[1] || '📄'));
+export const docIcon = (d) => (d.dir ? icon('folder', 18, 'ico-folder')
+  : icon('file', 18, `ico-${KINDS.find(([re]) => re.test(d.name))?.[1] || 'other'}`));
 const base = (rel) => String(rel || '').split('/').pop() || 'BARROS ADVOGADOS';
 const join = (...p) => p.filter(Boolean).join('/');
 
@@ -30,7 +32,7 @@ export function folderBrowser(el, { top, start, caseId, clientId }) {
     try { r = await api('docs:list', rel); } catch (e) { fill(el, h('p', { class: 'muted' }, e.message)); return; }
     const crumbs = [];
     const parts = rel.slice(top.length).split('/').filter(Boolean);
-    crumbs.push(h('button', { class: 'crumb', onclick: () => go(top) }, `📁 ${base(top)}`));
+    crumbs.push(h('button', { class: 'crumb', onclick: () => go(top) }, `${base(top)}`));
     parts.forEach((p, i) => {
       const to = join(top, ...parts.slice(0, i + 1));
       crumbs.push(h('span', { class: 'muted' }, ' › '), h('button', { class: 'crumb', onclick: () => go(to) }, p));
@@ -38,10 +40,10 @@ export function folderBrowser(el, { top, start, caseId, clientId }) {
     fill(el,
       h('div', { class: 'docs-toolbar' },
         h('div', { class: 'crumbs grow' }, crumbs),
-        h('button', { class: 'btn btn-sm btn-primary', onclick: () => templatePicker({ caseId, clientId, dirRel: rel, onDone: render }) }, '📄 Novo do modelo'),
-        h('button', { class: 'btn btn-sm', onclick: () => upload() }, '＋ Enviar arquivos'),
-        h('button', { class: 'btn btn-sm', title: 'Criar uma subpasta aqui', onclick: () => mkdir() }, '＋ Pasta'),
-        window.desktop?.openDoc ? h('button', { class: 'btn btn-sm', title: 'Abrir esta pasta no Explorador de Arquivos', onclick: () => openDocument({ rel, dir: true, name: base(rel) }) }, '📂 Abrir no Windows') : null),
+        h('button', { class: 'btn btn-sm btn-primary', onclick: () => templatePicker({ caseId, clientId, dirRel: rel, onDone: render }) }, 'Novo do modelo'),
+        h('button', { class: 'btn btn-sm', onclick: () => upload() }, [icon('plus', 15), 'Enviar arquivos']),
+        h('button', { class: 'btn btn-sm', title: 'Criar uma subpasta aqui', onclick: () => mkdir() }, [icon('plus', 15), 'Pasta']),
+        window.desktop?.openDoc ? h('button', { class: 'btn btn-sm', title: 'Abrir esta pasta no Explorador de Arquivos', onclick: () => openDocument({ rel, dir: true, name: base(rel) }) }, 'Abrir no Windows') : null),
       !r.exists ? h('p', { class: 'muted small' }, 'Esta pasta não existe mais no OneDrive.')
         : r.entries.length ? h('div', { class: 'doc-list' }, r.entries.map((d) => entryRow(d, { onOpenDir: () => go(d.rel), caseId })))
           : h('p', { class: 'muted small' }, 'Pasta vazia. Envie arquivos ou crie um documento a partir de um modelo.'));
@@ -76,7 +78,7 @@ function entryRow(d, { onOpenDir, caseId } = {}) {
       : [
         h('button', { class: 'btn btn-sm', onclick: () => openDocument(d) }, 'Abrir'),
         /\.docx$/i.test(d.name) ? h('button', { class: 'btn btn-sm', title: 'Fazer uma cópia deste documento na pasta de um caso', onclick: () => useAsBaseDialog(d, { caseId }) }, 'Usar como base') : null,
-        h('button', { class: 'icon-btn small', title: window.desktop?.showDoc ? 'Mostrar na pasta' : 'Baixar uma cópia', onclick: () => showDoc(d).catch(errToast) }, window.desktop?.showDoc ? '📂' : '⬇'),
+        h('button', { class: 'icon-btn small', title: window.desktop?.showDoc ? 'Mostrar na pasta' : 'Baixar uma cópia', onclick: () => showDoc(d).catch(errToast) }, window.desktop?.showDoc ? icon('folder', 16) : icon('download', 16)),
       ]);
 }
 
@@ -105,7 +107,7 @@ export async function templatePicker({ caseId, clientId, dirRel, onDone } = {}) 
   search.addEventListener('input', render);
   render();
   const m = modal({
-    title: '📄 Novo documento a partir de modelo',
+    title: 'Novo documento a partir de modelo',
     wide: true,
     body: h('div', { class: 'stack' },
       h('p', { class: 'muted small' }, 'O documento é criado na pasta, com a data na frente do nome, e os campos como {nome} e {cpf} já preenchidos com a ficha do cliente e do caso. Depois é só abrir e revisar.'),
@@ -135,7 +137,7 @@ export async function useAsBaseDialog(d, { caseId } = {}) {
   const render = () => {
     const q = normalize(search.value);
     fill(box, cases.filter((k) => !q || normalize(`${k.title} ${name(k)}`).includes(q)).slice(0, 40).map((k) => h('button', { class: 'tpl-item', onclick: () => { m.close?.(); copyTo(k.id); } },
-      h('span', null, k.folder ? '📁' : '➕'),
+      h('span', null, k.folder ? icon('folder', 16) : icon('plus', 16)),
       h('span', { class: 'grow' }, h('b', null, name(k)), ` — ${k.title}`),
       h('span', { class: 'muted small' }, k.folder ? 'tem pasta' : 'sem pasta'))));
   };
@@ -171,7 +173,7 @@ export async function clientFolderDialog(clientId, onDone) {
     h('option', { value: '' }, '— escolha a pasta —'),
     folders.map((f) => h('option', { value: f.rel, selected: f.rel === (info.folder || info.suggestion?.rel) }, f.name)));
   const m = modal({
-    title: `📁 Pasta de ${chat?.display_name || 'cliente'}`,
+    title: `Pasta de ${chat?.display_name || 'cliente'}`,
     body: h('div', { class: 'stack' },
       info.folder ? h('p', null, 'Ligada a ', h('b', null, info.folder))
         : info.suggestion ? h('p', null, 'Encontrei a pasta ', h('b', null, info.suggestion.name), info.suggestion.archived ? ' (no arquivo morto)' : '', '. É deste cliente?')
@@ -214,7 +216,7 @@ export async function caseFolderPanel(el, k, { onChange } = {}) {
     try { await api('docs:linkCase', k.id, pick.value); onChange?.(); caseFolderPanel(el, k, { onChange }); } catch (e) { errToast(e); }
   });
   fill(el, h('div', { class: 'docs-empty' },
-    h('b', null, '📁 Este caso ainda não tem pasta no OneDrive'),
+    h('b', null, 'Este caso ainda não tem pasta no OneDrive'),
     info.linked ? h('p', { class: 'bad-text small' }, `A pasta ligada (${info.linked}) não foi encontrada — foi movida ou renomeada?`) : null,
     !info.clientFolder && info.clientSuggestion ? h('p', { class: 'small' }, 'Pasta do cliente encontrada: ', h('b', null, info.clientSuggestion.rel)) : null,
     h('p', { class: 'muted small' }, 'Nova pasta, no padrão do escritório:'),
@@ -250,7 +252,7 @@ async function render() {
   let st;
   try { st = await api('docs:status'); } catch (e) { errToast(e); return; }
   const tabs = h('div', { class: 'segmented' },
-    [['busca', '🔎 Buscar'], ['modelos', '📄 Modelos'], ['pastas', '📁 Pastas']].map(([id, label]) => h('button', {
+    [['busca', 'Buscar'], ['modelos', 'Modelos'], ['pastas', 'Pastas']].map(([id, label]) => h('button', {
       class: `seg ${tab === id ? 'active' : ''}`, onclick: () => { tab = id; render(); },
     }, label)));
   const body = h('div', { class: 'docs-body' });
@@ -292,11 +294,11 @@ function renderSearch(el, st) {
         h('span', { class: 'doc-icon' }, docIcon(d)),
         h('div', { class: 'grow doc-main', ondblclick: () => openDocument(d) },
           h('div', { class: 'ellipsis' }, highlight(d.name, lastQuery)),
-          h('div', { class: 'muted small ellipsis' }, `📁 ${d.folder} · ${fmtDateTime(d.mtime)}`),
+          h('div', { class: 'muted small ellipsis' }, `${d.folder} · ${fmtDateTime(d.mtime)}`),
           d.snippet ? h('div', { class: 'snippet small' }, highlight(d.snippet, lastQuery)) : null),
         h('button', { class: 'btn btn-sm', onclick: () => openDocument(d) }, 'Abrir'),
         /\.docx$/i.test(d.name) ? h('button', { class: 'btn btn-sm', onclick: () => useAsBaseDialog(d) }, 'Usar como base') : null,
-        h('button', { class: 'icon-btn small', title: window.desktop?.showDoc ? 'Mostrar na pasta' : 'Baixar', onclick: () => showDoc(d).catch(errToast) }, window.desktop?.showDoc ? '📂' : '⬇')))
+        h('button', { class: 'icon-btn small', title: window.desktop?.showDoc ? 'Mostrar na pasta' : 'Baixar', onclick: () => showDoc(d).catch(errToast) }, window.desktop?.showDoc ? icon('folder', 16) : icon('download', 16))))
         : h('p', { class: 'muted' }, 'Nada encontrado. Tente menos palavras ou sem o nome completo.'));
     } catch (e) { errToast(e); }
   }, 300);

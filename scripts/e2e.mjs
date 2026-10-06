@@ -483,7 +483,7 @@ try {
   // 7c) cliente sem WhatsApp: cadastro, processo, busca no Jurídico
   await page.click('.rail-btn[title="Jurídico"]');
   if (await page.locator('.view-legal .back-btn').count()) await page.click('.view-legal .back-btn');
-  await page.click('.view-legal .page-head button:has-text("＋ Cliente")');
+  await page.click('.view-legal .page-head button:text-is("Cliente")');
   await page.fill('.modal label:has-text("Nome") input', 'Joana Lima');
   await page.fill('.modal label:has-text("CPF") input', '987.654.321-00');
   await page.click('.modal button:has-text("Cadastrar")');

@@ -1,50 +1,59 @@
 :root, [data-theme="dark"] {
-  --bg: #0b141a;
-  --panel: #111b21;
-  --panel-2: #202c33;
-  --panel-3: #2a3942;
-  --hover: #202c33;
-  --active: #2a3942;
-  --border: #2a3942;
-  --text: #e9edef;
-  --muted: #8696a0;
-  --accent: #4b7590;
-  --accent-2: #6d97b1;
-  --danger: #ef4444;
+  --bg: #0e1116;
+  --panel: #161a21;
+  --panel-2: #1d222b;
+  --panel-3: #262c37;
+  --hover: #1f2530;
+  --active: #232c3a;
+  --border: #272d38;
+  --text: #e8ebf1;
+  --muted: #8a94a6;
+  --accent: #5b8bab;
+  --accent-2: #6f9dbb;
+  --accent-soft: rgba(91, 139, 171, .16);
+  --danger: #f05252;
   --warn: #f59e0b;
-  --bubble-in: #202c33;
-  --bubble-out: #005c4b;
-  --chat-bg: #0b141a;
-  --shadow: 0 8px 30px rgba(0, 0, 0, .45);
-  --link: #53bdeb;
+  --ok: #22c55e;
+  --bubble-in: #1d222b;
+  --bubble-out: #1f4d45;
+  --chat-bg: #0e1116;
+  --shadow: 0 10px 30px rgba(0, 0, 0, .45);
+  --card-shadow: 0 1px 2px rgba(0, 0, 0, .3);
+  --link: #7cb3d6;
   --read: #53bdeb;
   color-scheme: dark;
 }
 [data-theme="light"] {
-  --bg: #f0f2f5;
+  --bg: #f5f6f8;
   --panel: #ffffff;
-  --panel-2: #f0f2f5;
-  --panel-3: #e9edef;
-  --hover: #f5f6f6;
-  --active: #e9edef;
-  --border: #e2e6e9;
-  --text: #111b21;
-  --muted: #667781;
+  --panel-2: #f2f4f7;
+  --panel-3: #e8ebf0;
+  --hover: #f2f4f7;
+  --active: #eaf0f4;
+  --border: #e4e7ec;
+  --text: #101828;
+  --muted: #667085;
   --accent: #3d5a6c;
-  --accent-2: #557a90;
+  --accent-2: #4b7590;
+  --accent-soft: rgba(61, 90, 108, .1);
+  --danger: #d92d20;
+  --warn: #dc6803;
+  --ok: #16a34a;
   --bubble-in: #ffffff;
-  --bubble-out: #d9fdd3;
-  --chat-bg: #efeae2;
-  --shadow: 0 8px 30px rgba(11, 20, 26, .18);
-  --link: #027eb5;
-  --read: #53bdeb;
+  --bubble-out: #dcefe6;
+  --chat-bg: #eef0f3;
+  --shadow: 0 12px 32px rgba(16, 24, 40, .14);
+  --card-shadow: 0 1px 2px rgba(16, 24, 40, .05);
+  --link: #2f6f95;
+  --read: #3a9fd6;
   color-scheme: light;
 }
 
 * { box-sizing: border-box; }
 html, body { margin: 0; height: 100%; }
 body {
-  font-family: "Segoe UI", system-ui, -apple-system, Roboto, "Helvetica Neue", Arial, sans-serif;
+  font-family: "Inter", "Segoe UI Variable Text", "Segoe UI", system-ui, -apple-system, Roboto, "Helvetica Neue", Arial, sans-serif;
+  -webkit-font-smoothing: antialiased;
   font-size: 14px;
   background: var(--bg);
   color: var(--text);
@@ -935,3 +944,89 @@ body:not([data-view="inbox"]) .banner-wrap { display: none !important; }
 body.discreet .viz-axis, body.discreet .viz-tip b, body.discreet .viz-bar-value, body.discreet .fin-line b { filter: blur(6px); }
 .money.plain { color: inherit; font-size: inherit; font-weight: inherit; }
 .finance-body .stat-value { font-size: clamp(17px, 1.55vw, 24px); overflow: visible; text-overflow: clip; }
+
+
+/* =================================================================
+   Visual 2026 — interface moderna: cartões leves com borda, ícones de
+   traço, tipografia mais firme, foco visível e menos cor decorativa.
+   (fica no fim do arquivo para valer sobre as regras antigas)
+   ================================================================= */
+.ico { display: inline-block; vertical-align: -3px; flex: none; }
+h2, h3 { letter-spacing: -0.01em; }
+.page-head h2 { font-size: 24px; font-weight: 650; }
+.view-page.active { padding: 26px 32px 40px; }
+
+/* menu lateral */
+.rail { width: 78px; background: var(--panel); border-right: 1px solid var(--border); gap: 2px; padding: 14px 0; }
+.rail-logo { width: 40px; height: 40px; margin-bottom: 14px; border-radius: 10px; }
+.rail-btn { width: 66px; padding: 8px 0 6px; border-radius: 10px; gap: 4px; color: var(--muted); }
+.rail-btn:hover { background: var(--hover); color: var(--text); }
+.rail-btn.active { background: var(--accent-soft); color: var(--accent); }
+[data-theme="dark"] .rail-btn.active, :root:not([data-theme="light"]) .rail-btn.active { color: var(--accent-2); }
+.rail-btn.active::before { display: none; }
+.rail-btn.on { color: var(--accent); }
+.rail-icon { font-size: 0; line-height: 0; }
+.rail-label { font-size: 11px; font-weight: 500; letter-spacing: .01em; }
+.nav-badge { top: 3px; right: 10px; background: var(--danger); box-shadow: 0 0 0 2px var(--panel); }
+
+/* cartões */
+.panel, .stat { background: var(--panel); border: 1px solid var(--border); border-radius: 12px; box-shadow: var(--card-shadow); }
+.panel { padding: 18px 20px; }
+.panel-head h3 { font-size: 15px; font-weight: 600; }
+.stats { gap: 14px; }
+.stat { padding: 16px 18px; }
+.stat-value { font-weight: 650; font-variant-numeric: tabular-nums; letter-spacing: -0.02em; }
+.stat-label { color: var(--muted); font-size: 13px; margin-top: 2px; }
+.stat.clickable:hover { outline: none; border-color: var(--accent); }
+
+/* botões e campos */
+.btn { display: inline-flex; align-items: center; gap: 6px; height: 34px; padding: 0 14px; border-radius: 8px; background: var(--panel);
+  border: 1px solid var(--border); font-weight: 500; box-shadow: var(--card-shadow); }
+.btn:hover { background: var(--panel-2); }
+.btn-sm { height: 28px; padding: 0 10px; font-size: 12.5px; }
+.btn-primary { background: var(--accent); border-color: var(--accent); color: #fff; }
+.btn-primary:hover { background: var(--accent-2); border-color: var(--accent-2); }
+.btn-ok { color: var(--ok); }
+.btn:focus-visible, .icon-btn:focus-visible, .seg:focus-visible, .chip:focus-visible, .tab:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.icon-btn { border-radius: 8px; }
+.icon-btn .ico { width: 18px; height: 18px; }
+.icon-btn.small .ico { width: 16px; height: 16px; }
+.input, [data-theme="light"] .input { background: var(--panel); border: 1px solid var(--border); border-radius: 8px; }
+.input:focus, [data-theme="light"] .input:focus { border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-soft); }
+.segmented { background: var(--panel-2); border: 1px solid var(--border); border-radius: 10px; padding: 3px; }
+.seg { border-radius: 7px; font-weight: 500; padding: 6px 12px; }
+.seg.active { background: var(--panel); color: var(--text); box-shadow: 0 1px 3px rgba(16, 24, 40, .12); }
+.chip { background: var(--panel); border: 1px solid var(--border); color: var(--muted); font-weight: 500; }
+.chip.active, [data-theme="light"] .chip.active { background: var(--accent-soft); border-color: transparent; color: var(--accent); }
+.tabs { gap: 2px; }
+.tab { font-weight: 500; font-size: 14px; }
+.tab.active { color: var(--text); border-bottom-color: var(--accent); }
+
+/* tabelas */
+.table th { font-size: 11.5px; text-transform: uppercase; letter-spacing: .05em; color: var(--muted); font-weight: 600; background: transparent; }
+.table td, .table th { border-bottom: 1px solid var(--border); }
+.table tbody tr:hover td { background: var(--hover); }
+.table-wrap { background: var(--panel); border: 1px solid var(--border); border-radius: 12px; overflow: hidden; box-shadow: var(--card-shadow); }
+.status-pill { font-weight: 600; letter-spacing: .01em; }
+
+/* janelas */
+.modal { border: 1px solid var(--border); border-radius: 14px; }
+.modal-head h3 { font-size: 16px; font-weight: 600; }
+.toast { border-radius: 10px; }
+
+/* listas e linhas */
+.action-row, .fin-line, .check-row, .oab-row, .unknown-row { border-top-color: var(--border); }
+.case-card { border-radius: 10px; }
+.doc-row .ico-folder { color: var(--accent); }
+.doc-row .ico-pdf { color: #d92d20; }
+.doc-row .ico-doc { color: #2f6fd6; }
+.doc-row .ico-sheet { color: #16a34a; }
+.doc-row .ico-slides { color: #dc6803; }
+.flow-icon { display: grid; place-items: center; width: 26px; height: 26px; border-radius: 50%; background: var(--panel-2); color: var(--muted); }
+.flow-step.done .flow-icon { background: rgba(34, 197, 94, .14); color: var(--ok); }
+.flow-step.next .flow-icon { background: var(--accent-soft); color: var(--accent); }
+.fin-alert .ico, .today-alert .ico { vertical-align: -3px; margin-right: 6px; }
+.today-alert { border-radius: 10px; }
+.empty-icon { font-size: 0; width: 64px; height: 64px; border-radius: 16px; background: var(--panel-2); display: grid; place-items: center; color: var(--muted); margin-bottom: 4px; }
+.empty-icon .ico { width: 28px; height: 28px; }
+.empty h3 { font-size: 18px; font-weight: 600; }

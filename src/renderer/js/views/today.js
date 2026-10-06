@@ -9,6 +9,7 @@ import { showTasks } from './tasks.js';
 import { taskRow, taskDialog } from './crmpanel.js';
 import { openCase, chargeDialog, TASK_KINDS } from './casemodal.js';
 import { avatarEl } from '../components.js';
+import { icon } from '../icons.js';
 
 const DAY = 864e5;
 let root;
@@ -47,14 +48,15 @@ function greeting() {
 
 const kindTag = (kind) => {
   const k = TASK_KINDS[kind];
-  return k && kind !== 'tarefa' ? h('span', { class: `kind-tag kind-${kind}` }, `${k.icon} ${k.label}`) : null;
+  return k && kind !== 'tarefa' ? h('span', { class: `kind-tag kind-${kind}` }, `${k.label}`) : null;
 };
 
-/** Título do evento sem o "✔" e sem o ícone do tipo (já aparece na etiqueta). */
+/** Título do evento sem o "" e sem o ícone do tipo (já aparece na etiqueta). */
 function cleanTitle(e) {
-  let t = String(e.title || '').replace(/^✔\s*/, '');
-  const icon = TASK_KINDS[e.kind]?.icon;
-  if (icon && t.startsWith(icon)) t = t.slice(icon.length).trim();
+  // títulos que vão para o Google trazem um símbolo do tipo na frente: aqui a etiqueta já diz
+  let t = String(e.title || '').replace(/^[\u2600-\u27BF\u{1F300}-\u{1FAFF}\uFE0F\s]+/u, '');
+  const kindIcon = TASK_KINDS[e.kind]?.icon;
+  if (kindIcon && t.startsWith(kindIcon)) t = t.slice(kindIcon.length).trim();
   return t;
 }
 
@@ -105,10 +107,10 @@ async function render() {
         },
         h('option', { value: 'mine', selected: scope === 'mine' }, 'Meus compromissos'),
         h('option', { value: 'all', selected: scope === 'all' }, 'Escritório todo')),
-        h('button', { class: 'btn btn-primary', onclick: () => taskDialog({}) }, '＋ Novo compromisso'))),
+        h('button', { class: 'btn btn-primary', onclick: () => taskDialog({}) }, [icon('plus', 15), 'Novo compromisso']))),
 
     h('div', { class: `today-alert ${alerts.length ? '' : 'ok'}` },
-      alerts.length ? `⚠ ${alerts.join(' · ')}` : '✓ Nada atrasado. Bom trabalho!'),
+      alerts.length ? `${alerts.join(' · ')}` : 'Nada atrasado. Bom trabalho!'),
 
     h('div', { class: 'stats' },
       stat('Compromissos hoje', openToday.length, prazosHoje ? `${prazosHoje} prazo(s)` : 'em aberto', '', () => showTasks({ who: scope === 'mine' ? 'me' : 'all' })),
@@ -130,8 +132,8 @@ async function render() {
         h('div', { class: 'small' }, `Hoje: ${sum.doneToday} concluído(s) · ${openToday.length + sum.overdue.length} pendente(s)`
           + `${sum.noDate ? ` · ${sum.noDate} sem data` : ''}`)),
       openToday.length + sum.overdue.length
-        ? h('button', { class: 'btn', onclick: () => postpone([...sum.overdue, ...openToday]) }, '➜ Passar pendentes para amanhã')
-        : h('span', { class: 'small' }, '✓ Tudo resolvido por hoje')));
+        ? h('button', { class: 'btn', onclick: () => postpone([...sum.overdue, ...openToday]) }, 'Passar pendentes para amanhã')
+        : h('span', { class: 'small' }, 'Tudo resolvido por hoje')));
 }
 
 function stat(label, value, sub, tone = '', onClick) {
@@ -149,12 +151,12 @@ function setMode(m) {
 
 function dayView(sum, events, awaiting) {
   const groups = [];
-  if (sum.overdue.length) groups.push(group('⚠ Atrasados', 'Compromissos que já passaram da hora', sum.overdue.map((t) => taskRow(t, { showChat: true }))));
+  if (sum.overdue.length) groups.push(group('Atrasados', 'Compromissos que já passaram da hora', sum.overdue.map((t) => taskRow(t, { showChat: true }))));
   const todayTasks = sum.today.filter((t) => !t.done);
-  if (todayTasks.length) groups.push(group('📅 Para hoje', null, todayTasks.map((t) => taskRow(t, { showChat: true }))));
+  if (todayTasks.length) groups.push(group('Para hoje', null, todayTasks.map((t) => taskRow(t, { showChat: true }))));
   if (sum.payments && (sum.payments.overdue.length || sum.payments.dueSoon.length)) {
     const list = [...sum.payments.overdue, ...sum.payments.dueSoon].slice(0, 8);
-    groups.push(group('💰 Cobranças', 'Parcelas vencidas e dos próximos 7 dias', list.map((p) => {
+    groups.push(group('Cobranças', 'Parcelas vencidas e dos próximos 7 dias', list.map((p) => {
       const chat = state.chats.get(p.jid);
       const late = p.due_at < startOfDay(Date.now());
       return actionRow({
@@ -167,7 +169,7 @@ function dayView(sum, events, awaiting) {
     })));
   }
   if (sum.intimations?.length) {
-    groups.unshift(group('📣 Intimações para conferir', 'Diário de Justiça Eletrônico (DJEN)', sum.intimations.slice(0, 6).map((i) => actionRow({
+    groups.unshift(group('Intimações para conferir', 'Diário de Justiça Eletrônico (DJEN)', sum.intimations.slice(0, 6).map((i) => actionRow({
       who: i.client_name || i.process_number, clientId: i.client_id,
       text: `${i.tribunal} · ${i.doc_kind || i.kind} · ${String(i.text).slice(0, 110)}`,
       meta: `disponibilizada em ${new Date(i.date).toLocaleDateString('pt-BR')}${i.case_title ? ` · ${i.case_title}` : ' · processo não cadastrado'}`,
@@ -176,7 +178,7 @@ function dayView(sum, events, awaiting) {
     })), sum.intimations.length > 6 ? `e mais ${sum.intimations.length - 6}` : null));
   }
   if (sum.docRequests?.length) {
-    groups.push(group('📄 Documentos pedidos e não recebidos', 'Pedidos há mais de 3 dias', sum.docRequests.slice(0, 6).map((r) => actionRow({
+    groups.push(group('Documentos pedidos e não recebidos', 'Pedidos há mais de 3 dias', sum.docRequests.slice(0, 6).map((r) => actionRow({
       who: r.client_name || 'Cliente', clientId: r.client_id,
       text: `${r.title} · ${r.n} documento(s)`,
       meta: `pedido há ${fmtDuration(Date.now() - r.since)}`,
@@ -185,7 +187,7 @@ function dayView(sum, events, awaiting) {
     }))));
   }
   if (sum.staleCases.length) {
-    groups.push(group('📣 Processos sem retorno ao cliente', `Sem notícia há mais de ${sum.staleDays} dias`, sum.staleCases.slice(0, 6).map((k) => {
+    groups.push(group('Processos sem retorno ao cliente', `Sem notícia há mais de ${sum.staleDays} dias`, sum.staleCases.slice(0, 6).map((k) => {
       const chat = state.chats.get(k.jid);
       return actionRow({
         who: k.client_name || chat?.display_name || 'Cliente', chat, clientId: k.client_id,
@@ -197,7 +199,7 @@ function dayView(sum, events, awaiting) {
     })));
   }
   if (awaiting.length) {
-    groups.push(group('💬 Mensagens aguardando resposta', 'Atendimento (WhatsApp)', awaiting.slice(0, 8).map((c) => actionRow({
+    groups.push(group('Mensagens aguardando resposta', 'Atendimento (WhatsApp)', awaiting.slice(0, 8).map((c) => actionRow({
       who: c.display_name, chat: c,
       text: (c.last_preview || '').slice(0, 120),
       meta: `há ${fmtDuration(Date.now() - c.last_ts)}`,
@@ -210,7 +212,7 @@ function dayView(sum, events, awaiting) {
       events.length ? events.map((e) => agendaRow(e)) : h('p', { class: 'muted' }, 'Nenhum compromisso marcado para hoje.')),
     h('section', { class: 'today-actions' },
       h('h3', { class: 'today-title' }, 'Próximas ações'),
-      groups.length ? groups : h('div', { class: 'panel' }, h('p', { class: 'muted' }, '✓ Nenhuma pendência. Aproveite para adiantar os casos.'))));
+      groups.length ? groups : h('div', { class: 'panel' }, h('p', { class: 'muted' }, 'Nenhuma pendência. Aproveite para adiantar os casos.'))));
 }
 
 function group(title, hint, rows, more) {
@@ -264,9 +266,9 @@ function weekView(events, r) {
   return h('div', null,
     h('div', { class: 'chips today-week-sum' },
       h('span', { class: 'chip' }, `${total} compromisso(s)`),
-      byKind('prazo') ? h('span', { class: 'chip' }, `⚠️ ${byKind('prazo')} prazo(s)`) : null,
-      byKind('audiencia') ? h('span', { class: 'chip' }, `⚖️ ${byKind('audiencia')} audiência(s)`) : null,
-      byKind('reuniao') ? h('span', { class: 'chip' }, `🤝 ${byKind('reuniao')} reunião(ões)`) : null),
+      byKind('prazo') ? h('span', { class: 'chip' }, `${byKind('prazo')} prazo(s)`) : null,
+      byKind('audiencia') ? h('span', { class: 'chip' }, `${byKind('audiencia')} audiência(s)`) : null,
+      byKind('reuniao') ? h('span', { class: 'chip' }, `${byKind('reuniao')} reunião(ões)`) : null),
     h('div', { class: 'week-cols', style: { '--n': String(days.length) } },
       days.map((d) => h('div', { class: `week-col ${d.today ? 'today' : ''} ${d.start < r.dayStart ? 'past' : ''}` },
         h('div', { class: 'week-head' },

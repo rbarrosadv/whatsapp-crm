@@ -2,6 +2,7 @@
 // rápidas, backup e importação do Kanban antigo.
 import { h, fill, modal, toast, errToast, confirmDialog, formatPhone, phoneOf, PALETTE, downloadUrl, fmtDateTime, pickFiles } from '../util.js';
 import { state, on, api, setSetting } from '../store.js';
+import { icon } from '../icons.js';
 
 let root;
 
@@ -44,13 +45,13 @@ function desktopToggle(key, label, hint, def) {
 
 function accountSection() {
   const me = state.me;
-  return section('👤 Minha conta',
+  return section('Minha conta',
     h('div', { class: 'conn-info' },
       h('div', null, h('b', null, me.name), h('div', { class: 'muted small' }, `${me.roleLabel} · login: ${me.login}`))),
     h('p', { class: 'muted small' }, `No WhatsApp do escritório, suas mensagens saem assinadas como “*${me.signature}:*”.`),
     h('div', { class: 'row wrap' },
-      h('button', { class: 'btn', onclick: editMe }, '✏️ Nome e assinatura'),
-      h('button', { class: 'btn', onclick: changePassword }, '🔑 Trocar senha'),
+      h('button', { class: 'btn', onclick: editMe }, 'Nome e assinatura'),
+      h('button', { class: 'btn', onclick: changePassword }, 'Trocar senha'),
       h('button', { class: 'btn btn-danger', onclick: () => window.api.logout() }, 'Sair')));
 }
 
@@ -109,15 +110,15 @@ function teamSection() {
   if (!state.can.admin) return null;
   if (!usersCache) {
     api('users:list').then((u) => { usersCache = u; render(); }).catch(errToast);
-    return section('👥 Equipe', h('p', { class: 'muted small' }, 'Carregando…'));
+    return section('Equipe', h('p', { class: 'muted small' }, 'Carregando…'));
   }
-  return section('👥 Equipe',
+  return section('Equipe',
     h('p', { class: 'muted small' }, 'Cada pessoa entra com o próprio login. Estagiário(a) não vê o financeiro; só sócio muda as configurações do escritório e a equipe.'),
     ...usersCache.map((u) => h('div', { class: `list-row ${u.active ? '' : 'muted'}` },
       h('div', { class: 'grow' }, h('b', null, u.name), h('div', { class: 'muted small' },
         [u.roleLabel, `login: ${u.login}`, `assina “${u.signature}”`, u.active ? (u.last_login ? `último acesso ${fmtDateTime(u.last_login)}` : 'nunca entrou') : 'desativado'].join(' · '))),
       h('button', { class: 'btn btn-sm', onclick: () => userEditor(u) }, 'Editar'))),
-    h('button', { class: 'btn', onclick: () => userEditor() }, '＋ Adicionar pessoa'),
+    h('button', { class: 'btn', onclick: () => userEditor() }, [icon('plus', 15), 'Adicionar pessoa']),
     toggle('signMessages', 'Assinar as mensagens com o nome de quem enviou', 'Ex.: “*Dr. Barros:*” no começo de cada mensagem do WhatsApp do escritório.'));
 }
 
@@ -179,7 +180,7 @@ function docsSection() {
         st.guess && st.guess !== st.root ? h('button', { class: 'btn', onclick: () => save(st.guess) }, 'Usar a pasta encontrada') : null) : null,
       h('p', { class: 'muted small' }, 'Dica: no Explorador de Arquivos, abra a pasta BARROS ADVOGADOS, clique na barra de endereço e copie. O sistema cria e lê pastas só dentro dela; o OneDrive sincroniza normalmente.'));
   }).catch((e) => fill(box, h('p', { class: 'muted small' }, e.message)));
-  return section('📂 Documentos (OneDrive)', box);
+  return section('Documentos (OneDrive)', box);
 }
 
 function section(title, ...children) {
@@ -196,7 +197,7 @@ function render() {
       accountSection(),
       teamSection(),
       docsSection(),
-      section('📱 Conexão com o WhatsApp',
+      section('Conexão com o WhatsApp',
         h('div', { class: 'conn-info' },
           h('span', { class: `status-dot ${connected ? 'ok' : 'warn'}` }),
           connected ? h('div', null, h('b', null, 'Conectado'), me ? h('div', { class: 'muted' }, `${me.name || ''} ${formatPhone(phoneOf(me.jid))}`) : null)
@@ -204,8 +205,8 @@ function render() {
         h('p', { class: 'muted small' }, 'A sessão fica salva no servidor do escritório: ninguém precisa ler o QR code de novo. Para trocar de número, um sócio desconecta aqui.'),
         h('div', { class: 'row' },
           !connected ? h('button', { class: 'btn', onclick: () => api('wa:reconnect').catch(errToast) }, '⟳ Tentar reconectar') : null,
-          !st.registered ? h('button', { class: 'btn btn-primary', onclick: () => api('wa:reset').catch(errToast) }, '📱 Mostrar QR code') : null,
-          h('button', { class: 'btn', onclick: runDiagnosis }, '🩺 Testar conexão'),
+          !st.registered ? h('button', { class: 'btn btn-primary', onclick: () => api('wa:reset').catch(errToast) }, 'Mostrar QR code') : null,
+          h('button', { class: 'btn', onclick: runDiagnosis }, 'Testar conexão'),
           state.can.admin && h('button', {
             class: 'btn btn-danger',
             onclick: async () => {
@@ -214,11 +215,11 @@ function render() {
             },
           }, 'Desconectar WhatsApp'))),
 
-      section('🔔 Notificações e comportamento',
+      section('Notificações e comportamento',
         toggle('notifications', 'Avisos de novas mensagens', 'Mostra um aviso no computador ou no celular quando chega mensagem (vale só para você).'),
         toggle('notificationPreview', 'Mostrar o texto da mensagem no aviso'),
         h('div', { class: 'row wrap' },
-          h('button', { class: 'btn btn-sm', onclick: () => api('app:testNotification').catch(errToast) }, '🔔 Testar notificação'),
+          h('button', { class: 'btn btn-sm', onclick: () => api('app:testNotification').catch(errToast) }, 'Testar notificação'),
           window.desktop?.openNotificationSettings ? h('button', { class: 'btn btn-sm', onclick: () => window.desktop.openNotificationSettings() }, 'Abrir notificações do Windows') : null),
         h('p', { class: 'muted small' }, 'Se o teste não aparecer: em Configurações do Windows → Sistema → Notificações, confira se “Barros Associados” está ligado e se o “Não perturbe” / “Assistente de foco” está desligado.'),
         desktopToggle('minimizeToTray', 'Continuar rodando ao fechar a janela', 'O app fica perto do relógio e segue avisando de mensagens e lembretes.', true),
@@ -237,12 +238,12 @@ function render() {
             [[0, 'Nunca'], [2, '2 horas'], [4, '4 horas'], [8, '8 horas'], [24, '24 horas'], [48, '2 dias']].map(([v, l]) =>
               h('option', { value: v, selected: Number(state.settings.forgottenHours ?? 24) === v }, l))))),
 
-      section('🕶 Modo discreto',
-        h('p', { class: 'muted small' }, 'Para compartilhar a tela ou atender alguém na sua sala: embaça valores (honorários, financeiro, totais) e as prévias das mensagens na lista. Passe o mouse em cima para ver. Liga e desliga pelo botão 🕶 na barra lateral ou com Ctrl+Shift+D. Os avisos do Windows também deixam de mostrar nomes e mensagens.'),
+      section('Modo discreto',
+        h('p', { class: 'muted small' }, 'Para compartilhar a tela ou atender alguém na sua sala: embaça valores (honorários, financeiro, totais) e as prévias das mensagens na lista. Passe o mouse em cima para ver. Liga e desliga pelo botão na barra lateral ou com Ctrl+Shift+D. Os avisos do Windows também deixam de mostrar nomes e mensagens.'),
         toggle('discreet', 'Modo discreto ligado', null, false),
         toggle('discreetMessages', 'Embaçar também as mensagens da conversa aberta', 'Útil se for mostrar a tela com uma conversa aberta.', false)),
 
-      state.can.configure && section('👥 Tipos de contato',
+      state.can.configure && section('Tipos de contato',
         h('p', { class: 'muted small' }, 'Classifique cada conversa (ex.: Pessoal, Cliente, Empresa). Tipos marcados como pessoais não entram em "Aguardando resposta" nem nos avisos de conversa esquecida.'),
         ...state.contactTypes.map((t, i) => h('div', { class: 'list-row' },
           h('span', { class: 'tag-chip', style: { '--c': t.color } }, `${t.icon || ''} ${t.name}`),
@@ -251,9 +252,9 @@ function render() {
             h('button', { class: 'icon-btn small', title: 'Subir', disabled: i === 0, onclick: () => moveItem('types', state.contactTypes, i, -1) }, '↑'),
             h('button', { class: 'icon-btn small', title: 'Descer', disabled: i === state.contactTypes.length - 1, onclick: () => moveItem('types', state.contactTypes, i, 1) }, '↓'),
             h('button', { class: 'btn btn-sm', onclick: () => typeEditor(t) }, 'Editar')))),
-        h('button', { class: 'btn', onclick: () => typeEditor() }, '＋ Novo tipo')),
+        h('button', { class: 'btn', onclick: () => typeEditor() }, [icon('plus', 15), 'Novo tipo'])),
 
-      state.can.configure && section('🔎 Filtros das conversas',
+      state.can.configure && section('Filtros das conversas',
         h('p', { class: 'muted small' }, 'Os botões no topo da lista de conversas. Crie os seus combinando tipo de contato, etiquetas, etapas, não lidas, aguardando resposta… Nada some: é só uma forma de ver a lista.'),
         ...state.filters.map((f, i) => h('div', { class: 'list-row' },
           h('span', null, `${f.icon || ''} ${f.name}`),
@@ -262,9 +263,9 @@ function render() {
             h('button', { class: 'icon-btn small', title: 'Subir', disabled: i === 0, onclick: () => moveItem('filters', state.filters, i, -1) }, '↑'),
             h('button', { class: 'icon-btn small', title: 'Descer', disabled: i === state.filters.length - 1, onclick: () => moveItem('filters', state.filters, i, 1) }, '↓'),
             h('button', { class: 'btn btn-sm', onclick: () => filterEditor(f) }, 'Editar')))),
-        h('button', { class: 'btn', onclick: () => filterEditor() }, '＋ Novo filtro')),
+        h('button', { class: 'btn', onclick: () => filterEditor() }, [icon('plus', 15), 'Novo filtro'])),
 
-      section('📣 Intimações e andamentos',
+      section('Intimações e andamentos',
         h('p', { class: 'small' }, 'As OABs acompanhadas ficam em Jurídico → Intimações. O sistema busca as intimações no DJEN e os andamentos no DataJud a cada 6 horas (das 6h às 22h) e avisa no computador.'),
         h('label', { class: 'field' }, h('span', null, 'Me avisar de andamentos e intimações (vale só para você)'),
           h('select', { class: 'input', onchange: (e) => setSetting('notifyCourts', e.target.value).catch(errToast) },
@@ -274,18 +275,18 @@ function render() {
         state.can.admin ? h('label', { class: 'field' }, h('span', null, 'Chave pública do DataJud (só trocar se o CNJ mudar)'),
           h('input', { class: 'input mono', value: state.settings.datajudKey || '', placeholder: 'padrão do CNJ', onchange: (e) => setSetting('datajudKey', e.target.value.trim() || null).catch(errToast) })) : null),
 
-      section('📄 Pedido de documentos ao cliente',
+      section('Pedido de documentos ao cliente',
         h('label', { class: 'field' }, h('span', null, 'Mensagem (na ficha do processo → Fluxo → Solicitar)'), docsTemplateInput()),
         h('p', { class: 'muted small' }, 'Campos: {nome} (primeiro nome) {nome_completo} {caso} {lista} (os documentos marcados). Você sempre revisa antes de enviar.')),
 
-      state.can.finance && section('🧾 Dados do escritório (recibos)',
+      state.can.finance && section('Dados do escritório (recibos)',
         ...[['officeName', 'Nome', 'Barros Associados'], ['officeDoc', 'CNPJ ou OAB da sociedade', 'Ex.: CNPJ 00.000.000/0001-00'],
           ['officeAddress', 'Endereço', 'Rua, nº, sala, bairro, cidade-UF, CEP'], ['officeCity', 'Cidade (data do recibo)', 'Cuiabá-MT']]
           .map(([key, label, ph]) => h('label', { class: 'field' }, h('span', null, label),
             h('input', { class: 'input', value: state.settings[key] || '', placeholder: ph, disabled: !state.can.admin, onchange: (e) => setSetting(key, e.target.value.trim() || null).catch(errToast) }))),
-        h('p', { class: 'muted small' }, 'Aparecem no cabeçalho e na assinatura dos recibos (Financeiro → parcela recebida → 🧾 Recibo).')),
+        h('p', { class: 'muted small' }, 'Aparecem no cabeçalho e na assinatura dos recibos (Financeiro → parcela recebida → Recibo).')),
 
-      state.can.finance && section('💰 Honorários e cobrança',
+      state.can.finance && section('Honorários e cobrança',
         h('label', { class: 'field' }, h('span', null, 'Chave PIX / dados para pagamento'),
           h('input', { class: 'input', value: state.settings.pixKey || '', placeholder: 'Ex.: CNPJ, e-mail ou celular', onchange: (e) => setSetting('pixKey', e.target.value.trim()).catch(errToast) })),
         h('label', { class: 'field' }, h('span', null, 'Mensagem de cobrança'),
@@ -300,7 +301,7 @@ function render() {
             [[0, 'Nunca'], [7, '7 dias'], [15, '15 dias'], [30, '30 dias'], [60, '60 dias']].map(([v, l]) =>
               h('option', { value: v, selected: Number(state.settings.staleCaseDays ?? 15) === v }, l))))),
 
-      state.can.configure && section('📊 Funis e etapas',
+      state.can.configure && section('Funis e etapas',
         h('p', { class: 'muted small' }, 'Cada funil tem suas etapas (colunas do quadro). Ex.: Atendimento → Novo, Proposta, Fechado.'),
         ...state.pipelines.map((p, i) => h('div', { class: 'list-row' },
           h('span', null, `${p.icon || ''} ${p.name}`),
@@ -309,9 +310,9 @@ function render() {
             h('button', { class: 'icon-btn small', title: 'Subir', disabled: i === 0, onclick: () => movePipeline(i, -1) }, '↑'),
             h('button', { class: 'icon-btn small', title: 'Descer', disabled: i === state.pipelines.length - 1, onclick: () => movePipeline(i, 1) }, '↓'),
             h('button', { class: 'btn btn-sm', onclick: () => pipelineEditor(p) }, 'Editar')))),
-        h('button', { class: 'btn', onclick: () => pipelineEditor() }, '＋ Novo funil')),
+        h('button', { class: 'btn', onclick: () => pipelineEditor() }, [icon('plus', 15), 'Novo funil'])),
 
-      state.can.configure && section('🏷 Etiquetas',
+      state.can.configure && section('Etiquetas',
         ...state.tags.map((t) => h('div', { class: 'list-row' },
           h('span', { class: 'tag-chip', style: { '--c': t.color } }, t.name),
           h('div', { class: 'row' },
@@ -320,23 +321,23 @@ function render() {
               class: 'btn btn-sm btn-danger',
               onclick: async () => { if (await confirmDialog(`Excluir a etiqueta “${t.name}”?`, { okLabel: 'Excluir', danger: true })) api('tags:delete', t.id).catch(errToast); },
             }, 'Excluir')))),
-        h('button', { class: 'btn', onclick: () => tagEditor() }, '＋ Nova etiqueta')),
+        h('button', { class: 'btn', onclick: () => tagEditor() }, [icon('plus', 15), 'Nova etiqueta'])),
 
-      section('⚡ Respostas rápidas',
+      section('Respostas rápidas',
         h('p', { class: 'muted small' }, 'Na conversa, digite “/” e o atalho para inserir o texto. Use {nome} para o primeiro nome do contato.'),
         ...state.quickReplies.map((r) => h('div', { class: 'list-row' },
           h('div', { class: 'grow' }, h('b', null, `/${r.shortcut}`), h('div', { class: 'muted small ellipsis' }, r.text)),
           h('div', { class: 'row' },
             h('button', { class: 'btn btn-sm', onclick: () => quickEditor(r) }, 'Editar'),
             h('button', { class: 'btn btn-sm btn-danger', onclick: () => api('quick:delete', r.id).catch(errToast) }, 'Excluir')))),
-        h('button', { class: 'btn', onclick: () => quickEditor() }, '＋ Nova resposta rápida')),
+        h('button', { class: 'btn', onclick: () => quickEditor() }, [icon('plus', 15), 'Nova resposta rápida'])),
 
-      state.can.admin && section('💾 Dados e backup',
+      state.can.admin && section('Dados e backup',
         h('p', { class: 'muted small' }, 'Tudo fica salvo no servidor do escritório, na pasta:'),
         h('code', { class: 'path' }, state.dataDir),
         h('div', { class: 'row wrap' },
-          h('button', { class: 'btn', onclick: () => downloadUrl('/download/backup') }, '⬇ Baixar backup do sistema'),
-          state.canRestore ? h('button', { class: 'btn', onclick: restoreBackup }, '⬆ Restaurar um backup…') : null),
+          h('button', { class: 'btn', onclick: () => downloadUrl('/download/backup') }, 'Baixar backup do sistema'),
+          state.canRestore ? h('button', { class: 'btn', onclick: restoreBackup }, 'Restaurar um backup…') : null),
         h('p', { class: 'muted small' }, 'O servidor também guarda sozinho uma cópia por dia (as últimas 14).'),
         state.legacyAvailable ? h('div', { class: 'legacy' },
           h('p', null, h('b', null, 'Kanban antigo encontrado. '), 'Importe as categorias, colunas, notas e prazos do app anterior.',
@@ -364,7 +365,7 @@ export async function runDiagnosis() {
     const r = await api('wa:diagnose');
     fill(body,
       ...r.steps.map((s) => h('div', { class: `diag-step ${s.ok ? 'ok' : 'bad'}` },
-        h('b', null, s.ok ? '✔ ' : '✖ ', s.label), h('div', { class: 'muted small' }, s.detail))),
+        h('b', null, s.ok ? icon('check', 16) : icon('x', 16), s.label), h('div', { class: 'muted small' }, s.detail))),
       r.ok ? h('p', { class: 'alert info' }, 'Tudo certo com a rede. Se ainda cair, clique em “Tentar reconectar”.')
         : h('p', { class: 'alert' }, r.hint || 'Algo está bloqueando a conexão com o WhatsApp.'),
       h('p', { class: 'muted small' }, 'O resultado também foi gravado no registro de erros (whatsapp.log).'));
@@ -408,9 +409,9 @@ function colorPicker(value, onPick) {
 
 export function pipelineEditor(p) {
   const draft = p ? { ...p, stages: p.stages.map((s) => ({ ...s })) }
-    : { name: '', icon: '📁', stages: [{ name: 'Novo', color: PALETTE[0] }, { name: 'Em andamento', color: PALETTE[1] }, { name: 'Concluído', color: PALETTE[3] }] };
+    : { name: '', icon: '', stages: [{ name: 'Novo', color: PALETTE[0] }, { name: 'Em andamento', color: PALETTE[1] }, { name: 'Concluído', color: PALETTE[3] }] };
   const name = h('input', { class: 'input', value: draft.name, placeholder: 'Ex.: Vendas' });
-  const icon = h('input', { class: 'input icon-input', value: draft.icon || '', maxLength: 4 });
+  const iconIn = h('input', { class: 'input icon-input', value: draft.icon || '', maxLength: 4 });
   const stagesEl = h('div', { class: 'stage-editor' });
   const draw = () => {
     fill(stagesEl, ...draft.stages.map((s, i) => h('div', { class: 'stage-edit-row' },
@@ -419,8 +420,8 @@ export function pipelineEditor(p) {
       colorPicker(s.color, (c) => { s.color = c; draw(); }),
       h('button', { class: 'icon-btn small', disabled: i === 0, onclick: () => { [draft.stages[i - 1], draft.stages[i]] = [draft.stages[i], draft.stages[i - 1]]; draw(); } }, '↑'),
       h('button', { class: 'icon-btn small', disabled: i === draft.stages.length - 1, onclick: () => { [draft.stages[i + 1], draft.stages[i]] = [draft.stages[i], draft.stages[i + 1]]; draw(); } }, '↓'),
-      h('button', { class: 'icon-btn small', title: 'Remover etapa', disabled: draft.stages.length <= 1, onclick: () => { draft.stages.splice(i, 1); draw(); } }, '🗑'))),
-    h('button', { class: 'btn btn-sm', onclick: () => { draft.stages.push({ name: 'Nova etapa', color: PALETTE[draft.stages.length % PALETTE.length] }); draw(); } }, '＋ Adicionar etapa'));
+      h('button', { class: 'icon-btn small', title: 'Remover etapa', disabled: draft.stages.length <= 1, onclick: () => { draft.stages.splice(i, 1); draw(); } }, icon('trash', 16)))),
+    h('button', { class: 'btn btn-sm', onclick: () => { draft.stages.push({ name: 'Nova etapa', color: PALETTE[draft.stages.length % PALETTE.length] }); draw(); } }, [icon('plus', 15), 'Adicionar etapa']));
   };
   draw();
   modal({
@@ -428,7 +429,7 @@ export function pipelineEditor(p) {
     wide: true,
     body: h('div', { class: 'form' },
       h('div', { class: 'row' },
-        h('label', { class: 'field' }, h('span', null, 'Ícone'), icon),
+        h('label', { class: 'field' }, h('span', null, 'Ícone'), iconIn),
         h('label', { class: 'field grow' }, h('span', null, 'Nome do funil'), name)),
       h('div', { class: 'field' }, h('span', null, 'Etapas (da primeira à última)'), stagesEl),
       p ? h('p', { class: 'muted small' }, 'Ao remover uma etapa, as conversas que estavam nela saem do funil.') : null),
@@ -450,7 +451,7 @@ export function pipelineEditor(p) {
           if (!name.value.trim()) { toast('Dê um nome ao funil', 'error'); return false; }
           const stages = draft.stages.filter((s) => s.name.trim());
           if (!stages.length) { toast('O funil precisa de pelo menos uma etapa', 'error'); return false; }
-          const id = await api('pipelines:save', { id: p?.id, name: name.value.trim(), icon: icon.value.trim(), stages });
+          const id = await api('pipelines:save', { id: p?.id, name: name.value.trim(), icon: iconIn.value.trim(), stages });
           if (!p) await setSetting('lastPipeline', id);
           return true;
         },
@@ -484,7 +485,7 @@ async function moveItem(kind, list, i, dir) {
 function typeEditor(t) {
   let color = t?.color || PALETTE[Math.floor(Math.random() * PALETTE.length)];
   const name = h('input', { class: 'input', value: t?.name || '', placeholder: 'Ex.: Cliente' });
-  const icon = h('input', { class: 'input icon-input', value: t?.icon || '🏷', maxLength: 4 });
+  const iconIn = h('input', { class: 'input icon-input', value: t?.icon || '', maxLength: 4 });
   const personal = h('input', { type: 'checkbox', class: 'switch', checked: !!t?.personal });
   const notify = h('input', { type: 'checkbox', class: 'switch', checked: t ? !!t.notify : true });
   const autodownload = h('input', { type: 'checkbox', class: 'switch', checked: !!t?.autodownload });
@@ -492,7 +493,7 @@ function typeEditor(t) {
     title: t ? `Editar tipo “${t.name}”` : 'Novo tipo de contato',
     body: h('div', { class: 'form' },
       h('div', { class: 'row' },
-        h('label', { class: 'field' }, h('span', null, 'Ícone'), icon),
+        h('label', { class: 'field' }, h('span', null, 'Ícone'), iconIn),
         h('label', { class: 'field grow' }, h('span', null, 'Nome'), name)),
       h('div', { class: 'field' }, h('span', null, 'Cor'), colorPicker(color, (c) => { color = c; })),
       h('label', { class: 'toggle-row' }, h('div', null, h('div', null, 'É pessoal (não é trabalho)'),
@@ -515,7 +516,7 @@ function typeEditor(t) {
         label: 'Salvar', primary: true,
         onClick: async () => {
           if (!name.value.trim()) { toast('Dê um nome ao tipo', 'error'); return false; }
-          await api('types:save', { id: t?.id, name: name.value.trim(), icon: icon.value.trim(), color, personal: personal.checked, notify: notify.checked, autodownload: autodownload.checked });
+          await api('types:save', { id: t?.id, name: name.value.trim(), icon: iconIn.value.trim(), color, personal: personal.checked, notify: notify.checked, autodownload: autodownload.checked });
           return true;
         },
       },
@@ -547,7 +548,7 @@ export function describeRules(r = {}) {
 export function filterEditor(f) {
   const r = structuredClone(f?.rules || {});
   const name = h('input', { class: 'input', value: f?.name || '', placeholder: 'Ex.: Clientes aguardando' });
-  const icon = h('input', { class: 'input icon-input', value: f?.icon || '🔎', maxLength: 4 });
+  const iconIn = h('input', { class: 'input icon-input', value: f?.icon || '', maxLength: 4 });
   const check = (label, get, set) => h('label', { class: 'check' },
     h('input', { type: 'checkbox', checked: !!get(), onchange: (e) => set(e.target.checked) }), ' ', label);
   const select = (label, value, options, set) => h('label', { class: 'field' }, h('span', null, label),
@@ -565,7 +566,7 @@ export function filterEditor(f) {
     wide: true,
     body: h('div', { class: 'form' },
       h('div', { class: 'row' },
-        h('label', { class: 'field' }, h('span', null, 'Ícone'), icon),
+        h('label', { class: 'field' }, h('span', null, 'Ícone'), iconIn),
         h('label', { class: 'field grow' }, h('span', null, 'Nome do filtro'), name)),
       h('div', { class: 'field' }, h('span', null, 'Tipos de contato (nenhum marcado = todos)'),
         h('div', { class: 'row wrap' }, state.contactTypes.map((t) => check(`${t.icon || ''} ${t.name}`,
@@ -600,7 +601,7 @@ export function filterEditor(f) {
         label: 'Salvar', primary: true,
         onClick: async () => {
           if (!name.value.trim()) { toast('Dê um nome ao filtro', 'error'); return false; }
-          await api('filters:save', { id: f?.id, name: name.value.trim(), icon: icon.value.trim(), rules: r });
+          await api('filters:save', { id: f?.id, name: name.value.trim(), icon: iconIn.value.trim(), rules: r });
           return true;
         },
       },

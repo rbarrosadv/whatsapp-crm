@@ -6,6 +6,7 @@ import { state, on, api, openClient } from '../store.js';
 import { emptyState } from '../components.js';
 import { paymentRow, newCaseDialog, openCase, showReceipt } from './casemodal.js';
 import { columnChart, barChart } from '../charts.js';
+import { icon } from '../icons.js';
 
 let root;
 let tab = 'painel'; // painel | receber | pagar | caixa | inadimplencia
@@ -45,14 +46,14 @@ async function render() {
   const body = h('div', { class: 'finance-body' });
   fill(root,
     h('div', { class: 'page-head' },
-      h('h2', null, '💰 Financeiro'),
+      h('h2', null, 'Financeiro'),
       h('div', { class: 'segmented' },
-        [['painel', '📊 Painel'], ['receber', '⬇ A receber'], ['pagar', '⬆ A pagar'], ['caixa', '💵 Fluxo de caixa'], ['inadimplencia', '⚠ Inadimplência']]
+        [['painel', 'Painel'], ['receber', 'A receber'], ['pagar', 'A pagar'], ['caixa', 'Fluxo de caixa'], ['inadimplencia', 'Inadimplência']]
           .map(([id, label]) => h('button', { class: `seg ${tab === id ? 'active' : ''}`, onclick: () => { tab = id; render(); } }, label))),
       h('div', { class: 'row' },
-        h('button', { class: 'btn', title: 'Entrada sem processo: consulta, parecer, acordo…', onclick: () => incomeDialog({}) }, '＋ Receita'),
-        h('button', { class: 'btn', onclick: () => expenseDialog({}) }, '＋ Despesa'),
-        h('button', { class: 'btn', onclick: () => newCaseDialog(null) }, '＋ Processo'))),
+        h('button', { class: 'btn', title: 'Entrada sem processo: consulta, parecer, acordo…', onclick: () => incomeDialog({}) }, [icon('plus', 15), 'Receita']),
+        h('button', { class: 'btn', onclick: () => expenseDialog({}) }, [icon('plus', 15), 'Despesa']),
+        h('button', { class: 'btn', onclick: () => newCaseDialog(null) }, [icon('plus', 15), 'Processo']))),
     body);
   ({ painel: renderDashboard, receber: renderReceivables, pagar: renderPayables, caixa: renderCash, inadimplencia: renderDefaulters })[tab](body, my);
 }
@@ -84,7 +85,7 @@ async function renderDashboard(el, my) {
   ].filter(Boolean);
 
   fill(el,
-    alerts.length ? h('div', { class: 'fin-alerts' }, alerts.map((a) => h('button', { class: `fin-alert ${a.cls}`, onclick: a.go }, `${a.cls === 'bad' ? '⚠' : '•'} ${a.text}`, h('span', { class: 'muted' }, ' →')))) : null,
+    alerts.length ? h('div', { class: 'fin-alerts' }, alerts.map((a) => h('button', { class: `fin-alert ${a.cls}`, onclick: a.go }, a.cls === 'bad' ? icon('alert', 16) : null, a.text, h('span', { class: 'muted' }, ' →')))) : null,
     h('div', { class: 'stats' },
       stat(`Recebido em ${monthName}`, h('span', { class: 'money plain' }, fmtMoney(d.month.in)), 'stat-ok',
         delta == null ? 'mês anterior sem recebimentos' : `${delta >= 0 ? '▲' : '▼'} ${Math.abs(delta)}% em relação ao mês anterior`, () => { tab = 'caixa'; render(); }),
@@ -115,17 +116,17 @@ async function renderDashboard(el, my) {
         h('div', { class: 'panel-head' }, h('h3', null, 'Recebido por área — 12 meses')),
         d.byArea.length ? barChart({ items: d.byArea, color: cIn, fmt: fmtMoney }) : h('p', { class: 'muted small' }, 'Nenhum recebimento nos últimos 12 meses.')),
       h('section', { class: 'panel' },
-        h('div', { class: 'panel-head' }, h('h3', null, '⚠ Maiores inadimplentes'), h('button', { class: 'link-btn small', onclick: () => { tab = 'inadimplencia'; render(); } }, 'ver todos')),
+        h('div', { class: 'panel-head' }, h('h3', null, 'Maiores inadimplentes'), h('button', { class: 'link-btn small', onclick: () => { tab = 'inadimplencia'; render(); } }, 'ver todos')),
         d.defaulters.length ? d.defaulters.map((x) => h('div', { class: 'fin-line' },
           h('a', { href: '#', onclick: (e) => { e.preventDefault(); if (x.client_id) openClient(x.client_id); } }, x.client_name || 'Cliente'),
           h('span', { class: 'muted small grow' }, ` · ${x.n} parcela(s) · desde ${day(x.oldest)}`),
-          h('b', { class: 'money bad-text' }, fmtMoney(x.total)))) : h('p', { class: 'muted small' }, '✓ Ninguém em atraso.')),
+          h('b', { class: 'money bad-text' }, fmtMoney(x.total)))) : h('p', { class: 'muted small' }, 'Ninguém em atraso.')),
       h('section', { class: 'panel' },
         h('div', { class: 'panel-head' }, h('h3', null, 'Vencimentos dos próximos 15 dias')),
         d.receivables.length || d.payables.length ? [
-          ...d.receivables.map((p) => h('div', { class: 'fin-line' }, h('span', { class: 'fin-dir in' }, '⬇'), h('span', null, day(p.due_at)),
+          ...d.receivables.map((p) => h('div', { class: 'fin-line' }, h('span', { class: 'fin-dir in' }, icon('download', 16)), h('span', null, day(p.due_at)),
             h('span', { class: 'grow ellipsis' }, ` ${p.who || ''} · ${p.case_title}`), h('b', { class: 'money plain' }, fmtMoney(p.amount)))),
-          ...d.payables.map((e) => h('div', { class: 'fin-line' }, h('span', { class: 'fin-dir out' }, '⬆'), h('span', { class: e.due_at < Date.now() ? 'bad-text' : '' }, day(e.due_at)),
+          ...d.payables.map((e) => h('div', { class: 'fin-line' }, h('span', { class: 'fin-dir out' }, icon('upload', 16)), h('span', { class: e.due_at < Date.now() ? 'bad-text' : '' }, day(e.due_at)),
             h('span', { class: 'grow ellipsis' }, ` ${e.description}${e.category ? ` · ${e.category}` : ''}`), h('b', { class: 'money plain' }, fmtMoney(e.amount)))),
         ] : h('p', { class: 'muted small' }, 'Nada vencendo nos próximos 15 dias.'))));
 }
@@ -147,17 +148,17 @@ async function renderReceivables(el, my) {
       stat('Recebido este mês', fmtMoney(sum.receivedMonth), 'stat-ok', null, () => { filter = 'paid'; render(); }),
       stat('Total em aberto', fmtMoney(sum.openTotal), '', null, () => { filter = 'open'; render(); })),
     h('div', { class: 'row wrap finance-bar' },
-      h('div', { class: 'chips' }, chip('overdue', '⚠ Vencidas'), chip('upcoming', '📅 A vencer'), chip('open', 'Em aberto'), chip('paid', '✔ Pagas'), chip('all', 'Todas'), chip('avulsas', '➕ Receitas avulsas')),
+      h('div', { class: 'chips' }, chip('overdue', 'Vencidas'), chip('upcoming', 'A vencer'), chip('open', 'Em aberto'), chip('paid', 'Pagas'), chip('all', 'Todas'), chip('avulsas', 'Receitas avulsas')),
       h('input', { class: 'input search', type: 'search', placeholder: 'Cliente, processo…', value: q, oninput: debounce((e) => { q = e.target.value; render(); }, 250) }),
       h('div', { class: 'grow' }),
       h('span', { class: 'muted' }, `${list.length} parcela(s) · `, h('span', { class: 'money-total' }, fmtMoney(total))),
-      filter === 'overdue' && list.length > 1 ? h('button', { class: 'btn btn-primary btn-sm', onclick: () => chargeMany(list) }, `📤 Cobrar as ${list.length} vencidas`) : null),
+      filter === 'overdue' && list.length > 1 ? h('button', { class: 'btn btn-primary btn-sm', onclick: () => chargeMany(list) }, `Cobrar as ${list.length} vencidas`) : null),
     list.length
       ? h('div', { class: 'table-wrap' }, h('table', { class: 'table' },
         h('thead', null, h('tr', null, ['Situação', 'Cliente / Caso', 'Descrição', 'Vencimento', 'Valor', ''].map((t) => h('th', null, t)))),
         h('tbody', null, list.map((p) => paymentRow(p, { showCase: true })))))
-      : emptyState('💰', filter === 'overdue' ? 'Nenhuma parcela vencida 🎉' : 'Nenhuma parcela aqui',
-        'Os honorários são lançados dentro de cada processo (aba 💰 Honorários da ficha).'));
+      : emptyState(icon('wallet', 16), filter === 'overdue' ? 'Nenhuma parcela vencida ' : 'Nenhuma parcela aqui',
+        'Os honorários são lançados dentro de cada processo (aba Honorários da ficha).'));
 }
 
 async function renderIncomes(el, my) {
@@ -166,14 +167,14 @@ async function renderIncomes(el, my) {
   const chip = (key, label) => h('button', { class: `chip ${filter === key ? 'active' : ''}`, onclick: () => { filter = key; render(); } }, label);
   fill(el,
     h('div', { class: 'row wrap finance-bar' },
-      h('div', { class: 'chips' }, chip('overdue', '⚠ Vencidas'), chip('upcoming', '📅 A vencer'), chip('open', 'Em aberto'), chip('paid', '✔ Pagas'), chip('all', 'Todas'), chip('avulsas', '➕ Receitas avulsas')),
+      h('div', { class: 'chips' }, chip('overdue', 'Vencidas'), chip('upcoming', 'A vencer'), chip('open', 'Em aberto'), chip('paid', 'Pagas'), chip('all', 'Todas'), chip('avulsas', 'Receitas avulsas')),
       h('div', { class: 'grow' }),
       h('span', { class: 'muted' }, `${list.length} receita(s) · `, h('span', { class: 'money-total' }, fmtMoney(list.reduce((a, i) => a + i.amount, 0)))),
-      h('button', { class: 'btn btn-primary btn-sm', onclick: () => incomeDialog({}) }, '＋ Receita avulsa')),
+      h('button', { class: 'btn btn-primary btn-sm', onclick: () => incomeDialog({}) }, [icon('plus', 15), 'Receita avulsa'])),
     list.length ? h('div', { class: 'table-wrap' }, h('table', { class: 'table' },
       h('thead', null, h('tr', null, ['Data', 'Quem pagou', 'Descrição', 'Forma', 'Valor', ''].map((t) => h('th', null, t)))),
       h('tbody', null, list.map(incomeRow))))
-      : emptyState('➕', 'Nenhuma receita avulsa', 'Consultas, pareceres e outros valores recebidos sem processo entram aqui (botão “＋ Receita”).'));
+      : emptyState(icon('plus', 16), 'Nenhuma receita avulsa', 'Consultas, pareceres e outros valores recebidos sem processo entram aqui (botão “＋ Receita”).'));
 }
 
 export function incomeRow(i) {
@@ -185,12 +186,12 @@ export function incomeRow(i) {
     h('td', { class: 'small' }, methods[i.method] || ''),
     h('td', { class: 'num' }, h('b', null, fmtMoney(i.amount))),
     h('td', { class: 'actions' },
-      h('button', { class: 'btn btn-sm', onclick: () => showReceipt(i.id, { income: true }) }, i.receipt_no ? `🧾 nº ${i.receipt_no}` : '🧾 Recibo'),
-      h('button', { class: 'icon-btn small', title: 'Editar', onclick: () => incomeDialog(i) }, '✎'),
+      h('button', { class: 'btn btn-sm', onclick: () => showReceipt(i.id, { income: true }) }, i.receipt_no ? `nº ${i.receipt_no}` : 'Recibo'),
+      h('button', { class: 'icon-btn small', title: 'Editar', onclick: () => incomeDialog(i) }, icon('edit', 16)),
       state.can.admin ? h('button', {
         class: 'icon-btn small', title: 'Excluir',
         onclick: async () => { if (await confirmDialog(`Excluir “${i.description}”?`, { okLabel: 'Excluir', danger: true })) api('finance:deleteIncome', i.id).catch(errToast); },
-      }, '🗑') : null));
+      }, icon('trash', 16)) : null));
 }
 
 /** Receita avulsa: entrada sem processo (consulta, parecer, acordo…). Cliente é opcional. */
@@ -199,7 +200,7 @@ export async function incomeDialog(i = {}) {
   const who = h('input', { class: 'input', type: 'search', value: i.who || '', placeholder: 'Nome do cliente (ou de quem pagou)' });
   const picks = h('div', { class: 'picker-list short' });
   const tag = h('div', { class: 'small muted' });
-  const showTag = () => fill(tag, clientId ? ['👤 cliente cadastrado ', h('a', { href: '#', onclick: (e) => { e.preventDefault(); clientId = null; showTag(); } }, '(desligar)')] : 'Sem cadastro: o nome vai só no recibo.');
+  const showTag = () => fill(tag, clientId ? ['cliente cadastrado ', h('a', { href: '#', onclick: (e) => { e.preventDefault(); clientId = null; showTag(); } }, '(desligar)')] : 'Sem cadastro: o nome vai só no recibo.');
   const search = debounce(async () => {
     const qv = who.value.trim();
     if (qv.length < 2) { fill(picks); return; }
@@ -228,7 +229,7 @@ export async function incomeDialog(i = {}) {
     } catch (e) { errToast(e); return false; }
   };
   modal({
-    title: i.id ? 'Editar receita avulsa' : '➕ Receita avulsa',
+    title: i.id ? 'Editar receita avulsa' : 'Receita avulsa',
     body: h('div', { class: 'form' },
       h('div', { class: 'field' }, h('span', null, 'Quem pagou'), who, picks, tag),
       h('label', { class: 'field' }, h('span', null, 'Descrição'), desc),
@@ -255,15 +256,15 @@ async function renderPayables(el, my) {
   const total = list.reduce((a, e) => a + e.amount, 0);
   fill(el,
     h('div', { class: 'row wrap finance-bar' },
-      h('div', { class: 'chips' }, chip('overdue', '⚠ Vencidas'), chip('open', 'Em aberto'), chip('paid', '✔ Pagas'), chip('reimburse', '↩ Reembolso pendente'), chip('all', 'Todas')),
+      h('div', { class: 'chips' }, chip('overdue', 'Vencidas'), chip('open', 'Em aberto'), chip('paid', 'Pagas'), chip('reimburse', '↩ Reembolso pendente'), chip('all', 'Todas')),
       h('div', { class: 'grow' }),
       h('span', { class: 'muted' }, `${list.length} lançamento(s) · `, h('span', { class: 'money-total' }, fmtMoney(total))),
-      h('button', { class: 'btn btn-primary btn-sm', onclick: () => expenseDialog({}) }, '＋ Despesa do escritório'),
-      h('button', { class: 'btn btn-sm', onclick: () => expenseDialog({ kind: 'custa' }) }, '＋ Custa de processo')),
+      h('button', { class: 'btn btn-primary btn-sm', onclick: () => expenseDialog({}) }, [icon('plus', 15), 'Despesa do escritório']),
+      h('button', { class: 'btn btn-sm', onclick: () => expenseDialog({ kind: 'custa' }) }, [icon('plus', 15), 'Custa de processo'])),
     list.length ? h('div', { class: 'table-wrap' }, h('table', { class: 'table' },
       h('thead', null, h('tr', null, ['Situação', 'Descrição', 'Categoria', 'Vencimento', 'Valor', ''].map((t) => h('th', null, t)))),
       h('tbody', null, list.map(expenseRow))))
-      : emptyState('🧾', 'Nenhuma despesa aqui', 'Lance as contas do escritório (aluguel, sistemas, impostos…) e as custas pagas nos processos.'));
+      : emptyState(icon('receipt', 16), 'Nenhuma despesa aqui', 'Lance as contas do escritório (aluguel, sistemas, impostos…) e as custas pagas nos processos.'));
 }
 
 export function expenseRow(e) {
@@ -272,21 +273,21 @@ export function expenseRow(e) {
     : late ? ['bad', 'vencida'] : ['muted', 'em aberto'];
   return h('tr', null,
     h('td', null, h('span', { class: `status-pill ${st[0]}` }, st[1])),
-    h('td', null, e.description, e.case_title ? h('div', { class: 'muted small' }, h('a', { href: '#', onclick: (ev) => { ev.preventDefault(); openCase(e.case_id, { tab: 'honorarios' }); } }, `📁 ${e.client_name ? `${e.client_name} · ` : ''}${e.case_title}`)) : null),
+    h('td', null, e.description, e.case_title ? h('div', { class: 'muted small' }, h('a', { href: '#', onclick: (ev) => { ev.preventDefault(); openCase(e.case_id, { tab: 'honorarios' }); } }, `${e.client_name ? `${e.client_name} · ` : ''}${e.case_title}`)) : null),
     h('td', { class: 'small' }, e.kind === 'custa' ? `Custa · ${e.category || ''}` : (e.category || '')),
     h('td', null, day(e.due_at)),
     h('td', { class: 'num' }, h('b', null, fmtMoney(e.amount))),
     h('td', { class: 'actions' },
-      e.paid_at ? null : h('button', { class: 'btn btn-sm btn-ok', onclick: () => api('finance:expensePaid', e.id, true).then(() => toast('Despesa paga', 'success')).catch(errToast) }, '✔ Paguei'),
+      e.paid_at ? null : h('button', { class: 'btn btn-sm btn-ok', onclick: () => api('finance:expensePaid', e.id, true).then(() => toast('Despesa paga', 'success')).catch(errToast) }, 'Paguei'),
       e.paid_at && e.kind === 'custa' && e.reimbursable && !e.reimbursed_at ? h('button', { class: 'btn btn-sm', title: 'O cliente devolveu este valor', onclick: () => api('finance:reimbursed', e.id, true).catch(errToast) }, '↩ Reembolsado') : null,
-      h('button', { class: 'icon-btn small', title: 'Editar', onclick: () => expenseDialog(e) }, '✎'),
+      h('button', { class: 'icon-btn small', title: 'Editar', onclick: () => expenseDialog(e) }, icon('edit', 16)),
       state.can.admin ? h('button', {
         class: 'icon-btn small', title: 'Excluir',
         onclick: async () => {
           if (!await confirmDialog(`Excluir “${e.description}”?${e.series ? ' (as próximas parcelas em aberto desta conta fixa também)' : ''}`, { okLabel: 'Excluir', danger: true })) return;
           api('finance:deleteExpense', e.id, { series: !!e.series }).catch(errToast);
         },
-      }, '🗑') : null));
+      }, icon('trash', 16)) : null));
 }
 
 /** Lançar/editar despesa do escritório ou custa de processo. */
@@ -369,9 +370,9 @@ async function renderCash(el, my) {
           h('td', { class: 'num' }, x.dir === 'out' ? fmtMoney(x.amount) : ''),
           h('td', { class: `num ${running < 0 ? 'bad-text' : ''}` }, fmtMoney(running)),
           h('td', null, x.type === 'honorario' || x.type === 'avulsa'
-            ? h('button', { class: 'icon-btn small', title: 'Recibo', onclick: () => showReceipt(x.id, { income: x.type === 'avulsa' }) }, '🧾') : null));
+            ? h('button', { class: 'icon-btn small', title: 'Recibo', onclick: () => showReceipt(x.id, { income: x.type === 'avulsa' }) }, icon('receipt', 16)) : null));
       }))))
-      : emptyState('💵', 'Nenhuma movimentação neste mês', 'Entram aqui as parcelas recebidas, os reembolsos de custas e as despesas pagas.'));
+      : emptyState(icon('wallet', 16), 'Nenhuma movimentação neste mês', 'Entram aqui as parcelas recebidas, os reembolsos de custas e as despesas pagas.'));
 }
 
 // ------------------------------------------------------------ inadimplência
@@ -396,7 +397,7 @@ async function renderDefaulters(el, my) {
         h('td', { class: 'small' }, x.last_charge ? day(x.last_charge) : h('span', { class: 'muted' }, 'nunca')),
         h('td', { class: 'num' }, h('b', { class: 'bad-text' }, fmtMoney(x.total))),
         h('td', null, h('button', { class: 'btn btn-sm', onclick: () => { tab = 'receber'; filter = 'overdue'; q = x.client_name || ''; render(); } }, 'Ver parcelas')))))))
-      : emptyState('🎉', 'Ninguém em atraso', 'Quando uma parcela vencer sem pagamento, o cliente aparece aqui.'));
+      : emptyState(icon('check', 16), 'Ninguém em atraso', 'Quando uma parcela vencer sem pagamento, o cliente aparece aqui.'));
 }
 
 /** Envia a cobrança padrão para várias parcelas, uma de cada vez, com intervalo. */

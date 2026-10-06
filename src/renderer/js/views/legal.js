@@ -10,6 +10,7 @@ import { avatarEl } from '../components.js';
 import { openCase, newCaseDialog, feeLabel, paymentRow } from './casemodal.js';
 import { folderBrowser, clientFolderDialog } from './docs.js';
 import { renderIntimations } from './intimations.js';
+import { icon } from '../icons.js';
 
 let root;
 let tab = 'clientes'; // clientes | processos | intimacoes
@@ -62,13 +63,13 @@ async function render() {
     h('div', { class: 'page-head' },
       h('h2', null, 'Jurídico'),
       h('div', { class: 'segmented' },
-        [['clientes', '👥 Clientes'], ['processos', '⚖️ Processos'], ['intimacoes', '📣 Intimações']].map(([id, label]) => h('button', {
+        [['clientes', 'Clientes'], ['processos', 'Processos'], ['intimacoes', 'Intimações']].map(([id, label]) => h('button', {
           class: `seg ${tab === id ? 'active' : ''}`, onclick: () => { tab = id; render(); },
         }, label))),
       h('div', { class: 'row' },
-        tab === 'processos' ? h('button', { class: 'btn', title: 'Ver os processos em colunas por etapa', onclick: () => setView('board') }, '📊 Funil') : null,
-        h('button', { class: 'btn', onclick: () => clientDialog() }, '＋ Cliente'),
-        h('button', { class: 'btn btn-primary', onclick: () => newCaseDialog(null) }, '＋ Processo'))),
+        tab === 'processos' ? h('button', { class: 'btn', title: 'Ver os processos em colunas por etapa', onclick: () => setView('board') }, 'Funil') : null,
+        h('button', { class: 'btn', onclick: () => clientDialog() }, [icon('plus', 15), 'Cliente']),
+        h('button', { class: 'btn btn-primary', onclick: () => newCaseDialog(null) }, [icon('plus', 15), 'Processo']))),
     tab === 'intimacoes' ? null : h('div', { class: 'row legal-tools' }, search,
       tab === 'processos' ? h('select', { class: 'input select-sm', onchange: (e) => { caseStatus = e.target.value; drawList(); } },
         [['aberto', 'Em andamento'], ['encerrado', 'Encerrados'], ['', 'Todos']].map(([v, l]) => h('option', { value: v, selected: caseStatus === v }, l))) : null,
@@ -86,7 +87,7 @@ async function drawClients(el, my) {
   if (my !== loading) return;
   if (!list.length) {
     fill(el, h('div', { class: 'panel' }, h('p', { class: 'muted' }, q ? 'Nenhum cliente encontrado.' : 'Nenhum cliente cadastrado ainda.'),
-      h('div', { class: 'row' }, h('button', { class: 'btn btn-primary', onclick: () => clientDialog({ name: q }) }, `＋ Cadastrar ${q ? `“${q}”` : 'cliente'}`))));
+      h('div', { class: 'row' }, h('button', { class: 'btn btn-primary', onclick: () => clientDialog({ name: q }) }, `Cadastrar ${q ? `“${q}”` : 'cliente'}`))));
     return;
   }
   fill(el, h('table', { class: 'table clients-table' },
@@ -97,9 +98,9 @@ async function drawClients(el, my) {
       h('td', null, c.cases_open ? `${c.cases_open} em andamento` : h('span', { class: 'muted' }, c.cases_total ? 'encerrados' : '—')),
       h('td', { class: c.next_due && c.next_due < Date.now() ? 'bad-text' : '' }, c.next_due ? fmtDue(c.next_due) : ''),
       h('td', { class: 'row end' },
-        c.overdue_payments && state.can.finance ? h('span', { class: 'bad-text small' }, `⚠ ${c.overdue_payments} parcela(s)`) : null,
-        c.jid ? h('span', { title: 'WhatsApp ligado' }, '💬') : null,
-        c.folder ? h('span', { title: 'Pasta no OneDrive' }, '📁') : null))))));
+        c.overdue_payments && state.can.finance ? h('span', { class: 'bad-text small' }, `${c.overdue_payments} parcela(s)`) : null,
+        c.jid ? h('span', { title: 'WhatsApp ligado' }, icon('message', 16)) : null,
+        c.folder ? h('span', { title: 'Pasta no OneDrive' }, icon('folder', 16)) : null))))));
 }
 
 /** Cadastro rápido de cliente (nome e contato); o resto fica na ficha. */
@@ -143,11 +144,11 @@ async function renderClient(my) {
   try { c = await api('clients:get', clientId); } catch (e) { errToast(e); clientId = null; render(); return; }
   if (my !== loading) return;
   const tabs = [
-    ['processos', `⚖️ Processos${c.cases_open ? ` (${c.cases_open})` : ''}`],
-    ['dados', '📋 Dados'],
-    ['documentos', '📂 Documentos'],
-    state.can.finance ? ['financeiro', `💰 Financeiro${c.overdue_payments ? ` ⚠${c.overdue_payments}` : ''}`] : null,
-    ['historico', '📝 Notas e histórico'],
+    ['processos', `Processos${c.cases_open ? ` (${c.cases_open})` : ''}`],
+    ['dados', 'Dados'],
+    ['documentos', 'Documentos'],
+    state.can.finance ? ['financeiro', `Financeiro${c.overdue_payments ? ` ${c.overdue_payments}` : ''}`] : null,
+    ['historico', 'Notas e histórico'],
   ].filter(Boolean);
   if (!tabs.some(([id]) => id === clientTab)) clientTab = 'processos';
   const body = h('div', { class: 'client-body' });
@@ -162,9 +163,9 @@ async function renderClient(my) {
           [c.kind === 'pj' ? 'Pessoa jurídica' : null, c.cpf, c.phone ? formatPhone(String(c.phone).replace(/\D/g, '')) : null, c.email].filter(Boolean).join(' · ') || 'Complete os dados na aba Dados')),
       h('div', { class: 'row wrap' },
         c.jid
-          ? h('button', { class: 'btn', onclick: () => openChat(c.jid) }, '💬 WhatsApp', c.chat?.unread ? h('span', { class: 'badge' }, c.chat.unread) : null)
-          : h('button', { class: 'btn', title: 'Ligar uma conversa do WhatsApp do escritório a este cliente', onclick: () => linkChatDialog(c) }, '💬 Ligar WhatsApp'),
-        h('button', { class: 'btn btn-primary', onclick: () => newCaseDialog(null, { clientId: c.id }) }, '＋ Processo'))),
+          ? h('button', { class: 'btn', onclick: () => openChat(c.jid) }, 'WhatsApp', c.chat?.unread ? h('span', { class: 'badge' }, c.chat.unread) : null)
+          : h('button', { class: 'btn', title: 'Ligar uma conversa do WhatsApp do escritório a este cliente', onclick: () => linkChatDialog(c) }, 'Ligar WhatsApp'),
+        h('button', { class: 'btn btn-primary', onclick: () => newCaseDialog(null, { clientId: c.id }) }, [icon('plus', 15), 'Processo']))),
     h('div', { class: 'tabs' }, tabs.map(([id, label]) => h('button', {
       class: `tab ${clientTab === id ? 'active' : ''}`, onclick: () => { clientTab = id; render(); },
     }, label))),
@@ -178,7 +179,7 @@ async function clientCases(el, c) {
   const list = await api('cases:list', { clientId: c.id });
   fill(el, list.length ? h('div', { class: 'case-cards' }, list.map(caseCardBig))
     : h('div', { class: 'panel' }, h('p', { class: 'muted' }, 'Nenhum processo deste cliente ainda.'),
-      h('div', null, h('button', { class: 'btn btn-primary', onclick: () => newCaseDialog(null, { clientId: c.id }) }, '＋ Novo processo'))));
+      h('div', null, h('button', { class: 'btn btn-primary', onclick: () => newCaseDialog(null, { clientId: c.id }) }, [icon('plus', 15), 'Novo processo']))));
 }
 
 function caseCardBig(k) {
@@ -191,9 +192,9 @@ function caseCardBig(k) {
       st ? h('span', { class: 'stage-pill small', style: { '--c': st.color } }, st.name) : null,
       k.status !== 'aberto' ? h('span', { class: 'muted' }, 'encerrado') : null),
     h('div', { class: 'case-card-foot small' },
-      k.next_due ? h('span', { class: k.next_due < Date.now() ? 'bad-text' : 'muted' }, `📅 ${fmtDue(k.next_due)}`) : null,
-      state.can.finance && k.billed_total ? h('span', { class: 'money' }, `💰 ${fmtMoney(k.paid_total)} / ${fmtMoney(k.billed_total)}`) : (state.can.finance && feeLabel(k) ? h('span', { class: 'muted' }, feeLabel(k)) : null),
-      k.overdue_payments && state.can.finance ? h('span', { class: 'bad-text' }, `⚠ ${k.overdue_payments} vencida(s)`) : null));
+      k.next_due ? h('span', { class: k.next_due < Date.now() ? 'bad-text' : 'muted' }, `${fmtDue(k.next_due)}`) : null,
+      state.can.finance && k.billed_total ? h('span', { class: 'money' }, `${fmtMoney(k.paid_total)} / ${fmtMoney(k.billed_total)}`) : (state.can.finance && feeLabel(k) ? h('span', { class: 'muted' }, feeLabel(k)) : null),
+      k.overdue_payments && state.can.finance ? h('span', { class: 'bad-text' }, `${k.overdue_payments} vencida(s)`) : null));
 }
 
 function clientData(el, c) {
@@ -253,7 +254,7 @@ function clientDocs(el, c) {
     return;
   }
   fill(el, h('div', { class: 'panel docs-empty' },
-    h('b', null, '📁 Este cliente ainda não tem pasta ligada no OneDrive'),
+    h('b', null, 'Este cliente ainda não tem pasta ligada no OneDrive'),
     h('p', { class: 'muted small' }, 'Ligue a pasta que já existe em 02 CLIENTES ou crie uma nova no padrão do escritório.'),
     h('div', null, h('button', { class: 'btn btn-primary', onclick: () => clientFolderDialog(c.id) }, 'Ligar ou criar a pasta…'))));
 }
@@ -271,8 +272,8 @@ async function clientFinance(el, c) {
     mine.length ? h('table', { class: 'table' }, h('tbody', null, mine.map((p) => paymentRow(p, { showCase: true }))))
       : h('p', { class: 'muted' }, 'Nenhuma parcela. Os honorários são lançados na ficha de cada processo.'),
     h('div', { class: 'panel' },
-      h('div', { class: 'panel-head' }, h('h3', null, '➕ Receitas avulsas (consultas, pareceres…)'),
-        h('button', { class: 'btn btn-sm', onclick: () => fin.incomeDialog({ client_id: c.id, who: c.name }) }, '＋ Receita')),
+      h('div', { class: 'panel-head' }, h('h3', null, 'Receitas avulsas (consultas, pareceres…)'),
+        h('button', { class: 'btn btn-sm', onclick: () => fin.incomeDialog({ client_id: c.id, who: c.name }) }, [icon('plus', 15), 'Receita'])),
       incomes.length ? h('table', { class: 'table compact' }, h('tbody', null, incomes.map(fin.incomeRow))) : h('p', { class: 'muted small' }, 'Nenhuma.')));
 }
 
@@ -335,10 +336,10 @@ async function drawCases(el, my) {
         h('td', null, k.client_id ? h('a', { href: '#', onclick: (e) => { e.preventDefault(); e.stopPropagation(); clientId = k.client_id; clientTab = 'processos'; tab = 'clientes'; render(); } }, k.client_name || 'Cliente') : (k.client_name || '—')),
         h('td', { class: 'mono small' }, k.process_number || '', k.tribunal ? h('div', { class: 'muted small' }, k.tribunal) : null),
         h('td', { class: 'small' }, k.responsible_name || h('span', { class: 'muted' }, '—')),
-        h('td', { class: 'small' }, k.next_step ? h('span', null, k.next_step, h('div', { class: 'muted' }, `${k.flow_done}/${k.flow_total} etapas`)) : '✓',
+        h('td', { class: 'small' }, k.next_step ? h('span', null, k.next_step, h('div', { class: 'muted' }, `${k.flow_done}/${k.flow_total} etapas`)) : icon('check', 16),
           st ? h('div', null, h('span', { class: 'stage-pill small', style: { '--c': st.color } }, st.name)) : null),
         h('td', { class: k.next_due && k.next_due < Date.now() ? 'bad-text' : '' }, k.next_due ? fmtDue(k.next_due) : ''),
-        state.can.finance ? h('td', { class: 'num' }, k.overdue_payments ? h('span', { class: 'bad-text' }, `⚠ ${k.overdue_payments} vencida(s)`) : (k.billed_total ? h('span', { class: 'money' }, `${fmtMoney(k.paid_total)} / ${fmtMoney(k.billed_total)}`) : feeLabel(k) || '')) : null);
+        state.can.finance ? h('td', { class: 'num' }, k.overdue_payments ? h('span', { class: 'bad-text' }, `${k.overdue_payments} vencida(s)`) : (k.billed_total ? h('span', { class: 'money' }, `${fmtMoney(k.paid_total)} / ${fmtMoney(k.billed_total)}`) : feeLabel(k) || '')) : null);
     }))));
 }
 

@@ -58,7 +58,7 @@ function render() {
           h('option', { value: 'recent', selected: f.sort === 'recent' }, 'Mais recentes'),
           h('option', { value: 'name', selected: f.sort === 'name' }, 'Nome (A-Z)'),
           h('option', { value: 'value', selected: f.sort === 'value' }, 'Maior valor')),
-        h('button', { class: 'btn', onclick: exportCsv }, '⬇ Exportar planilha'))),
+        h('button', { class: 'btn', onclick: exportCsv }, 'Exportar planilha'))),
     h('div', { class: 'table-wrap' },
       h('table', { class: 'table' },
         h('thead', null, h('tr', null, ['', 'Nome', 'Telefone', 'Tipo', 'Empresa', 'Etapa', 'Etiquetas', 'Valor', 'Última mensagem'].map((t) => h('th', null, t)))),

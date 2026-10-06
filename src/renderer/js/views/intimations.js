@@ -6,6 +6,7 @@
 import { h, fill, modal, toast, errToast, confirmDialog, fmtDateTime, toLocalInput, fromLocalInput, openExternal, normalize } from '../util.js';
 import { state, api, openClient } from '../store.js';
 import { openCase } from './casemodal.js';
+import { icon } from '../icons.js';
 
 let filter = 'nova'; // nova | prazo | lida | todas
 const day = (ts) => (ts ? new Date(ts).toLocaleDateString('pt-BR') : '—');
@@ -45,17 +46,17 @@ export async function renderIntimations(el, redraw) {
           } catch (err) { errToast(err); }
           redraw();
         },
-      }, '🔎 Buscar agora')),
+      }, 'Buscar agora')),
     list.length ? h('div', { class: 'intim-list' }, list.map((i) => card(i, redraw)))
-      : h('div', { class: 'panel' }, h('p', { class: 'muted' }, filter === 'nova' ? '✓ Nenhuma intimação para conferir.' : 'Nada aqui.')));
+      : h('div', { class: 'panel' }, h('p', { class: 'muted' }, filter === 'nova' ? 'Nenhuma intimação para conferir.' : 'Nada aqui.')));
 }
 
 // ------------------------------------------------------------ OABs
 
 function oabPanel(st, canEdit, redraw) {
   return h('div', { class: 'panel' },
-    h('div', { class: 'panel-head' }, h('h3', null, '⚖️ Advogados acompanhados no DJEN'),
-      canEdit ? h('button', { class: 'btn btn-sm', onclick: () => oabDialog({}, redraw) }, '＋ Cadastrar OAB') : null),
+    h('div', { class: 'panel-head' }, h('h3', null, 'Advogados acompanhados no DJEN'),
+      canEdit ? h('button', { class: 'btn btn-sm', onclick: () => oabDialog({}, redraw) }, [icon('plus', 15), 'Cadastrar OAB']) : null),
     st.oabs.length ? h('div', { class: 'oab-list' }, st.oabs.map((o) => h('div', { class: `oab-row ${o.active ? '' : 'off'}` },
       h('div', { class: 'grow' },
         h('b', null, o.name), h('span', { class: 'mono' }, ` · OAB ${Number(o.number).toLocaleString('pt-BR')}/${o.uf}`),
@@ -102,7 +103,7 @@ async function oabDialog(o, redraw) {
 
 function unknownPanel(list, redraw) {
   return h('details', { class: 'panel unknown-procs', open: list.length <= 5 },
-    h('summary', null, h('b', null, `📥 ${list.length} processo(s) nas intimações que ainda não estão no sistema`),
+    h('summary', null, h('b', null, `${list.length} processo(s) nas intimações que ainda não estão no sistema`),
       h('span', { class: 'muted small' }, ' — cadastre para acompanhar os andamentos e ligar as próximas intimações')),
     list.map((p) => h('div', { class: 'unknown-row' },
       h('div', { class: 'grow' },
@@ -171,11 +172,11 @@ function card(i, redraw) {
       h('span', { class: 'status-pill muted' }, i.tribunal || '—'),
       h('b', null, `${i.kind}${i.doc_kind ? ` · ${i.doc_kind}` : ''}`),
       h('span', { class: 'muted small grow' }, i.orgao || ''),
-      i.status === 'prazo' ? h('span', { class: 'status-pill ok' }, `📅 prazo ${day(i.task_due)}`) : i.status === 'lida' ? h('span', { class: 'status-pill muted' }, 'conferida') : h('span', { class: 'status-pill warn' }, 'para conferir')),
+      i.status === 'prazo' ? h('span', { class: 'status-pill ok' }, `prazo ${day(i.task_due)}`) : i.status === 'lida' ? h('span', { class: 'status-pill muted' }, 'conferida') : h('span', { class: 'status-pill warn' }, 'para conferir')),
     h('div', { class: 'intim-proc small' },
       h('span', { class: 'mono' }, i.process_number || 's/ nº'),
-      i.case_id ? [' · ', h('a', { href: '#', onclick: (e) => { e.preventDefault(); openCase(i.case_id, { tab: 'andamentos' }); } }, `📁 ${i.case_title}`),
-        i.client_name ? [' · ', h('a', { href: '#', onclick: (e) => { e.preventDefault(); openClient(i.client_id); } }, `👤 ${i.client_name}`)] : null]
+      i.case_id ? [' · ', h('a', { href: '#', onclick: (e) => { e.preventDefault(); openCase(i.case_id, { tab: 'andamentos' }); } }, `${i.case_title}`),
+        i.client_name ? [' · ', h('a', { href: '#', onclick: (e) => { e.preventDefault(); openClient(i.client_id); } }, `${i.client_name}`)] : null]
         : h('span', { class: 'muted' }, ' · processo ainda não cadastrado'),
       i.parties.length ? h('span', { class: 'muted' }, ` · ${i.parties.map((x) => x.name).join(' × ')}`) : null),
     text,
@@ -183,9 +184,9 @@ function card(i, redraw) {
       h('button', { class: 'btn btn-sm', onclick: () => text.classList.toggle('open') }, 'Ler tudo'),
       i.link ? h('button', { class: 'btn btn-sm', onclick: () => openExternal(i.link) }, 'Abrir no tribunal') : null,
       h('div', { class: 'grow' }),
-      i.status === 'nova' ? h('button', { class: 'btn btn-sm', title: 'Conferida, não gera prazo', onclick: async () => { await api('intimations:set', [i.id], 'lida').catch(errToast); redraw(); } }, '✓ Conferida, sem prazo') : null,
+      i.status === 'nova' ? h('button', { class: 'btn btn-sm', title: 'Conferida, não gera prazo', onclick: async () => { await api('intimations:set', [i.id], 'lida').catch(errToast); redraw(); } }, 'Conferida, sem prazo') : null,
       i.status !== 'nova' ? h('button', { class: 'btn btn-sm', onclick: async () => { await api('intimations:set', [i.id], 'nova').catch(errToast); redraw(); } }, 'Voltar para conferir') : null,
-      i.status !== 'prazo' ? h('button', { class: 'btn btn-sm btn-primary', onclick: () => deadlineDialog(i, redraw) }, '📅 Criar prazo') : null));
+      i.status !== 'prazo' ? h('button', { class: 'btn btn-sm btn-primary', onclick: () => deadlineDialog(i, redraw) }, 'Criar prazo') : null));
 }
 
 async function deadlineDialog(i, redraw) {
@@ -206,7 +207,7 @@ async function deadlineDialog(i, redraw) {
   const m = /(\d{1,2})\s*(?:\([a-zç ]+\)\s*)?dias/i.exec(i.text || '');
   if (m && [5, 8, 10, 15, 30].includes(Number(m[1]))) { days.value = m[1]; await recalc(); }
   modal({
-    title: '📅 Criar prazo a partir da intimação',
+    title: 'Criar prazo a partir da intimação',
     body: h('div', { class: 'form' },
       h('div', { class: 'intim-text open small' }, i.text),
       h('div', { class: 'grid2' },
