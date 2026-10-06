@@ -27,8 +27,6 @@ export const state = {
   view: 'inbox',
   activeJid: null,
   history: null,
-  legacyAvailable: false,
-  legacyPending: 0,
   dataDir: '',
   me: null, // quem está usando: { id, name, role, roleLabel, signature }
   can: {}, // o que o perfil pode: { finance, admin, configure, deleteCases }
@@ -50,8 +48,6 @@ export async function bootstrap() {
   state.contactTypes = b.contactTypes;
   state.filters = b.filters;
   state.settings = b.settings;
-  state.legacyAvailable = b.legacyAvailable;
-  state.legacyPending = b.legacyPending;
   state.dataDir = b.dataDir;
   state.version = b.version;
   state.canRestore = b.canRestore;

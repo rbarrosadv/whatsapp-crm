@@ -8,29 +8,7 @@ import fs from 'node:fs';
 
 let db;
 
-const SCHEMA_VERSION = 15;
-
-const DEFAULT_PIPELINES = [
-  {
-    id: 'vendas', name: 'Atendimento', icon: 'briefcase',
-    stages: [
-      ['novo', 'Novo contato', '#94a3b8'],
-      ['atendimento', 'Em atendimento', '#3b82f6'],
-      ['proposta', 'Proposta enviada', '#f59e0b'],
-      ['negociacao', 'Negociação', '#a855f7'],
-      ['ganho', 'Fechado', '#22c55e'],
-      ['perdido', 'Perdido', '#ef4444'],
-    ],
-  },
-  {
-    id: 'pessoal', name: 'Pessoal', icon: 'user',
-    stages: [
-      ['responder', 'Para responder', '#f59e0b'],
-      ['aguardando', 'Aguardando', '#3b82f6'],
-      ['resolvido', 'Resolvido', '#22c55e'],
-    ],
-  },
-];
+const SCHEMA_VERSION = 16;
 
 // Tipos de contato (editáveis). `personal` = não conta como trabalho
 // (fica fora de "Aguardando resposta" e dos avisos de conversa esquecida).
@@ -53,16 +31,6 @@ const DEFAULT_FILTERS = [
 // Funis de casos (versão 3). A última etapa de cada um é a de encerramento.
 const CASE_PIPELINES = [
   {
-    id: 'captacao', name: 'Captação', icon: 'target',
-    stages: [
-      ['contato', 'Primeiro contato', '#94a3b8'],
-      ['consulta', 'Consulta agendada', '#3b82f6'],
-      ['proposta', 'Proposta de honorários', '#f59e0b'],
-      ['contratou', 'Contratou', '#22c55e'],
-      ['nao', 'Não contratou', '#ef4444'],
-    ],
-  },
-  {
     id: 'casos', name: 'Casos em andamento', icon: 'scale',
     stages: [
       ['documentacao', 'Documentação', '#94a3b8'],
@@ -83,10 +51,11 @@ const CASE_PIPELINES = [
   },
 ];
 
+// "Cliente" é o tipo de contato e "interessado" é o Comercial: etiquetas são só marcas extras.
 const DEFAULT_TAGS = [
-  ['Cliente', '#22c55e'],
-  ['Lead quente', '#ef4444'],
+  ['Urgente', '#ef4444'],
   ['Retornar', '#f59e0b'],
+  ['Aguardando documentos', '#3b82f6'],
   ['VIP', '#a855f7'],
 ];
 
@@ -227,13 +196,6 @@ function migrate() {
     );
 
     CREATE TABLE IF NOT EXISTS settings (key TEXT PRIMARY KEY, value TEXT);
-
-    -- Classificações importadas do Kanban antigo (que identificava as
-    -- conversas pelo nome). Aplicadas assim que uma conversa com o mesmo
-    -- nome aparecer.
-    CREATE TABLE IF NOT EXISTS legacy_pending (
-      name TEXT PRIMARY KEY, pipeline_id TEXT, stage_id TEXT, note TEXT, deadline TEXT
-    );
   `);
 
   // versão 2: tipos de contato e filtros editáveis
@@ -490,6 +452,7 @@ function migrate() {
   if (version < 5) run("UPDATE contact_types SET autodownload = 1 WHERE id = 'cliente'");
   if (version < 9) migrateV9();
   if (version < 14) migrateV14();
+  if (version < 16) migrateV16();
   run('INSERT OR REPLACE INTO meta (key, value) VALUES (?, ?)', 'schema', String(SCHEMA_VERSION));
 }
 
@@ -517,6 +480,26 @@ function migrateV14() {
     }
   }
   run("UPDATE stages SET name = TRIM(REPLACE(name, '✔', '')) WHERE name LIKE '%✔%'");
+}
+
+// v16: o sistema começa do zero com o Comercial (interessados) no lugar do
+// funil de casos "Captação"; sai também a importação do Kanban antigo.
+function migrateV16() {
+  tx(() => {
+    if (get("SELECT 1 AS x FROM pipelines WHERE id = 'captacao'")) {
+      // casos que estavam lá: quem não contratou é encerrado; o resto segue em "Casos em andamento"
+      const first = get("SELECT id FROM stages WHERE pipeline_id = 'casos' ORDER BY position LIMIT 1")?.id || null;
+      const last = get("SELECT id FROM stages WHERE pipeline_id = 'casos' ORDER BY position DESC LIMIT 1")?.id || null;
+      run(`UPDATE cases SET status = 'encerrado', pipeline_id = ?, stage_id = ? WHERE stage_id = 'captacao.nao'`, last ? 'casos' : null, last);
+      run("UPDATE cases SET pipeline_id = ?, stage_id = ? WHERE pipeline_id = 'captacao'", first ? 'casos' : null, first);
+      run("UPDATE crm SET pipeline_id = NULL, stage_id = NULL WHERE pipeline_id = 'captacao'");
+      run("DELETE FROM stages WHERE pipeline_id = 'captacao'");
+      run("DELETE FROM pipelines WHERE id = 'captacao'");
+      run("DELETE FROM settings WHERE key = 'lastPipeline' AND value LIKE '%captacao%'");
+    }
+    db.exec('DROP TABLE IF EXISTS legacy_pending');
+    all('SELECT id FROM pipelines ORDER BY position, rowid').forEach((p, i) => run('UPDATE pipelines SET position = ? WHERE id = ?', i, p.id));
+  });
 }
 
 /** Dados do cliente usados nos modelos de documento ({cpf}, {endereco}…). */
@@ -570,13 +553,6 @@ function migrateV3() {
 
 function seedDefaults() {
   tx(() => {
-    DEFAULT_PIPELINES.forEach((p, pi) => {
-      run('INSERT OR IGNORE INTO pipelines (id, name, icon, position) VALUES (?, ?, ?, ?)', p.id, p.name, p.icon, pi);
-      p.stages.forEach(([id, name, color], si) => {
-        run('INSERT OR IGNORE INTO stages (id, pipeline_id, name, color, position) VALUES (?, ?, ?, ?, ?)',
-          `${p.id}.${id}`, p.id, name, color, si);
-      });
-    });
     DEFAULT_TAGS.forEach(([name, color]) => run('INSERT INTO tags (name, color) VALUES (?, ?)', name, color));
     DEFAULT_QUICK_REPLIES.forEach(([s, t]) => run('INSERT INTO quick_replies (shortcut, text) VALUES (?, ?)', s, t));
   });
@@ -703,7 +679,6 @@ export function upsertChat(chat) {
     vals.push(chat[f]);
   }
   if (sets.length) run(`UPDATE chats SET ${sets.join(', ')} WHERE jid = ?`, ...vals, chat.jid);
-  if (chat.name) applyLegacyPending(chat.jid, chat.name);
 }
 
 export function chatExists(jid) {
@@ -828,8 +803,6 @@ export function upsertContact(c) {
          verified_name = COALESCE(excluded.verified_name, contacts.verified_name),
          phone = COALESCE(excluded.phone, contacts.phone)`,
   c.jid, c.name || null, c.notify || null, c.verified_name || null, c.phone || phoneOf(c.jid));
-  const nm = c.name || c.notify;
-  if (nm) applyLegacyPending(c.jid, nm);
 }
 
 export function contactName(jid) {
@@ -1966,41 +1939,3 @@ export function stats() {
   };
 }
 
-// --------------------------------------------------- import do Kanban antigo
-
-export function addLegacyPending(rows) {
-  tx(() => {
-    for (const r of rows) {
-      run(`INSERT OR REPLACE INTO legacy_pending (name, pipeline_id, stage_id, note, deadline) VALUES (?, ?, ?, ?, ?)`,
-        r.name, r.pipeline_id || null, r.stage_id || null, r.note || null, r.deadline || null);
-    }
-  });
-  // tenta aplicar já com o que temos no banco
-  const known = all(`SELECT c.jid, COALESCE(ct.name, c.name, ct.notify) AS nm FROM chats c
-                     LEFT JOIN contacts ct ON ct.jid = c.jid`);
-  let applied = 0;
-  for (const k of known) if (k.nm && applyLegacyPending(k.jid, k.nm)) applied++;
-  return applied;
-}
-
-function applyLegacyPending(jid, name) {
-  const p = get('SELECT * FROM legacy_pending WHERE name = ?', name);
-  if (!p) return false;
-  tx(() => {
-    run('DELETE FROM legacy_pending WHERE name = ?', name);
-    if (p.stage_id && get('SELECT 1 AS x FROM stages WHERE id = ?', p.stage_id)) {
-      const has = get(`SELECT 1 AS x FROM cases WHERE jid = ? AND pipeline_id = ? AND status = 'aberto'`, jid, p.pipeline_id);
-      if (!has) setStage(jid, p.stage_id);
-    }
-    if (p.note) addNote(jid, p.note);
-    if (p.deadline) {
-      const due = new Date(`${p.deadline}T09:00:00`).getTime();
-      if (!Number.isNaN(due)) saveTask({ jid, title: p.note ? p.note.slice(0, 80) : 'Prazo (importado)', due_at: due });
-    }
-  });
-  return true;
-}
-
-export function legacyPendingCount() {
-  return get('SELECT COUNT(*) AS n FROM legacy_pending')?.n || 0;
-}

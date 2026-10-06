@@ -346,20 +346,6 @@ function render() {
           h('button', { class: 'btn', onclick: () => downloadUrl('/download/backup') }, 'Baixar backup do sistema'),
           state.canRestore ? h('button', { class: 'btn', onclick: restoreBackup }, 'Restaurar um backup…') : null),
         h('p', { class: 'muted small' }, 'O servidor também guarda sozinho uma cópia por dia (as últimas 14).'),
-        state.legacyAvailable ? h('div', { class: 'legacy' },
-          h('p', null, h('b', null, 'Kanban antigo encontrado. '), 'Importe as categorias, colunas, notas e prazos do app anterior.',
-            state.legacyPending ? h('span', { class: 'muted small' }, ` (${state.legacyPending} classificação(ões) aguardando a conversa aparecer)`) : null),
-          h('button', {
-            class: 'btn btn-primary',
-            onclick: async () => {
-              try {
-                const r = await api('legacy:import');
-                state.legacyPending = r.waiting;
-                toast(`Importado: ${r.pipelines} funil(is), ${r.conversations} conversa(s) (${r.applied} já aplicadas).`, 'success', 7000);
-                render();
-              } catch (e) { errToast(e); }
-            },
-          }, 'Importar do Kanban antigo')) : null,
         h('p', { class: 'muted small' }, `Versão ${state.version || ''}${state.demo ? ' — modo demonstração' : ''}`)),
     ),
   );

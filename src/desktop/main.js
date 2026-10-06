@@ -3,8 +3,8 @@
 //
 // Dois modos (escolhidos na primeira vez, trocáveis pelo menu):
 // - servidor: abre o endereço do servidor do escritório (ex.: https://sistema.barrosassociados.adv.br);
-// - local: liga o servidor neste mesmo computador (o jeito do app antigo,
-//   com os mesmos dados de %APPDATA%\WhatsAppCRM) e abre ele.
+// - local: liga o servidor neste mesmo computador (dados em
+//   %APPDATA%\BarrosAssociados\dados) e abre ele.
 import {
   app, BrowserWindow, ipcMain, shell, Tray, Menu, nativeImage, powerMonitor, safeStorage, session, dialog,
 } from 'electron';

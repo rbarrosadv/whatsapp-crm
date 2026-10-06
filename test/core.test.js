@@ -7,7 +7,6 @@ import os from 'node:os';
 import path from 'node:path';
 import * as db from '../src/main/db.js';
 import { WhatsAppService } from '../src/main/whatsapp.js';
-import { importLegacy } from '../src/main/legacy.js';
 import { webmToOgg } from '../src/main/ogg.js';
 
 const PN = '5511987654321@s.whatsapp.net';
@@ -142,7 +141,7 @@ test('LID: conversa que chegou pelo @lid é unida à do número, com a ficha do 
   const LID2 = '11112222333344@lid';
   await wa.onMessages([{ key: { remoteJid: LID2, fromMe: false, id: 'L1' }, message: { conversation: 'via lid' }, messageTimestamp: now() - 10 }], 'notify');
   assert.ok(db.getChat(LID2));
-  db.setStage(LID2, 'captacao.proposta');
+  db.setStage(LID2, 'consultoria.analise');
   db.addNote(LID2, 'nota no lid');
   db.updateCrmFields(LID2, { value: '150,50' });
 
@@ -151,7 +150,7 @@ test('LID: conversa que chegou pelo @lid é unida à do número, com a ficha do 
 
   assert.equal(db.getChat(LID2), null);
   const c = db.getChat(PN2);
-  assert.equal(c.stage_id, 'captacao.proposta');
+  assert.equal(c.stage_id, 'consultoria.analise');
   assert.equal(c.value, 150.5);
   assert.equal(db.listMessages(PN2).length, 2);
   assert.equal(db.listNotes(PN2).length, 1);
@@ -190,28 +189,6 @@ test('CRM: etapas, etiquetas, tarefas e funil', () => {
   db.saveTask({ id: tid, done: true });
   assert.equal(db.getChat(PN).open_tasks, 0);
   assert.ok(db.listActivity(PN).length >= 1);
-});
-
-test('importa o Kanban antigo e aplica pelo nome da conversa', () => {
-  const file = path.join(dir, 'kanban-state.json');
-  fs.writeFileSync(file, JSON.stringify({
-    categoryList: [{ id: 'cliente', icon: '⚖️', label: 'Clientes' }],
-    categoryColumns: { cliente: [{ id: 'entrada', name: 'Entrada', accent: '#9DACB8' }, { id: 'aguardando', name: 'Aguardando', accent: '#E6B85A' }] },
-    categories: { 'name:Mariana (agenda)': 'cliente', 'name:Fulano Futuro': 'cliente' },
-    assignments: { 'cliente:name:Mariana (agenda)': 'aguardando', 'cliente:name:Fulano Futuro': 'entrada' },
-    notes: { 'name:Mariana (agenda)': { text: 'cliente antigo', deadline: '2030-01-10' } },
-  }));
-  const r = importLegacy(db, file);
-  assert.equal(r.pipelines, 1);
-  assert.equal(r.conversations, 2);
-  assert.equal(r.applied, 1);
-  assert.equal(db.getChat(PN).stage_id, 'legado_cliente.aguardando');
-  assert.ok(db.listNotes(PN).some((x) => x.text === 'cliente antigo'));
-  assert.equal(db.legacyPendingCount(), 1);
-
-  // quando a conversa com o nome pendente aparecer, é aplicada
-  db.upsertContact({ jid: '5511000000001@s.whatsapp.net', notify: 'Fulano Futuro' });
-  assert.equal(db.legacyPendingCount(), 0);
 });
 
 test('conversor de áudio gera OGG válido a partir de WebM', () => {
@@ -286,11 +263,11 @@ test('casos: vários por contato, honorários em parcelas e documentos', () => {
   const J = '5511911112222@s.whatsapp.net';
   db.upsertChat({ jid: J, name: 'Cliente Casos', last_ts: Date.now() });
   const c1 = db.saveCase({ jid: J, title: 'Reclamação trabalhista', stage_id: 'casos.protocolo', process_number: '0001234-56.2026.5.02.0001', fee_installments: true, fee_success: true, fee_percent: '30' });
-  const c2 = db.saveCase({ jid: J, title: 'Consulta inventário', stage_id: 'captacao.consulta' });
+  const c2 = db.saveCase({ jid: J, title: 'Consulta inventário', stage_id: 'consultoria.demanda' });
   const chat = db.getChat(J);
   assert.equal(chat.open_cases, 2);
-  assert.deepEqual(new Set(chat.stage_ids), new Set(['casos.protocolo', 'captacao.consulta']));
-  assert.ok(chat.pipeline_ids.includes('casos') && chat.pipeline_ids.includes('captacao'));
+  assert.deepEqual(new Set(chat.stage_ids), new Set(['casos.protocolo', 'consultoria.demanda']));
+  assert.ok(chat.pipeline_ids.includes('casos') && chat.pipeline_ids.includes('consultoria'));
 
   // 1000 em 3 parcelas: 333,33 + 333,33 + 333,34, vencimentos mensais (31 → último dia)
   const first = new Date(2030, 0, 31, 12).getTime();
@@ -333,7 +310,7 @@ test('casos: vários por contato, honorários em parcelas e documentos', () => {
   // encerrar caso tira ele das etapas abertas; mover reabre
   db.setCaseStatus(c2, 'encerrado');
   assert.deepEqual(db.getChat(J).stage_ids, ['casos.protocolo']);
-  db.setCaseStage(c2, 'captacao.contratou');
+  db.setCaseStage(c2, 'consultoria.faturado');
   assert.equal(db.getCase(c2).status, 'aberto');
 
   // sem retorno ao cliente

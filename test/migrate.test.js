@@ -43,22 +43,46 @@ test('v14: emojis dos funis, tipos e filtros viram nomes de ícone; "✔" sai da
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'crm-mig-'));
   try {
     db.openDb(dir);
-    db.run("UPDATE pipelines SET icon = '🎯' WHERE id = 'captacao'");
+    db.run("UPDATE pipelines SET icon = '🎯' WHERE id = 'consultoria'");
     db.run("UPDATE contact_types SET icon = '⚖️' WHERE id = 'cliente'");
     db.run("UPDATE chat_filters SET icon = '⏳' WHERE name = 'Aguardando resposta'");
-    db.run("UPDATE stages SET name = 'Contratou ✔' WHERE id = 'captacao.contratou'");
+    db.run("UPDATE stages SET name = 'Faturado ✔' WHERE id = 'consultoria.faturado'");
     db.run("INSERT INTO pipelines (id, name, icon, position) VALUES ('x', 'Outro', '🦄', 9)");
     db.run("UPDATE meta SET value = '13' WHERE key = 'schema'");
     db.closeDb();
 
     db.openDb(dir);
-    assert.equal(db.get("SELECT icon FROM pipelines WHERE id = 'captacao'").icon, 'target');
+    assert.equal(db.get("SELECT icon FROM pipelines WHERE id = 'consultoria'").icon, 'target');
     assert.equal(db.get("SELECT icon FROM pipelines WHERE id = 'x'").icon, 'tag', 'emoji desconhecido vira etiqueta');
     assert.equal(db.get("SELECT icon FROM contact_types WHERE id = 'cliente'").icon, 'scale');
     assert.equal(db.get("SELECT icon FROM chat_filters WHERE name = 'Aguardando resposta'").icon, 'clock');
-    assert.equal(db.get("SELECT name FROM stages WHERE id = 'captacao.contratou'").name, 'Contratou');
+    assert.equal(db.get("SELECT name FROM stages WHERE id = 'consultoria.faturado'").name, 'Faturado');
     assert.equal(db.emojiToIcon('💼'), 'briefcase');
     assert.equal(db.emojiToIcon('star'), 'star');
+    db.closeDb();
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('v16: funil "Captação" sai; casos dele seguem em "Casos em andamento" (quem não contratou, encerrado)', () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'crm-mig-'));
+  try {
+    db.openDb(dir);
+    db.run("INSERT INTO pipelines (id, name, icon, position) VALUES ('captacao', 'Captação', 'target', 0)");
+    db.run("INSERT INTO stages (id, pipeline_id, name, color, position) VALUES ('captacao.proposta', 'captacao', 'Proposta', '#f59e0b', 0), ('captacao.nao', 'captacao', 'Não contratou', '#ef4444', 1)");
+    const cid = db.saveClient({ name: 'Cliente Antigo' });
+    const a = db.saveCase({ client_id: cid, title: 'Em proposta', stage_id: 'captacao.proposta' });
+    const b = db.saveCase({ client_id: cid, title: 'Desistiu', stage_id: 'captacao.nao' });
+    db.run("UPDATE meta SET value = '15' WHERE key = 'schema'");
+    db.closeDb();
+
+    db.openDb(dir);
+    assert.equal(db.get("SELECT 1 AS x FROM pipelines WHERE id = 'captacao'"), undefined);
+    assert.equal(db.getCase(a).stage_id, 'casos.documentacao');
+    assert.equal(db.getCase(a).status, 'aberto');
+    assert.equal(db.getCase(b).status, 'encerrado');
+    assert.equal(db.get("SELECT name FROM sqlite_master WHERE name = 'legacy_pending'"), undefined);
     db.closeDb();
   } finally {
     fs.rmSync(dir, { recursive: true, force: true });

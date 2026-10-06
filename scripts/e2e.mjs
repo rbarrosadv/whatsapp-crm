@@ -231,7 +231,7 @@ try {
   await page.click('.chat-head .stage-btn:has-text("Novo caso")');
   await page.fill('.modal input.input', 'Plano anual');
   await page.click('.modal .stage-btn.wide');
-  await page.locator('.popup-item', { hasText: 'Proposta de honorários' }).click();
+  await page.locator('.popup-item', { hasText: 'Documentação' }).click();
   await page.click('.modal button:has-text("Criar")');
   await page.waitForSelector('.modal-case .case-head');
   check(true, 'caso criado e ficha do caso aberta');
@@ -281,8 +281,8 @@ try {
   check(true, 'caso aparece na ficha do contato');
 
   // etiqueta, nota
-  await page.locator('.crm-panel .tag-chip.toggle', { hasText: 'Lead quente' }).click();
-  await page.waitForSelector('.crm-panel .tag-chip.toggle.on:has-text("Lead quente")');
+  await page.locator('.crm-panel .tag-chip.toggle', { hasText: 'Urgente' }).click();
+  await page.waitForSelector('.crm-panel .tag-chip.toggle.on:has-text("Urgente")');
   check(true, 'etiqueta aplicada');
   await page.fill('.crm-panel textarea', 'Quer plano anual, decidir até sexta.');
   await page.click('.crm-panel button:has-text("Salvar nota")');
@@ -311,18 +311,18 @@ try {
   await page.waitForSelector('.view-legal .cases-table tbody tr');
   check(true, 'Jurídico lista os processos');
   await page.click('.view-legal button:has-text("Funil")');
-  await page.click('.board-head .tab:has-text("Captação")');
+  await page.click('.board-head .tab:has-text("Casos em andamento")');
   await page.waitForSelector('.col .card');
   await shot(page, '04-board');
   const card = page.locator('.card', { hasText: 'Plano anual' });
   check(await card.count() === 1, 'caso aparece no funil');
-  const target = page.locator('.col').filter({ has: page.locator('.col-title', { hasText: /^Contratou\d*$/ }) });
+  const target = page.locator('.col').filter({ has: page.locator('.col-title', { hasText: /^Protocolo \/ Petição\d*$/ }) });
   await card.dragTo(target);
   await target.locator('.card:has-text("Plano anual")').waitFor({ timeout: 5000 });
-  check(true, 'caso arrastado para "Contratou"');
+  check(true, 'caso arrastado para "Protocolo / Petição"');
   check((await target.locator('.col-total').innerText()).includes('2.388'), 'total da coluna soma os honorários');
   // novo caso pela coluna
-  await page.click('.col:has-text("Primeiro contato") .col-add');
+  await page.click('.col:has-text("Documentação") .col-add');
   // cliente novo direto do "novo processo"
   await page.fill('.modal input[type=search]', 'Ana Beatriz');
   await page.click('.modal .picker-item:has-text("Cadastrar novo cliente")');
@@ -331,7 +331,7 @@ try {
   await page.click('.modal button:has-text("Criar")');
   await page.waitForSelector('.modal-case');
   await page.keyboard.press('Escape');
-  await page.waitForSelector('.col:has-text("Primeiro contato") .card:has-text("Consulta inventário")');
+  await page.waitForSelector('.col:has-text("Documentação") .card:has-text("Consulta inventário")');
   check(true, 'caso criado pela coluna do funil');
   await page.click('.board-head .tab:has-text("Casos em andamento")');
   await page.waitForSelector('.card:has-text("Reclamação trabalhista")');
@@ -723,7 +723,7 @@ try {
   await page.locator('.chat-row', { hasText: 'Mariana Souza' }).click();
   await page.waitForSelector('.msg.out:has-text("10% mais barato")');
   check(true, 'mensagens continuam armazenadas após reabrir');
-  await page.waitForSelector('.chat-head .stage-btn:has-text("Contratou")');
+  await page.waitForSelector('.chat-head .stage-btn:has-text("Protocolo")');
   check(true, 'caso e etapa continuam salvos');
   await page.waitForSelector('.chat-head .stage-btn:has-text("Cliente")');
   check(true, 'classificação continua salva');

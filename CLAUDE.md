@@ -80,7 +80,7 @@ Motor (`src/main`, sem Electron apesar do nome da pasta):
 - `db.js` — `node:sqlite`. Tabelas: `chats`, `contacts`, `aliases`,
   `messages`, `pipelines`, `stages`, `crm`, `tags`, `chat_tags`, `notes`,
   `tasks`, `activity` (com `user_name`), `quick_replies`, `settings`,
-  `legacy_pending`, `meta`, `contact_types`, `chat_filters`, `cases`,
+  `meta`, `contact_types`, `chat_filters`, `cases`,
   `payments`, `case_docs`, `users`, `sessions`, `doc_index`, `clients`,
   `case_parties`, `case_moves`, `case_steps`, `case_checklist`, `oabs`,
   `intimations`, `expenses`, `incomes`, `leads`, `lead_contacts` (migrações por versão em
@@ -171,8 +171,9 @@ Motor (`src/main`, sem Electron apesar do nome da pasta):
   gera parcelas se informada a 1ª data, leva tarefas/notas/histórico/atendimentos
   para a chave do cliente. `leadStats` (novos, fechados, conversão, origem,
   motivos de perda, propostas em aberto). Estagiário vê o funil sem valores e
-  não faz proposta; excluir interessado só sócio. O funil de casos "Captação"
-  antigo continua existindo, mas o comercial novo não depende dele.
+  não faz proposta; excluir interessado só sócio. O antigo funil de casos
+  "Captação" saiu na v16 (o comercial é pelos interessados; funis de casos =
+  Casos em andamento e Consultoria).
 - `ogg.js` — remux WebM/Opus (MediaRecorder) → OGG/Opus (mensagem de voz).
 - `google.js` — `GoogleService`: Google Agenda pela API oficial com a chave
   (client_secret JSON, tipo "App para computador") do próprio usuário;
@@ -185,13 +186,11 @@ Motor (`src/main`, sem Electron apesar do nome da pasta):
   `extendedProperties.private.crmTaskId`); horário mudado no Google volta
   para o CRM (`pullChanges`); `agenda()` junta eventos do Google + tarefas
   ainda não sincronizadas. No demo, `DemoGoogleService` (em `demo.js`).
-- `legacy.js` — importa `%APPDATA%\KanbanCRMWhatsApp\kanban-state.json`.
 
 App de desktop (`src/desktop`, Electron 44): `main.js` abre uma janela
 própria com o sistema. Modo **remote** (endereço do servidor) ou **local**
 (liga `startServer` no próprio processo com os dados de
-`%APPDATA%\WhatsAppCRM`, porta 3210 — continuidade com o app antigo; a 1ª
-vez escolhe sozinho se já há `crm.sqlite`). Config em
+`%APPDATA%\BarrosAssociados\dados`, porta 3210). Config em
 `%APPDATA%\BarrosAssociados\desktop.json` (modo, url, bandeja, abrir com o
 Windows, janela). `setup.html`/`offline.html` = telas de escolher servidor e
 "sem conexão". Abrir/salvar arquivos do servidor: `session.downloadURL` +
@@ -405,8 +404,10 @@ Interface (`src/renderer`, JS puro em módulos ES, sem build):
   `sendMessage(jid, { text, edit: key })`. No composer, `editing` mostra a
   faixa "Editando" (Esc cancela). Fotos abrem em `views/imageviewer.js`
   (zoom com rodinha/pinça, arrastar, girar, ← →).
-- Pasta de dados do servidor: `CRM_DATA_DIR` ou `%APPDATA%\WhatsAppCRM`
-  (`~/.config/WhatsAppCRM` no Linux; demo usa `WhatsAppCRM-Demo`). Só um
+- Pasta de dados do servidor: `CRM_DATA_DIR` ou `%APPDATA%\BarrosAssociados\dados`
+  (`~/.config/BarrosAssociados/dados` no Linux; demo usa `BarrosAssociados-Demo`).
+  O sistema começou do zero: não usa a pasta nem os dados do WhatsApp CRM
+  antigo (`%APPDATA%\WhatsAppCRM`), que continua à parte com o WhatsApp pessoal. Só um
   servidor por pasta de dados (senão corrompe a sessão do WhatsApp); o app de
   desktop é instância única.
 - Usuário final é leigo em terminal: instalação por `Instalar.bat`

@@ -15,7 +15,6 @@ import { DemoWhatsAppService, DemoGoogleService } from '../main/demo.js';
 import { GoogleService } from '../main/google.js';
 import { CalendarSync } from '../main/calendar-sync.js';
 import { webmToOgg } from '../main/ogg.js';
-import { importLegacy, legacyStateFile } from '../main/legacy.js';
 import { diagnoseConnection } from '../main/diag.js';
 import { DocsService, guessRoot, templateValues, PLACEHOLDERS, FOLDERS } from '../main/docs.js';
 import { seedDemoDocs, demoCourtsFetch } from '../main/demo.js';
@@ -84,7 +83,6 @@ function fileSafeStorage(dir) {
  */
 export async function createCore({ dataDir, demo = false, version = '', safeStorage, resolveUpload, features = {} }) {
   const events = new EventEmitter();
-  const LEGACY_STATE_FILE = legacyStateFile(process.env.APPDATA || path.join(os.homedir(), '.config'));
 
   db.openDb(dataDir);
   let settings = db.getSettings();
@@ -573,8 +571,6 @@ export async function createCore({ dataDir, demo = false, version = '', safeStor
       filters: db.listChatFilters(),
       settings: settingsFor(ctx.user),
       dataDir: ctx.user.role === 'socio' ? dataDir : '',
-      legacyAvailable: !demo && ctx.user.role === 'socio' && fs.existsSync(LEGACY_STATE_FILE),
-      legacyPending: db.legacyPendingCount(),
       version,
       canRestore: !!features.restore && ctx.user.role === 'socio',
       viewers: [...viewers.values()].filter((v) => v.jid).map((v) => ({ jid: v.jid, userId: v.userId, name: v.name })),
@@ -1325,12 +1321,6 @@ export async function createCore({ dataDir, demo = false, version = '', safeStor
       return settingsFor(ctx.user);
     },
     'settings:get': (ctx) => settingsFor(ctx.user),
-    'legacy:import': () => {
-      const res = importLegacy(db, LEGACY_STATE_FILE);
-      broadcastConfig();
-      refreshAllChats();
-      return res;
-    },
 
     // agenda / Google
     'google:status': () => google.status(),
