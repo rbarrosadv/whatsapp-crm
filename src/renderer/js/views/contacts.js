@@ -1,6 +1,6 @@
 // Lista de contatos em tabela, com filtros e exportação para planilha (CSV).
 import { h, clear, fill, fmtMoney, fmtListTime, formatPhone, phoneOf, normalize, debounce, toast, errToast, downloadBlob } from '../util.js';
-import { state, on, api, openChat, stageById, tagById, typeById } from '../store.js';
+import { state, on, api, openChat, stageById, tagById, typeById, setView } from '../store.js';
 import { avatarEl, stagePill, tagDots, typePill } from '../components.js';
 
 let root;
@@ -40,7 +40,7 @@ function render() {
   tbody = h('tbody');
   root.append(
     h('div', { class: 'page-head' },
-      h('h2', null, 'Contatos ', countEl),
+      h('div', null, h('button', { class: 'btn btn-sm back-btn', onclick: () => setView('inbox') }, '← Atendimento'), h('h2', null, 'Contatos do WhatsApp ', countEl)),
       h('div', { class: 'row' },
         h('input', { class: 'input search', type: 'search', placeholder: 'Nome, telefone, empresa…', value: f.q, oninput: debounce((e) => { f.q = e.target.value; renderRows(); }, 150) }),
         h('select', { class: 'input select-sm', onchange: (e) => { f.type = e.target.value; renderRows(); } },

@@ -1,10 +1,11 @@
 # Barros Associados — contexto do projeto
 
 Sistema de gestão do escritório Barros Associados (sucessor do "WhatsApp
-CRM" v4, que por sua vez sucedeu o "Kanban CRM" v3). CRM com WhatsApp
-integrado pelo protocolo multi-device via **Baileys**
-(`@whiskeysockets/baileys`, não oficial): QR code uma vez, sessão salva em
-disco, mensagens num SQLite, interface própria.
+CRM" v4, que por sua vez sucedeu o "Kanban CRM" v3). **O centro é a gestão
+do escritório** — clientes, processos, prazos/agenda, intimações, financeiro,
+documentos. O WhatsApp (via **Baileys**, `@whiskeysockets/baileys`, não
+oficial: QR code uma vez, sessão salva em disco) é só o módulo de
+**Atendimento**, um canal ligado ao cliente: o sistema funciona inteiro sem ele.
 
 Desde a v5 é **cliente-servidor, para a equipe toda** (sócios, advogados,
 estagiária): um **servidor** (Node, `src/server`) guarda banco, sessão do
@@ -80,7 +81,7 @@ Motor (`src/main`, sem Electron apesar do nome da pasta):
   `messages`, `pipelines`, `stages`, `crm`, `tags`, `chat_tags`, `notes`,
   `tasks`, `activity` (com `user_name`), `quick_replies`, `settings`,
   `legacy_pending`, `meta`, `contact_types`, `chat_filters`, `cases`,
-  `payments`, `case_docs`, `users`, `sessions`, `doc_index` (migrações por versão em
+  `payments`, `case_docs`, `users`, `sessions`, `doc_index`, `clients` (migrações por versão em
   `migrate()`; `meta.schema` guarda a versão atual).
 - `docs.js` — `DocsService`: pasta "BARROS ADVOGADOS" do OneDrive lida
   direto do disco (`settings.docsRoot`, ou `guessRoot()` em
@@ -145,6 +146,18 @@ Interface (`src/renderer`, JS puro em módulos ES, sem build):
   ignorando null — **não use `el.append(null)`**, imprime "null"),
   formatação, modais, menus, toasts, e arquivos: `mediaUrl`, `openMedia`,
   `saveMedia`, `pickFiles`, `uploadFiles`, `downloadUrl/Blob`, `openExternal`.
+- Menu (`NAV` em `app.js`, com `also` = sub-telas que acendem o mesmo
+  botão): Hoje · Agenda (`agenda` calendário + `tasks` lista) · Jurídico
+  (`legal` + `board`) · Atendimento (`inbox` + `contacts`) · Documentos ·
+  Financeiro · Relatórios (`dashboard`). `body[data-view]`: a tela do QR e a
+  faixa de conexão só aparecem no Atendimento.
+- `js/views/legal.js` — **Jurídico**: abas Clientes · Processos · Intimações
+  (esta ainda é só o aviso da próxima etapa), busca no topo; ficha do cliente
+  (Processos, Dados — que preenchem os modelos —, Documentos, Financeiro,
+  Notas e histórico; botão WhatsApp ou "Ligar WhatsApp"). `openClient(id)` /
+  `openLegal(tab)` em `store.js` navegam para cá de qualquer tela.
+- `js/views/tasks.js` — Agenda em lista (tarefas, prazos, audiências,
+  reuniões), filtro por tipo e responsável; `showTasks()` abre filtrada.
 - `js/views/today.js` — tela **Hoje** (entrada do sistema, sempre a 1ª ao
   abrir): Meu dia (agenda + próximas ações: atrasados, para hoje, clientes
   aguardando, cobranças — só com `can.finance` —, casos sem retorno) e Minha
@@ -223,8 +236,18 @@ Interface (`src/renderer`, JS puro em módulos ES, sem build):
   quantas não lidas há em cada filtro. `personal` no tipo = fora de
   "Aguardando resposta" e do aviso de conversa esquecida (`checkForgotten`
   em `server/core.js`, configurável em horas; `chats.alerted_ts` evita repetir).
-- **Casos**: o funil é de casos, não de contatos — um contato pode ter
-  vários (`cases.jid`). `listChats` traz `stage_ids`/`pipeline_ids` dos casos
+- **Cliente no centro** (`clients`, v9): cadastro próprio (CPF/CNPJ, RG,
+  endereço, telefones…, `folder` no OneDrive), WhatsApp opcional em
+  `clients.jid`. Casos, notas, tarefas e histórico continuam com a coluna
+  `jid`, que guarda a **chave do cliente** (`clientKey`): o jid do WhatsApp dele
+  ou `cliente:<id>`; `linkClientChat` troca a chave em tudo quando liga/desliga
+  o WhatsApp. `cases.client_id` é obrigatório para casos novos (vindo de uma
+  conversa, `ensureClientForChat` cria o cliente). `migrateV9` converteu quem
+  tinha caso ou era do tipo "Cliente". `caseRow` traz `client_name`/`client_jid`;
+  tarefas e parcelas trazem `client_id`/`client_name`. Na ficha do WhatsApp
+  (`crmpanel`) só aparece "Abrir ficha do cliente" ou "Cadastrar/Ligar".
+- **Casos**: o funil é de casos, não de contatos — um cliente pode ter
+  vários. `listChats` traz `stage_ids`/`pipeline_ids` dos casos
   abertos; `stage_id`/`pipeline_id` da conversa = caso mais recente (compat.).
   Honorários: tipos fixo/parcelado/êxito no caso; valores em `payments`
   (parcelas geradas por `generateInstallments`, centavos certos na última).

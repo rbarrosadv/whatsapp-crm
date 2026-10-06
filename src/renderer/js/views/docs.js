@@ -23,7 +23,7 @@ export function openDocument(d) { openDoc(d).catch(errToast); }
  * Lista uma pasta com navegação (sem sair de `top`), envio de arquivos,
  * nova pasta e "novo a partir de modelo".
  */
-export function folderBrowser(el, { top, start, caseId, jid }) {
+export function folderBrowser(el, { top, start, caseId, clientId }) {
   let rel = start || top;
   async function render() {
     let r;
@@ -38,12 +38,12 @@ export function folderBrowser(el, { top, start, caseId, jid }) {
     fill(el,
       h('div', { class: 'docs-toolbar' },
         h('div', { class: 'crumbs grow' }, crumbs),
-        h('button', { class: 'btn btn-sm btn-primary', onclick: () => templatePicker({ caseId, jid, dirRel: rel, onDone: render }) }, '📄 Novo do modelo'),
+        h('button', { class: 'btn btn-sm btn-primary', onclick: () => templatePicker({ caseId, clientId, dirRel: rel, onDone: render }) }, '📄 Novo do modelo'),
         h('button', { class: 'btn btn-sm', onclick: () => upload() }, '＋ Enviar arquivos'),
         h('button', { class: 'btn btn-sm', title: 'Criar uma subpasta aqui', onclick: () => mkdir() }, '＋ Pasta'),
         window.desktop?.openDoc ? h('button', { class: 'btn btn-sm', title: 'Abrir esta pasta no Explorador de Arquivos', onclick: () => openDocument({ rel, dir: true, name: base(rel) }) }, '📂 Abrir no Windows') : null),
       !r.exists ? h('p', { class: 'muted small' }, 'Esta pasta não existe mais no OneDrive.')
-        : r.entries.length ? h('div', { class: 'doc-list' }, r.entries.map((d) => entryRow(d, { onOpenDir: () => go(d.rel), caseId, jid })))
+        : r.entries.length ? h('div', { class: 'doc-list' }, r.entries.map((d) => entryRow(d, { onOpenDir: () => go(d.rel), caseId })))
           : h('p', { class: 'muted small' }, 'Pasta vazia. Envie arquivos ou crie um documento a partir de um modelo.'));
   }
   const go = (to) => { rel = to; render(); };
@@ -66,7 +66,7 @@ export function folderBrowser(el, { top, start, caseId, jid }) {
   return { refresh: render };
 }
 
-function entryRow(d, { onOpenDir, caseId, jid } = {}) {
+function entryRow(d, { onOpenDir, caseId } = {}) {
   return h('div', { class: 'doc-row', ondblclick: () => (d.dir ? onOpenDir?.() : openDocument(d)) },
     h('span', { class: 'doc-icon' }, docIcon(d)),
     h('div', { class: 'grow doc-main', onclick: d.dir ? onOpenDir : null },
@@ -75,7 +75,7 @@ function entryRow(d, { onOpenDir, caseId, jid } = {}) {
     d.dir ? h('button', { class: 'btn btn-sm', onclick: onOpenDir }, 'Entrar')
       : [
         h('button', { class: 'btn btn-sm', onclick: () => openDocument(d) }, 'Abrir'),
-        /\.docx$/i.test(d.name) ? h('button', { class: 'btn btn-sm', title: 'Fazer uma cópia deste documento na pasta de um caso', onclick: () => useAsBaseDialog(d, { caseId, jid }) }, 'Usar como base') : null,
+        /\.docx$/i.test(d.name) ? h('button', { class: 'btn btn-sm', title: 'Fazer uma cópia deste documento na pasta de um caso', onclick: () => useAsBaseDialog(d, { caseId }) }, 'Usar como base') : null,
         h('button', { class: 'icon-btn small', title: window.desktop?.showDoc ? 'Mostrar na pasta' : 'Baixar uma cópia', onclick: () => showDoc(d).catch(errToast) }, window.desktop?.showDoc ? '📂' : '⬇'),
       ]);
 }
@@ -83,7 +83,7 @@ function entryRow(d, { onOpenDir, caseId, jid } = {}) {
 // ------------------------------------------------------------ modelos
 
 /** Escolher um modelo de 04 MODELOS e criar o documento já preenchido. */
-export async function templatePicker({ caseId, jid, dirRel, onDone } = {}) {
+export async function templatePicker({ caseId, clientId, dirRel, onDone } = {}) {
   let list;
   try { list = await api('docs:templates'); } catch (e) { errToast(e); return; }
   if (!list.length) {
@@ -115,7 +115,7 @@ export async function templatePicker({ caseId, jid, dirRel, onDone } = {}) {
   setTimeout(() => search.focus(), 50);
   async function make(t) {
     try {
-      const r = await api('docs:useAsBase', t.rel, { caseId, jid, dirRel });
+      const r = await api('docs:useAsBase', t.rel, { caseId, clientId, dirRel });
       m.close?.();
       toast(`Criado: ${base(r.rel)}`, 'success', 5000);
       onDone?.();
@@ -131,7 +131,7 @@ export async function useAsBaseDialog(d, { caseId } = {}) {
   if (!cases.length) { toast('Nenhum caso aberto. Crie o caso na ficha do cliente primeiro.'); return; }
   const search = h('input', { class: 'input', type: 'search', placeholder: 'Procurar caso ou cliente…' });
   const box = h('div', { class: 'tpl-list' });
-  const name = (k) => state.chats.get(k.jid)?.display_name || '';
+  const name = (k) => k.client_name || '';
   const render = () => {
     const q = normalize(search.value);
     fill(box, cases.filter((k) => !q || normalize(`${k.title} ${name(k)}`).includes(q)).slice(0, 40).map((k) => h('button', { class: 'tpl-item', onclick: () => { m.close?.(); copyTo(k.id); } },
@@ -162,10 +162,10 @@ export async function useAsBaseDialog(d, { caseId } = {}) {
 // ------------------------------------------------------------ pasta do cliente / do caso
 
 /** Ligar o contato a uma pasta de cliente (a sugerida, outra, ou criar). */
-export async function clientFolderDialog(jid, onDone) {
+export async function clientFolderDialog(clientId, onDone) {
   let info;
-  try { info = await api('docs:clientFolder', jid); } catch (e) { errToast(e); return; }
-  const chat = state.chats.get(jid);
+  try { info = await api('docs:clientFolder', clientId); } catch (e) { errToast(e); return; }
+  const chat = { display_name: (await api('clients:get', clientId).catch(() => null))?.name || '' };
   const folders = (await api('docs:list', '02 CLIENTES').catch(() => ({ entries: [] }))).entries.filter((e) => e.dir);
   const sel = h('select', { class: 'input' },
     h('option', { value: '' }, '— escolha a pasta —'),
@@ -179,8 +179,8 @@ export async function clientFolderDialog(jid, onDone) {
       h('label', { class: 'field' }, h('span', null, 'Pasta do cliente'), sel)),
     actions: [
       { label: 'Cancelar' },
-      { label: `Criar “${String(chat?.display_name || '').toUpperCase()}”`, onClick: async () => { try { await api('docs:createClientFolder', jid); toast('Pasta criada no OneDrive', 'success'); onDone?.(); } catch (e) { errToast(e); return false; } } },
-      { label: 'Ligar', primary: true, onClick: async () => { if (!sel.value) return false; try { await api('docs:linkClient', jid, sel.value); onDone?.(); } catch (e) { errToast(e); return false; } } },
+      { label: `Criar “${String(chat?.display_name || '').toUpperCase()}”`, onClick: async () => { try { await api('docs:createClientFolder', clientId); toast('Pasta criada no OneDrive', 'success'); onDone?.(); } catch (e) { errToast(e); return false; } } },
+      { label: 'Ligar', primary: true, onClick: async () => { if (!sel.value) return false; try { await api('docs:linkClient', clientId, sel.value); onDone?.(); } catch (e) { errToast(e); return false; } } },
     ],
   });
   return m;
@@ -201,11 +201,11 @@ export async function caseFolderPanel(el, k, { onChange } = {}) {
   let info;
   try { info = await api('docs:caseFolder', k.id); } catch (e) { fill(el, h('p', { class: 'muted' }, e.message)); return; }
   if (info.folder) {
-    folderBrowser(el, { top: info.folder, caseId: k.id, jid: k.jid });
+    folderBrowser(el, { top: info.folder, caseId: k.id, clientId: k.client_id });
     return;
   }
   const client = info.clientFolder || info.clientSuggestion?.rel;
-  const target = `${client || `02 CLIENTES/${String(state.chats.get(k.jid)?.display_name || '').toUpperCase()}`}/${info.newName}`;
+  const target = `${client || `02 CLIENTES/${String(k.client_name || '').toUpperCase()}`}/${info.newName}`;
   const pick = info.options.length ? h('select', { class: 'input input-sm' },
     h('option', { value: '' }, 'ou ligar a uma pasta que já existe…'),
     info.options.map((o) => h('option', { value: o }, base(o)))) : null;
@@ -232,7 +232,7 @@ export async function caseFolderPanel(el, k, { onChange } = {}) {
         },
       }, 'Criar pasta do caso'),
       pick,
-      h('button', { class: 'btn btn-sm', onclick: () => clientFolderDialog(k.jid, () => caseFolderPanel(el, k, { onChange })) }, 'Escolher a pasta do cliente…'))));
+      h('button', { class: 'btn btn-sm', onclick: () => clientFolderDialog(k.client_id, () => caseFolderPanel(el, k, { onChange })) }, 'Escolher a pasta do cliente…'))));
 }
 
 // ------------------------------------------------------------ tela Documentos

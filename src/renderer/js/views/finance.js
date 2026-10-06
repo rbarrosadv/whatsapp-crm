@@ -24,7 +24,7 @@ function stat(label, value, cls, sub, onClick) {
 async function render() {
   const [sum, pays] = await Promise.all([api('finance:summary'), api('finance:list', { status: filter === 'all' ? undefined : filter })]);
   const nq = normalize(q);
-  const list = nq ? pays.filter((p) => normalize(`${state.chats.get(p.jid)?.display_name || ''} ${p.case_title} ${p.description || ''} ${p.process_number || ''}`).includes(nq)) : pays;
+  const list = nq ? pays.filter((p) => normalize(`${p.client_name || state.chats.get(p.jid)?.display_name || ''} ${p.case_title} ${p.description || ''} ${p.process_number || ''}`).includes(nq)) : pays;
   const total = list.reduce((a, p) => a + p.amount, 0);
   const chip = (key, label) => h('button', { class: `chip ${filter === key ? 'active' : ''}`, onclick: () => { filter = key; render(); } }, label);
 
@@ -54,7 +54,7 @@ async function render() {
 
 /** Envia a cobrança padrão para várias parcelas, uma de cada vez, com intervalo. */
 async function chargeMany(list) {
-  const names = [...new Set(list.map((p) => state.chats.get(p.jid)?.display_name || 'contato'))];
+  const names = [...new Set(list.map((p) => p.client_name || state.chats.get(p.jid)?.display_name || 'cliente'))];
   if (!await confirmDialog(`Enviar a mensagem de cobrança padrão para ${list.length} parcela(s) vencida(s) (${names.slice(0, 5).join(', ')}${names.length > 5 ? '…' : ''})? As mensagens saem uma de cada vez, com alguns segundos de intervalo.`, { okLabel: 'Enviar cobranças' })) return;
   const progress = h('div', null, 'Preparando…');
   let stop = false;
@@ -62,7 +62,7 @@ async function chargeMany(list) {
   let ok = 0;
   for (let i = 0; i < list.length && !stop; i++) {
     const p = list[i];
-    fill(progress, `Enviando ${i + 1} de ${list.length}: ${state.chats.get(p.jid)?.display_name || ''} — ${fmtMoney(p.amount)}`);
+    fill(progress, `Enviando ${i + 1} de ${list.length}: ${p.client_name || state.chats.get(p.jid)?.display_name || ''} — ${fmtMoney(p.amount)}`);
     try { await api('finance:sendCharge', p.id); ok++; } catch (e) { errToast(e); }
     if (i < list.length - 1) await new Promise((r) => setTimeout(r, 6000 + Math.random() * 4000));
   }

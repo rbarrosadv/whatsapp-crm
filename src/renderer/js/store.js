@@ -78,6 +78,7 @@ export async function bootstrap() {
   });
   window.api.on('tasks:changed', () => emit('tasks'));
   window.api.on('cases:changed', (jid) => emit('cases', jid));
+  window.api.on('clients:changed', (id) => emit('clients', id));
   window.api.on('finance:changed', () => emit('finance'));
   window.api.on('ui:open-chat', (jid) => openChat(jid));
   window.api.on('ui:open-view', (v) => setView(v));
@@ -144,6 +145,18 @@ export function setView(view) {
   state.view = view;
   api('settings:set', 'lastView', view).catch(() => {});
   emit('view', view);
+}
+
+/** Abre a ficha do cliente (módulo Jurídico). */
+export function openClient(id) {
+  setView('legal');
+  emit('open-client', id);
+}
+
+/** Abre o módulo Jurídico numa aba (clientes, processos, intimações). */
+export function openLegal(tab, opts = {}) {
+  setView('legal');
+  emit('open-legal', { tab, ...opts });
 }
 
 export function openChat(jid) {

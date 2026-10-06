@@ -281,6 +281,13 @@ export async function createCore({ dataDir, demo = false, version = '', safeStor
     return f;
   });
 
+  /** Cliente mudou: avisa as janelas (e a conversa ligada a ele, se houver). */
+  function clientChanged(id) {
+    const cl = db.getClient(id);
+    if (cl?.jid) wa.markChanged(cl.jid);
+    send('clients:changed', id);
+  }
+
   /** Arquivo anexado ao caso também vai para a pasta dele no OneDrive (se houver). */
   function copyToCaseFolder(caseId, files) {
     const k = db.getCase(caseId);
@@ -477,6 +484,23 @@ export async function createCore({ dataDir, demo = false, version = '', safeStor
     'notes:delete': (_c, id) => db.deleteNote(id),
 
     // casos
+    // clientes (o centro do sistema; o WhatsApp é um canal ligado a eles)
+    'clients:list': (_c, opts) => db.listClients(opts || {}),
+    'clients:get': (_c, id) => {
+      const cl = db.getClient(id);
+      if (!cl) throw new Error('Cliente não encontrado');
+      const chat = cl.jid ? db.getChat(cl.jid) : null;
+      return { ...cl, chat: chat ? { jid: chat.jid, display_name: chat.display_name, unread: chat.unread, last_ts: chat.last_ts, last_preview: chat.last_preview } : null };
+    },
+    'clients:save': (ctx, c) => { const id = db.saveClient({ ...c, userName: ctx.user.name }); clientChanged(id); return id; },
+    'clients:linkChat': (_c, id, jid) => {
+      const before = db.getClient(id)?.jid;
+      db.linkClientChat(id, jid || null);
+      if (before) wa.markChanged(before);
+      clientChanged(id);
+    },
+    'clients:fromChat': (ctx, jid) => { const id = db.ensureClientForChat(chatOrThrow(jid), ctx.user.name); clientChanged(id); return id; },
+    'clients:activity': (_c, id) => db.listActivity(db.clientKey(db.getClient(id))),
     'cases:list': (ctx, opts) => forMoney(ctx, db.listCases(opts || {})),
     'cases:get': (ctx, id) => forMoney(ctx, db.getCase(id)),
     'cases:save': (ctx, c) => {
@@ -534,32 +558,33 @@ export async function createCore({ dataDir, demo = false, version = '', safeStor
     },
     'docs:reindex': async () => ({ changed: await docs.reindex(), ...docs.status() }),
     'docs:templates': () => docs.templates().map((t) => ({ ...t, url: docUrl(t.rel) })),
-    'docs:clientFolder': (_c, jid) => {
-      const chat = db.getChat(chatOrThrow(jid));
-      if (!chat) throw new Error('Contato não encontrado');
-      const folder = chat.folder && docs.root() && fs.existsSync(docs.abs(chat.folder)) ? chat.folder : null;
-      return { folder, linked: chat.folder || null, suggestion: folder ? null : docs.suggestClientFolder(chat.display_name) };
+    'docs:clientFolder': (_c, clientId) => {
+      const cl = db.getClient(clientId);
+      if (!cl) throw new Error('Cliente não encontrado');
+      const folder = cl.folder && docs.root() && fs.existsSync(docs.abs(cl.folder)) ? cl.folder : null;
+      return { folder, linked: cl.folder || null, suggestion: folder ? null : docs.suggestClientFolder(cl.name) };
     },
-    'docs:linkClient': (_c, jid, rel) => {
+    'docs:linkClient': (_c, clientId, rel) => {
       if (rel) docs.abs(rel); // confere que fica dentro da pasta do escritório
-      db.updateCrmFields(jid, { folder: rel || null });
-      wa.markChanged(jid);
+      db.saveClient({ id: clientId, folder: rel || null });
+      clientChanged(clientId);
       return rel || null;
     },
-    'docs:createClientFolder': (_c, jid) => {
-      const chat = db.getChat(chatOrThrow(jid));
-      const rel = docs.createClientFolder(chat.display_name);
-      db.updateCrmFields(jid, { folder: rel });
-      wa.markChanged(jid);
+    'docs:createClientFolder': (_c, clientId) => {
+      const cl = db.getClient(clientId);
+      if (!cl) throw new Error('Cliente não encontrado');
+      const rel = docs.createClientFolder(cl.name);
+      db.saveClient({ id: clientId, folder: rel });
+      clientChanged(clientId);
       return rel;
     },
     'docs:caseFolder': (_c, caseId) => {
       const k = db.getCase(caseId);
       if (!k) throw new Error('Caso não encontrado');
-      const chat = db.getChat(k.jid);
+      const cl = db.getClient(k.client_id);
       const ok = (rel) => rel && docs.root() && fs.existsSync(docs.abs(rel));
-      const client = ok(chat?.folder) ? chat.folder : null;
-      const suggestion = client ? null : docs.suggestClientFolder(chat?.display_name || '');
+      const client = ok(cl?.folder) ? cl.folder : null;
+      const suggestion = client ? null : docs.suggestClientFolder(cl?.name || k.client_name || '');
       // pastas que já existem dentro da pasta do cliente (para ligar uma antiga)
       const where = client || suggestion?.rel;
       const options = where ? docs.list(where, null).entries.filter((e) => e.dir && e.name !== '_CADASTRO').map((e) => e.rel) : [];
@@ -575,11 +600,11 @@ export async function createCore({ dataDir, demo = false, version = '', safeStor
     'docs:createCaseFolder': (_c, caseId, { clientFolder } = {}) => {
       const k = db.getCase(caseId);
       if (!k) throw new Error('Caso não encontrado');
-      const chat = db.getChat(k.jid);
-      let client = clientFolder || chat?.folder;
+      const cl = db.getClient(k.client_id);
+      let client = clientFolder || cl?.folder;
       if (client) docs.mkdir(client);
-      else client = docs.createClientFolder(chat?.display_name || k.title);
-      if (client !== chat?.folder) { db.updateCrmFields(k.jid, { folder: client }); wa.markChanged(k.jid); }
+      else client = docs.createClientFolder(cl?.name || k.client_name || k.title);
+      if (cl && client !== cl.folder) { db.saveClient({ id: cl.id, folder: client }); clientChanged(cl.id); }
       const rel = docs.mkdir(`${client}/${DocsService.caseFolderName(k)}`);
       db.saveCase({ id: caseId, folder: rel });
       send('cases:changed', k.jid);
@@ -590,8 +615,8 @@ export async function createCore({ dataDir, demo = false, version = '', safeStor
       db.saveCase({ id: caseId, folder: rel || null });
       // ligou a pasta do caso: a pasta do cliente é a de cima (se ainda não tinha)
       const k = db.getCase(caseId);
-      const chat = k && db.getChat(k.jid);
-      if (rel && chat && !chat.folder && rel.split('/').length >= 3) { db.updateCrmFields(k.jid, { folder: rel.split('/').slice(0, 2).join('/') }); wa.markChanged(k.jid); }
+      const cl = k && db.getClient(k.client_id);
+      if (rel && cl && !cl.folder && rel.split('/').length >= 3) { db.saveClient({ id: cl.id, folder: rel.split('/').slice(0, 2).join('/') }); clientChanged(cl.id); }
       send('cases:changed', db.getCase(caseId)?.jid);
       return rel || null;
     },
@@ -602,16 +627,16 @@ export async function createCore({ dataDir, demo = false, version = '', safeStor
       for (const f of files) fs.rmSync(path.dirname(f.path), { recursive: true, force: true });
       return saved;
     },
-    'docs:values': (_c, { jid, caseId } = {}) => {
+    'docs:values': (_c, { clientId, caseId } = {}) => {
       const k = caseId ? db.getCase(caseId) : null;
-      return templateValues(db.getChat(jid || k?.jid), k);
+      return templateValues(db.getClient(clientId || k?.client_id), k);
     },
-    'docs:useAsBase': (ctx, srcRel, { caseId, jid, dirRel, name } = {}) => {
+    'docs:useAsBase': (ctx, srcRel, { caseId, clientId, dirRel, name } = {}) => {
       const k = caseId ? db.getCase(caseId) : null;
-      const chat = db.getChat(jid || k?.jid);
-      const dest = dirRel || k?.folder || chat?.folder;
+      const cl = db.getClient(clientId || k?.client_id);
+      const dest = dirRel || k?.folder || cl?.folder;
       if (!dest) throw new Error('Este caso ainda não tem pasta. Crie ou ligue a pasta do caso primeiro.');
-      const rel = docs.copyAsBase(srcRel, dest, templateValues(chat, k), ctx.user, name);
+      const rel = docs.copyAsBase(srcRel, dest, templateValues(cl, k), ctx.user, name);
       if (k) db.logActivity(k.jid, 'doc', `Documento criado: ${rel.split('/').pop()}`, ctx.user.name);
       return { rel, url: docUrl(rel), path: docs.abs(rel) };
     },

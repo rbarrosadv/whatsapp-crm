@@ -80,17 +80,17 @@ function check(cond, msg) { if (!cond) throw new Error(`FALHOU: ${msg}`); consol
 
 let { app, page } = await launch();
 try {
-  // 1) primeira vez: QR code
+  // 1) abre no painel Hoje, sem a tela do WhatsApp na frente (o WhatsApp é um módulo)
+  await page.waitForSelector('.view-today.active .today-alert', { timeout: 15000 });
+  check(await page.locator('.connect-overlay img.qr:visible').count() === 0, 'abre no painel Hoje sem depender do WhatsApp');
+  // o QR code fica no Atendimento
+  await page.click('.rail-btn[title="Atendimento"]');
   await page.waitForSelector('.connect-overlay:not(.hidden) img.qr', { timeout: 15000 });
   await shot(page, '01-qr');
-  check(true, 'mostra o QR code na primeira vez');
+  check(true, 'mostra o QR code no Atendimento na primeira vez');
 
   // 2) conecta e sincroniza conversas
   await page.waitForSelector('.connect-overlay.hidden', { state: 'attached', timeout: 15000 });
-  // o sistema abre no painel "Hoje"
-  await page.waitForSelector('.view-today.active .today-alert', { timeout: 15000 });
-  check(true, 'abre no painel Hoje');
-  await page.click('.rail-btn[title="Conversas"]');
   await page.waitForSelector('.chat-row', { timeout: 15000 });
   const rows = await page.locator('.chat-row').count();
   check(rows >= 5, `lista de conversas sincronizada (${rows})`);
@@ -232,7 +232,7 @@ try {
   await page.fill('.modal input.input', 'Plano anual');
   await page.click('.modal .stage-btn.wide');
   await page.locator('.popup-item', { hasText: 'Proposta de honorários' }).click();
-  await page.click('.modal button:has-text("Criar caso")');
+  await page.click('.modal button:has-text("Criar")');
   await page.waitForSelector('.modal-case .case-head');
   check(true, 'caso criado e ficha do caso aberta');
   await page.fill('.modal-case .field:has-text("Nº do processo") input', '0001234-56.2026.8.26.0100');
@@ -299,7 +299,11 @@ try {
   check(first.includes('Carlos Pereira'), 'nova mensagem sobe a conversa e marca como não lida');
 
   // 6) funil (kanban) com casos, arrastar e soltar
-  await page.click('.rail-btn[title="Funil"]');
+  await page.click('.rail-btn[title="Jurídico"]');
+  await page.click('.view-legal .seg:has-text("Processos")');
+  await page.waitForSelector('.view-legal .cases-table tbody tr');
+  check(true, 'Jurídico lista os processos');
+  await page.click('.view-legal button:has-text("Funil")');
   await page.click('.board-head .tab:has-text("Captação")');
   await page.waitForSelector('.col .card');
   await shot(page, '04-board');
@@ -312,9 +316,12 @@ try {
   check((await page.locator('.col:has-text("Contratou ✔") .col-total').innerText()).includes('2.388'), 'total da coluna soma os honorários');
   // novo caso pela coluna
   await page.click('.col:has-text("Primeiro contato") .col-add');
-  await page.locator('.modal .picker-item', { hasText: 'Ana Beatriz' }).click();
-  await page.fill('.modal .field:has-text("Nome do caso") input', 'Consulta inventário');
-  await page.click('.modal button:has-text("Criar caso")');
+  // cliente novo direto do "novo processo"
+  await page.fill('.modal input[type=search]', 'Ana Beatriz');
+  await page.click('.modal .picker-item:has-text("Cadastrar novo cliente")');
+  await page.waitForSelector('.modal .picker-item.active:has-text("Ana Beatriz")');
+  await page.fill('.modal .field:has-text("Assunto") input', 'Consulta inventário');
+  await page.click('.modal button:has-text("Criar")');
   await page.waitForSelector('.modal-case');
   await page.keyboard.press('Escape');
   await page.waitForSelector('.col:has-text("Primeiro contato") .card:has-text("Consulta inventário")');
@@ -352,7 +359,7 @@ try {
   await page.keyboard.press('Escape');
 
   // 6a2) modo discreto
-  await page.click('.rail-btn[title="Conversas"]');
+  await page.click('.rail-btn[title="Atendimento"]');
   await page.keyboard.press('Control+Shift+D');
   await page.waitForSelector('body.discreet');
   const blur = await page.locator('.chat-row .chat-preview').first().evaluate((el) => getComputedStyle(el).filter);
@@ -369,11 +376,11 @@ try {
   await page.click('.rail-btn[title="Financeiro"]');
   await page.waitForSelector('.view.active .stat');
   await page.click('.chips .chip:has-text("Vencidas")');
-  await page.waitForSelector('.table tbody tr:has-text("Carlos Pereira")');
+  await page.waitForSelector('.view.active .table tbody tr:has-text("Carlos Pereira")');
   check(true, 'parcela vencida aparece no Financeiro');
   await shot(page, '05b-financeiro');
   await page.click('.chips .chip:has-text("Pagas")');
-  await page.waitForSelector('.table tbody tr:has-text("Mariana Souza")');
+  await page.waitForSelector('.view.active .table tbody tr:has-text("Mariana Souza")');
   check(true, 'parcela recebida aparece em Pagas');
 
   // 7) painel Hoje com o que foi criado até aqui
@@ -401,15 +408,19 @@ try {
   await page.waitForSelector('.placeholder-grid');
   check(await page.locator('.view-docs .doc-row').count() >= 4, 'modelos listados por área');
   await shot(page, '05e-docs-modelos');
-  // ficha do cliente → dados para documentos → caso → pasta → documento do modelo
-  await page.click('.rail-btn[title="Conversas"]');
+  // conversa → ficha do cliente → dados → processo → pasta → documento do modelo
+  await page.click('.rail-btn[title="Atendimento"]');
   await page.locator('.chat-row', { hasText: 'Carlos Pereira' }).click();
-  await page.click('.crm-docdata summary');
-  const cpf = page.locator('.crm-docdata label:has-text("CPF") input');
-  await cpf.fill('123.456.789-00');
-  await cpf.press('Tab');
-  await page.waitForTimeout(300);
-  await page.locator('.crm-panel .case-card').first().click();
+  await page.click('.crm-panel button:has-text("Abrir ficha do cliente")');
+  await page.waitForSelector('.view-legal .client-head:has-text("Carlos Pereira")');
+  check(true, 'conversa do WhatsApp leva à ficha do cliente');
+  await page.click('.view-legal .tab:has-text("Dados")');
+  await page.locator('.client-form label:has-text("CPF") input').fill('123.456.789-00');
+  await page.click('.view-legal .panel button:has-text("Salvar")');
+  await page.waitForSelector('.toast:has-text("Dados salvos")');
+  await page.click('.view-legal .tab:has-text("Processos")');
+  await shot(page, '05h-ficha-cliente');
+  await page.locator('.view-legal .case-card').first().click();
   await page.click('.modal-case .tab:has-text("Documentos")');
   await page.waitForSelector('.modal-case .docs-empty:has-text("CARLOS PEREIRA")');
   check(true, 'reconhece a pasta antiga do cliente no OneDrive');
@@ -426,16 +437,41 @@ try {
   await page.keyboard.press('Escape');
   await page.keyboard.press('Escape');
 
+  // 7c) cliente sem WhatsApp: cadastro, processo, busca no Jurídico
+  await page.click('.rail-btn[title="Jurídico"]');
+  if (await page.locator('.view-legal .back-btn').count()) await page.click('.view-legal .back-btn');
+  await page.click('.view-legal .page-head button:has-text("＋ Cliente")');
+  await page.fill('.modal label:has-text("Nome") input', 'Joana Lima');
+  await page.fill('.modal label:has-text("CPF") input', '987.654.321-00');
+  await page.click('.modal button:has-text("Cadastrar")');
+  await page.waitForSelector('.view-legal .client-head:has-text("Joana Lima")');
+  check(await page.locator('.view-legal .client-head button:has-text("Ligar WhatsApp")').count() === 1, 'cliente existe sem WhatsApp (ligar é opcional)');
+  await page.click('.view-legal .client-head button:has-text("Processo")');
+  await page.fill('.modal label:has-text("Assunto") input', 'Revisional de aluguel');
+  await page.fill('.modal label:has-text("Parte contrária") input', 'Imobiliária Centro');
+  await page.click('.modal button:has-text("Criar")');
+  await page.waitForSelector('.modal-case .case-client:has-text("Joana Lima")');
+  check(true, 'processo criado para o cliente, sem conversa');
+  await page.keyboard.press('Escape');
+  await page.click('.view-legal .back-btn');
+  await page.click('.view-legal .seg:has-text("Processos")');
+  await page.fill('.legal-search', 'imobiliária');
+  await page.waitForFunction(() => document.querySelectorAll('.cases-table tbody tr').length === 1);
+  check((await page.locator('.cases-table tbody tr').innerText()).includes('Joana Lima'), 'busca de processos pela parte contrária');
+  await shot(page, '05i-juridico-processos');
+
   // outras telas
-  await page.click('.rail-btn[title="Contatos"]');
-  await page.waitForSelector('.table tbody tr');
+  await page.click('.rail-btn[title="Atendimento"]');
+  await page.click('.chatlist-head button[title^="Contatos do WhatsApp"]');
+  await page.waitForSelector('.view.active .table tbody tr');
   await shot(page, '06-contacts');
-  check(await page.locator('.table tbody tr').count() >= 5, 'tabela de contatos');
-  await page.click('.rail-btn[title="Tarefas"]');
+  check(await page.locator('.view.active .table tbody tr').count() >= 5, 'tabela de contatos');
+  await page.click('.rail-btn[title="Agenda"]');
+  await page.click('.view-agenda .seg:has-text("Lista")');
   await page.waitForSelector('.task-group .task');
   await shot(page, '07-tasks');
   check(true, 'tela de tarefas');
-  await page.click('.rail-btn[title="Painel"]');
+  await page.click('.rail-btn[title="Relatórios"]');
   await page.waitForSelector('.view.active .stat');
   await shot(page, '08-dashboard');
   await page.click('.rail-btn[title="Configurações"]');
@@ -452,18 +488,18 @@ try {
 
   // tema claro
   await page.selectOption('.settings-grid select', 'light');
-  await page.click('.rail-btn[title="Conversas"]');
+  await page.click('.rail-btn[title="Atendimento"]');
   await page.locator('.chat-row', { hasText: 'Mariana Souza' }).click();
   await page.waitForSelector('.msg');
   await shot(page, '10-light');
   await page.click('.rail-btn[title="Configurações"]');
   await page.selectOption('.settings-grid select', 'dark');
-  await page.click('.rail-btn[title="Conversas"]');
+  await page.click('.rail-btn[title="Atendimento"]');
   await page.waitForTimeout(300);
   await shot(page, '12-dark');
 
   // 8) nova conversa por número
-  await page.click('.rail-btn[title="Conversas"]');
+  await page.click('.rail-btn[title="Atendimento"]');
   await page.click('.chatlist-head button[title^="Nova conversa"]');
   await page.fill('.modal input >> nth=0', '(11) 91234-5678');
   await page.fill('.modal input >> nth=1', 'Paulo Novo');
@@ -487,12 +523,12 @@ try {
   await login(est.page, { login: 'isabella', password: 'estagio1' });
   await est.page.waitForSelector('.view-today .stats');
   check(await est.page.locator('.view-today .stat:has-text("A receber")').count() === 0, 'painel da estagiária sem valores');
-  await est.page.click('.rail-btn[title="Conversas"]');
+  await est.page.click('.rail-btn[title="Atendimento"]');
   await est.page.waitForSelector('.chat-row');
   check(await est.page.locator('.rail-btn[title="Financeiro"]').count() === 0, 'estagiária não vê o Financeiro');
   const denied = await est.page.evaluate(() => window.api.call('finance:list').then(() => 'ok', (e) => e.message));
   check(/permissão/.test(denied), 'servidor recusa o financeiro para a estagiária');
-  await page.click('.rail-btn[title="Conversas"]');
+  await page.click('.rail-btn[title="Atendimento"]');
   await page.locator('.chat-row', { hasText: 'Mariana Souza' }).click();
   await est.page.locator('.chat-row', { hasText: 'Mariana Souza' }).click();
   await page.waitForSelector('.team-presence:has-text("Isabella Costa")', { timeout: 8000 });
@@ -517,7 +553,7 @@ await app.close();
 // 9) reabre: deve entrar direto (sessão salva), com tudo guardado
 ({ app, page } = await launch());
 try {
-  await page.click('.rail-btn[title="Conversas"]');
+  await page.click('.rail-btn[title="Atendimento"]');
   await page.waitForSelector('.chat-row', { timeout: 15000 });
   const overlayVisible = await page.locator('.connect-overlay:not(.hidden)').count();
   check(overlayVisible === 0, 'ao reabrir, entra direto sem pedir QR code');
@@ -542,6 +578,7 @@ await app.close();
 const dir2 = fs.mkdtempSync(path.join(os.tmpdir(), 'crm-e2e-pair-'));
 ({ app, page } = await launch({ CRM_DEMO_QR_MS: '0' }, dir2));
 try {
+  await page.click('.rail-btn[title="Atendimento"]');
   await page.waitForSelector('.connect-overlay:not(.hidden) img.qr', { timeout: 15000 });
   await page.click('.connect-tabs .tab:has-text("número")');
   await page.fill('.connect-overlay input', '11 98765-4321');
@@ -550,7 +587,7 @@ try {
   await shot(page, '13-pairing');
   check(true, 'mostra código de pareamento pelo número');
   await page.waitForSelector('.connect-overlay.hidden', { state: 'attached', timeout: 10000 });
-  await page.click('.rail-btn[title="Conversas"]');
+  await page.click('.rail-btn[title="Atendimento"]');
   await page.waitForSelector('.chat-row');
   check(true, 'conecta após digitar o código no celular');
   // sessão recusada pelo WhatsApp → botão para ler o QR code de novo

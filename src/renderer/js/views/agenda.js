@@ -3,7 +3,7 @@
 import {
   h, fill, modal, toast, errToast, confirmDialog, fmtTime, toLocalInput, fromLocalInput, debounce, pickFiles, openExternal,
 } from '../util.js';
-import { state, on, api, openChat, setSetting } from '../store.js';
+import { state, on, api, openChat, setSetting, setView } from '../store.js';
 import { openCase, TASK_KINDS } from './casemodal.js';
 
 const HOUR_PX = 48;
@@ -104,7 +104,8 @@ function render() {
           h('h2', { class: 'agenda-title' }, titleText),
           loading ? h('span', { class: 'spinner small' }) : null,
           h('div', { class: 'grow' }),
-          h('div', { class: 'segmented' }, seg('day', 'Dia'), seg('week', 'Semana'), seg('month', 'Mês'))),
+          h('div', { class: 'segmented' }, seg('day', 'Dia'), seg('week', 'Semana'), seg('month', 'Mês'),
+            h('button', { class: 'seg', title: 'Tarefas, prazos e audiências em lista, com filtros', onclick: () => setView('tasks') }, 'Lista'))),
         lastData.error ? h('div', { class: 'banner warn' }, '⚠ ', lastData.error) : null,
         main)));
   if (view === 'month') renderMonth(main); else renderTimeGrid(main, view === 'day' ? 1 : 7);

@@ -56,7 +56,7 @@ async function render() {
     const nq = normalize(q);
     const visible = nq ? cases.filter((k) => {
       const c = state.chats.get(k.jid);
-      return normalize(`${c?.display_name || ''} ${c?.company || ''} ${k.title} ${k.process_number || ''} ${k.area || ''} ${k.opposing_party || ''}`).includes(nq);
+      return normalize(`${k.client_name || c?.display_name || ''} ${c?.company || ''} ${k.title} ${k.process_number || ''} ${k.area || ''} ${k.opposing_party || ''}`).includes(nq);
     }) : cases;
     fill(cols, ...pipe.stages.map((s) => column(pipe, s, visible.filter((k) => k.stage_id === s.id))));
   }
@@ -88,7 +88,8 @@ function column(pipe, stage, cases) {
 }
 
 function card(k) {
-  const c = state.chats.get(k.jid) || { jid: k.jid, display_name: 'Contato' };
+  const c = state.chats.get(k.jid) || { jid: k.jid, display_name: k.client_name || 'Cliente' };
+  const clientName = k.client_name || c.display_name;
   const late = k.next_due && k.next_due < Date.now();
   return h('div', {
     class: `card ${c.unread > 0 ? 'unread' : ''} ${k.status !== 'aberto' ? 'closed' : ''}`,
@@ -101,7 +102,7 @@ function card(k) {
   },
   h('div', { class: 'card-top' },
     avatarEl(c, 30),
-    h('div', { class: 'card-name' }, c.display_name, h('div', { class: 'card-case' }, k.title)),
+    h('div', { class: 'card-name' }, clientName, h('div', { class: 'card-case' }, k.title)),
     h('button', {
       class: 'icon-btn small', title: c.unread ? `${c.unread} mensagem(ns) não lida(s) — abrir conversa` : 'Abrir conversa',
       onclick: (e) => { e.stopPropagation(); openChat(k.jid); },

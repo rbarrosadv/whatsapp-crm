@@ -168,9 +168,9 @@ export function fillDocx(buf, values) {
 
 /** Valores dos marcadores a partir da ficha do cliente e do caso. */
 export function templateValues(chat, kase) {
-  const phone = (chat?.jid || '').endsWith('@s.whatsapp.net') ? chat.jid.split('@')[0] : '';
+  const phone = chat?.phone || ((chat?.jid || '').endsWith('@s.whatsapp.net') ? chat.jid.split('@')[0] : '');
   const v = {
-    nome: chat?.display_name || '',
+    nome: chat?.name || chat?.display_name || kase?.client_name || '',
     cpf: chat?.cpf || '',
     rg: chat?.rg || '',
     nacionalidade: chat?.nationality || '',

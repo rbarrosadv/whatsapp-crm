@@ -2,12 +2,11 @@
 // notas e histórico.
 import {
   h, clear, fill, fmtDateTime, fmtDue, fmtMoney, fmtDuration, formatPhone, phoneOf, toLocalInput, fromLocalInput,
-  modal, errToast, toast, confirmDialog, debounce, openDoc,
+  modal, errToast, toast, confirmDialog, debounce,
 } from '../util.js';
-import { state, on, emit, api, stageById, openChat, typeById } from '../store.js';
+import { state, on, emit, api, stageById, openChat, openClient, typeById } from '../store.js';
 import { avatarEl, typeMenu } from '../components.js';
 import { openCase, newCaseDialog, TASK_KINDS, feeLabel } from './casemodal.js';
-import { clientFolderDialog } from './docs.js';
 
 let root;
 let jid = null;
@@ -92,29 +91,43 @@ function renderTop() {
       field('Nome no CRM', 'custom_name', chat, { placeholder: chat.contact_name || chat.notify || chat.name || '' }),
       field('Empresa', 'company', chat),
       field('E-mail', 'email', chat, { type: 'email' })),
-    chat.is_group ? null : h('details', {
-      class: 'crm-block crm-docdata', open: docDataOpen,
-      ontoggle: (e) => { docDataOpen = e.currentTarget.open; },
-    },
-    h('summary', { class: 'crm-label' }, '📄 Dados para documentos'),
-    h('div', { class: 'crm-fields' },
-      field('CPF', 'cpf', chat, { placeholder: '000.000.000-00' }),
-      field('RG', 'rg', chat),
-      field('Nacionalidade', 'nationality', chat, { placeholder: 'brasileiro(a)' }),
-      field('Estado civil', 'marital', chat),
-      field('Profissão', 'profession', chat),
-      field('Endereço', 'address', chat, { placeholder: 'Rua, nº, bairro, cidade-UF, CEP' }),
-      field('Nascimento', 'birth', chat, { placeholder: 'dd/mm/aaaa' })),
-    h('div', { class: 'muted small' }, 'Usados para preencher procurações, contratos e petições dos modelos.')),
-    chat.is_group ? null : h('div', { class: 'crm-block' },
-      h('div', { class: 'crm-label' }, 'Pasta no OneDrive'),
-      h('div', { class: 'row' },
-        h('span', { class: 'grow ellipsis small', title: chat.folder || '' }, chat.folder ? `📁 ${chat.folder.split('/').pop()}` : h('span', { class: 'muted' }, 'nenhuma ligada')),
-        chat.folder ? h('button', { class: 'btn btn-sm', onclick: () => openDoc({ rel: chat.folder, dir: true, name: chat.folder }).catch(errToast) }, 'Abrir') : null,
-        h('button', { class: 'btn btn-sm', onclick: () => clientFolderDialog(chat.jid) }, chat.folder ? 'Trocar' : 'Ligar…'))),
+    chat.is_group ? null : clientBlock(chat),
   );
 }
-let docDataOpen = false;
+
+/** O WhatsApp é um canal do cliente: mostra a qual cliente esta conversa pertence. */
+function clientBlock(chat) {
+  if (chat.client_id) {
+    return h('div', { class: 'crm-block client-link' },
+      h('div', { class: 'crm-label' }, 'Cliente do escritório'),
+      h('button', { class: 'btn wide', onclick: () => openClient(chat.client_id) }, '👤 Abrir ficha do cliente'));
+  }
+  return h('div', { class: 'crm-block client-link' },
+    h('div', { class: 'crm-label' }, 'Cliente do escritório'),
+    h('div', { class: 'muted small' }, 'Esta conversa ainda não é de um cliente.'),
+    h('div', { class: 'row wrap' },
+      h('button', {
+        class: 'btn btn-sm btn-primary',
+        onclick: async () => { try { const id = await api('clients:fromChat', chat.jid); toast('Cliente cadastrado', 'success'); openClient(id); } catch (e) { errToast(e); } },
+      }, '＋ Cadastrar como cliente'),
+      h('button', { class: 'btn btn-sm', onclick: () => linkToExisting(chat) }, 'Ligar a cliente existente')));
+}
+
+async function linkToExisting(chat) {
+  const input = h('input', { class: 'input', type: 'search', placeholder: 'Procurar cliente…' });
+  const list = h('div', { class: 'picker-list' });
+  const draw = async () => {
+    const items = (await api('clients:list', { q: input.value }).catch(() => [])).filter((c) => !c.jid);
+    fill(list, items.length ? items.slice(0, 40).map((c) => h('div', {
+      class: 'picker-item',
+      onclick: async () => { try { await api('clients:linkChat', c.id, chat.jid); m.close(); toast(`Conversa ligada a ${c.name}`, 'success'); } catch (e) { errToast(e); } },
+    }, h('div', null, h('b', null, c.name), c.cpf ? h('span', { class: 'muted small' }, ` · ${c.cpf}`) : null)))
+      : h('p', { class: 'muted small' }, 'Nenhum cliente sem WhatsApp com esse nome.'));
+  };
+  input.addEventListener('input', debounce(draw, 200));
+  draw();
+  const m = modal({ title: `Ligar ${chat.display_name} a um cliente`, body: h('div', { class: 'stack' }, input, list), actions: [{ label: 'Cancelar' }] });
+}
 
 // ------------------------------------------------------------------ casos
 
@@ -182,7 +195,8 @@ export function taskRow(t, { showChat = false } = {}) {
     h('div', { class: 'task-main', onclick: () => taskDialog(t) },
       h('div', { class: 'task-title' }, t.kind && t.kind !== 'tarefa' ? `${TASK_KINDS[t.kind]?.icon || ''} ` : '', t.title),
       h('div', { class: 'task-sub' }, t.due_at ? `${late ? '⚠ ' : ''}${fmtDue(t.due_at)}` : 'Sem data',
-        showChat && chat ? h('a', { class: 'link', onclick: (e) => { e.stopPropagation(); openChat(chat.jid); } }, ` · ${chat.display_name}`) : null,
+        showChat && t.client_id ? h('a', { class: 'link', onclick: (e) => { e.stopPropagation(); openClient(t.client_id); } }, ` · 👤 ${t.client_name}`)
+          : showChat && chat ? h('a', { class: 'link', onclick: (e) => { e.stopPropagation(); openChat(chat.jid); } }, ` · ${chat.display_name}`) : null,
         t.case_title ? h('a', { class: 'link', onclick: (e) => { e.stopPropagation(); openCase(t.case_id, { tab: 'prazos' }); } }, ` · 📁 ${t.case_title}`) : null,
         t.assignee_name && t.assignee_id !== state.me?.id ? ` · 👤 ${t.assignee_name}` : null)),
     h('button', {
@@ -209,10 +223,16 @@ export function taskDialog(task = {}) {
           due.value = toLocalInput(ts);
         },
       }, label)));
-  const chats = [...state.chats.values()].filter((c) => !c.is_group).sort((a, b) => a.display_name.localeCompare(b.display_name));
-  const chatSel = h('select', { class: 'input' },
-    h('option', { value: '' }, '— Sem contato —'),
-    chats.map((c) => h('option', { value: c.jid, selected: c.jid === task.jid }, c.display_name)));
+  // cliente (o valor é a "chave" do cliente: jid do WhatsApp ou cliente:<id>)
+  const chatSel = h('select', { class: 'input' }, h('option', { value: '' }, '— Sem cliente (tarefa interna) —'));
+  const clientsReady = api('clients:list', {}).then((list) => {
+    chatSel.append(...list.map((c) => h('option', { value: c.key, selected: c.key === task.jid }, c.name)));
+    // conversa que ainda não é cliente (tarefa criada na ficha do WhatsApp)
+    if (task.jid && !list.some((c) => c.key === task.jid)) {
+      const chat = state.chats.get(task.jid);
+      if (chat) chatSel.append(h('option', { value: task.jid, selected: true }, `💬 ${chat.display_name}`));
+    }
+  }).catch(() => {});
   const kindSel = h('select', { class: 'input' },
     Object.entries(TASK_KINDS).map(([k, v]) => h('option', { value: k, selected: (task.kind || 'tarefa') === k }, `${v.icon} ${v.label}`)));
   const caseSel = h('select', { class: 'input' });
@@ -224,11 +244,11 @@ export function taskDialog(task = {}) {
   }).catch(() => {});
   const loadCases = async () => {
     const list = chatSel.value ? await api('cases:list', { jid: chatSel.value, includeClosed: false }).catch(() => []) : [];
-    fill(caseSel, h('option', { value: '' }, list.length ? '— Sem caso —' : '— Contato sem casos —'),
+    fill(caseSel, h('option', { value: '' }, list.length ? '— Sem processo —' : '— Cliente sem processos —'),
       ...list.map((k) => h('option', { value: String(k.id), selected: k.id === task.case_id }, k.title)));
   };
   chatSel.addEventListener('change', loadCases);
-  loadCases();
+  clientsReady.then(loadCases);
   modal({
     title: task.id ? 'Editar compromisso' : `Novo(a) ${TASK_KINDS[task.kind || 'tarefa']?.label.toLowerCase() || 'tarefa'}`,
     body: h('div', { class: 'form' },
@@ -238,8 +258,8 @@ export function taskDialog(task = {}) {
       h('label', { class: 'field' }, h('span', null, 'Quando (você recebe um aviso na hora)'), due),
       quick,
       h('div', { class: 'row' },
-        h('label', { class: 'field grow' }, h('span', null, 'Contato'), chatSel),
-        h('label', { class: 'field grow' }, h('span', null, 'Caso'), caseSel)),
+        h('label', { class: 'field grow' }, h('span', null, 'Cliente'), chatSel),
+        h('label', { class: 'field grow' }, h('span', null, 'Processo'), caseSel)),
       h('label', { class: 'field' }, h('span', null, 'Responsável'), assigneeSel)),
     actions: [
       { label: 'Cancelar' },

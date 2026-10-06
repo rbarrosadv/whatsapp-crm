@@ -246,11 +246,12 @@ test('documentos: busca, permissões por pasta, pasta do caso e "usar como base"
 
   // cliente com pasta antiga é reconhecido; caso ganha pasta no padrão
   const carlos = (await socio.call('chats:list')).find((c) => c.display_name === 'Carlos Pereira');
-  const cf = await socio.call('docs:clientFolder', carlos.jid);
+  const carlosId = await socio.call('clients:fromChat', carlos.jid);
+  const cf = await socio.call('docs:clientFolder', carlosId);
   assert.equal(cf.suggestion?.rel, '02 CLIENTES/CARLOS PEREIRA');
-  await socio.call('docs:linkClient', carlos.jid, cf.suggestion.rel);
-  await socio.call('crm:update', carlos.jid, { cpf: '123.456.789-00', nationality: 'brasileiro', marital: 'casado', profession: 'motorista', address: 'Rua A, 10, Cuiabá-MT' });
-  const caseId = await socio.call('cases:save', { jid: carlos.jid, title: 'Horas extras', opposing_party: 'Transportes Rápido Ltda' });
+  await socio.call('docs:linkClient', carlosId, cf.suggestion.rel);
+  await socio.call('clients:save', { id: carlosId, cpf: '123.456.789-00', nationality: 'brasileiro', marital: 'casado', profession: 'motorista', address: 'Rua A, 10, Cuiabá-MT' });
+  const caseId = await socio.call('cases:save', { client_id: carlosId, title: 'Horas extras', opposing_party: 'Transportes Rápido Ltda' });
   const info = await socio.call('docs:caseFolder', caseId);
   assert.equal(info.clientFolder, '02 CLIENTES/CARLOS PEREIRA');
   assert.ok(info.options.some((o) => o.endsWith('RECLAMAÇÃO TRABALHISTA x TRANSPORTES RÁPIDO LTDA')), 'oferece ligar a pasta antiga');
@@ -267,4 +268,33 @@ test('documentos: busca, permissões por pasta, pasta do caso e "usar como base"
   // o novo documento já entra na busca
   assert.ok((await socio.call('docs:search', 'procuração carlos')).some((d) => d.rel === made.rel));
   await assert.rejects(socio.call('docs:list', '../..'), /fora da pasta/);
+});
+
+test('clientes: cadastro sem WhatsApp, casos e tarefas do cliente; ligar o WhatsApp depois leva tudo junto', async () => {
+  const c = client();
+  await c.req('/auth/login', { body: { login: 'barros', password: 'segredo1' } });
+  const id = await c.call('clients:save', { name: 'Joana Lima', cpf: '987.654.321-00', phone: '(65) 99999-1111' });
+  const caseId = await c.call('cases:save', { client_id: id, title: 'Revisional de aluguel' });
+  const k = await c.call('cases:get', caseId);
+  assert.equal(k.jid, `cliente:${id}`, 'sem WhatsApp, o caso fica com a chave do cliente');
+  assert.equal(k.client_name, 'Joana Lima');
+  await c.call('tasks:save', { case_id: caseId, title: 'Juntar contrato', due_at: Date.now() + 864e5 });
+  await c.call('notes:add', `cliente:${id}`, 'Prefere contato por e-mail');
+  assert.equal((await c.call('clients:list', { q: '98765' }))[0]?.id, id, 'busca pelo CPF');
+  assert.equal((await c.call('clients:list', { q: 'joana' }))[0]?.cases_open, 1);
+  await assert.rejects(c.call('cases:save', { title: 'Sem cliente' }), /cliente/);
+
+  // liga o WhatsApp: casos, tarefas e notas passam para a conversa
+  const chat = (await c.call('chats:list')).find((x) => !x.is_group && !x.client_id);
+  await c.call('clients:linkChat', id, chat.jid);
+  assert.equal((await c.call('cases:get', caseId)).jid, chat.jid);
+  assert.ok((await c.call('tasks:list', { jid: chat.jid })).some((t) => t.title === 'Juntar contrato'));
+  assert.ok((await c.call('notes:list', chat.jid)).some((n) => /e-mail/.test(n.text)));
+  const other = await c.call('clients:save', { name: 'Outro' });
+  await assert.rejects(c.call('clients:linkChat', other, chat.jid), /outro cliente/);
+  const got = await c.call('clients:get', id);
+  assert.equal(got.chat.jid, chat.jid);
+  // desliga: os casos voltam para a chave do cliente
+  await c.call('clients:linkChat', id, null);
+  assert.equal((await c.call('cases:get', caseId)).jid, `cliente:${id}`);
 });

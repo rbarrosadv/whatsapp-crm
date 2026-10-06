@@ -1,11 +1,16 @@
-// Todas as tarefas e lembretes, agrupados por prazo.
+// Agenda em lista: tarefas, prazos, audiências e reuniões juntos, agrupados por
+// data, com filtro por tipo e por responsável. (O calendário é a outra visão.)
 import { h, fill } from '../util.js';
-import { state, on, api } from '../store.js';
+import { state, on, api, setView } from '../store.js';
 import { taskRow, taskDialog } from './crmpanel.js';
+import { TASK_KINDS } from './casemodal.js';
 import { emptyState } from '../components.js';
 
 let root;
 let showDone = false;
+let kind = '';
+let who = 'all'; // all | me | <id>
+let team = [];
 
 export function mountTasks(el) {
   root = el;
@@ -14,25 +19,48 @@ export function mountTasks(el) {
   on('chats', () => state.view === 'tasks' && render());
 }
 
+/** Abre a lista já filtrada (ex.: pelo painel Hoje). */
+export function showTasks({ kind: k = '', who: w } = {}) {
+  kind = k;
+  if (w) who = w;
+  setView('tasks');
+  render();
+}
+
 async function render() {
-  const tasks = await api('tasks:list', { includeDone: showDone }).catch(() => []);
+  if (!team.length) team = await api('team:list').catch(() => []);
+  const assignee = who === 'me' ? state.me?.id : who === 'all' ? undefined : Number(who);
+  let tasks = await api('tasks:list', { includeDone: showDone, assignee }).catch(() => []);
+  if (kind) tasks = tasks.filter((t) => (t.kind || 'tarefa') === kind);
   const now = Date.now();
   const endToday = new Date(); endToday.setHours(23, 59, 59, 999);
+  const endWeek = endToday.getTime() + 6 * 864e5;
   const groups = [
-    ['⚠ Atrasadas', tasks.filter((t) => !t.done && t.due_at && t.due_at < now)],
+    ['⚠ Atrasados', tasks.filter((t) => !t.done && t.due_at && t.due_at < now)],
     ['📅 Hoje', tasks.filter((t) => !t.done && t.due_at && t.due_at >= now && t.due_at <= endToday.getTime())],
-    ['🗓 Próximas', tasks.filter((t) => !t.done && t.due_at && t.due_at > endToday.getTime())],
+    ['🗓 Próximos 7 dias', tasks.filter((t) => !t.done && t.due_at && t.due_at > endToday.getTime() && t.due_at <= endWeek)],
+    ['📆 Depois', tasks.filter((t) => !t.done && t.due_at && t.due_at > endWeek)],
     ['📌 Sem data', tasks.filter((t) => !t.done && !t.due_at)],
-    ['✔ Concluídas', tasks.filter((t) => t.done)],
+    ['✔ Concluídos', tasks.filter((t) => t.done)],
   ];
-  fill(root, 
+  fill(root,
     h('div', { class: 'page-head' },
-      h('h2', null, 'Tarefas e lembretes'),
-      h('div', { class: 'row' },
-        h('label', { class: 'check' }, h('input', { type: 'checkbox', checked: showDone, onchange: (e) => { showDone = e.target.checked; render(); } }), ' Mostrar concluídas'),
-        h('button', { class: 'btn btn-primary', onclick: () => taskDialog({}) }, '＋ Nova tarefa'))),
+      h('h2', null, 'Agenda'),
+      h('div', { class: 'segmented' },
+        h('button', { class: 'seg', onclick: () => setView('agenda') }, 'Calendário'),
+        h('button', { class: 'seg active' }, 'Lista')),
+      h('div', { class: 'row wrap' },
+        h('select', { class: 'input select-sm', onchange: (e) => { kind = e.target.value; render(); } },
+          h('option', { value: '' }, 'Todos os tipos'),
+          Object.entries(TASK_KINDS).map(([k, v]) => h('option', { value: k, selected: kind === k }, `${v.icon} ${v.label}`))),
+        h('select', { class: 'input select-sm', onchange: (e) => { who = e.target.value; render(); } },
+          h('option', { value: 'all', selected: who === 'all' }, 'Toda a equipe'),
+          h('option', { value: 'me', selected: who === 'me' }, 'Só os meus'),
+          team.filter((u) => u.id !== state.me?.id).map((u) => h('option', { value: String(u.id), selected: who === String(u.id) }, u.name))),
+        h('label', { class: 'check' }, h('input', { type: 'checkbox', checked: showDone, onchange: (e) => { showDone = e.target.checked; render(); } }), ' Concluídos'),
+        h('button', { class: 'btn btn-primary', onclick: () => taskDialog({ kind: kind || undefined }) }, '＋ Novo'))),
     tasks.length ? h('div', { class: 'task-groups' }, groups.filter(([, l]) => l.length).map(([title, list]) =>
       h('div', { class: 'task-group' }, h('h3', null, `${title} (${list.length})`), list.map((t) => taskRow(t, { showChat: true })))))
-      : emptyState('✅', 'Nenhuma tarefa pendente', 'Crie lembretes para retornar aos contatos — você recebe um aviso na hora marcada.'),
+      : emptyState('✅', 'Nada por aqui', 'Prazos, audiências, reuniões e tarefas aparecem aqui e no calendário. Cada um com responsável e aviso na hora.'),
   );
 }

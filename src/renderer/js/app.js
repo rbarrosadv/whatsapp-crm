@@ -16,18 +16,19 @@ import { mountSettings, applyTheme } from './views/settings.js';
 import { mountConnect } from './views/connect.js';
 import { mountToday } from './views/today.js';
 import { mountDocs } from './views/docs.js';
+import { mountLegal } from './views/legal.js';
 
+// O escritório no centro; o WhatsApp é o módulo de Atendimento (um canal).
+// `also`: outras telas que acendem o mesmo botão (sub-telas do módulo).
 const NAV = [
   ['today', '🏠', 'Hoje'],
-  ['inbox', '💬', 'Conversas'],
-  ['board', '📊', 'Funil'],
-  ['contacts', '👥', 'Contatos'],
+  ['agenda', '📅', 'Agenda', ['tasks']],
+  ['legal', '⚖️', 'Jurídico', ['board']],
+  ['inbox', '💬', 'Atendimento', ['contacts']],
   ['docs', '📂', 'Documentos'],
-  ['agenda', '📅', 'Agenda'],
-  ['tasks', '⏰', 'Tarefas'],
   ['finance', '💰', 'Financeiro'],
-  ['dashboard', '📈', 'Painel'],
-];
+  ['dashboard', '📈', 'Relatórios'],
+]
 
 async function main() {
   await bootstrap();
@@ -41,6 +42,7 @@ async function main() {
     board: h('div', { class: 'view view-board' }),
     contacts: h('div', { class: 'view view-page' }),
     docs: h('div', { class: 'view view-page view-docs' }),
+    legal: h('div', { class: 'view view-page view-legal' }),
     tasks: h('div', { class: 'view view-page' }),
     dashboard: h('div', { class: 'view view-page' }),
     finance: h('div', { class: 'view view-page' }),
@@ -87,6 +89,7 @@ async function main() {
 
   mountToday(views.today);
   mountDocs(views.docs);
+  mountLegal(views.legal);
   mountChatList(listCol);
   mountChatView(chatCol, { onTogglePanel: togglePanel });
   mountCrmPanel(crmCol);
@@ -101,7 +104,9 @@ async function main() {
 
   const showView = (v) => {
     for (const [id, el] of Object.entries(views)) el.classList.toggle('active', id === v);
-    for (const [id, b] of Object.entries(navBtns)) b.classList.toggle('active', id === v);
+    const owner = NAV.find(([id, , , also]) => id === v || also?.includes(v))?.[0] || v;
+    for (const [id, b] of Object.entries(navBtns)) b.classList.toggle('active', id === owner);
+    document.body.dataset.view = v;
   };
   on('view', showView);
 

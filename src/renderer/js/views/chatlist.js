@@ -1,7 +1,7 @@
 // Lista de conversas (coluna da esquerda da caixa de entrada).
 import { h, fill, fmtListTime, fmtDuration, normalize, debounce, modal, errToast, toast, popupMenu } from '../util.js';
 import {
-  state, on, api, sortedChats, openChat, stageById, typeById, chatMatchesRules, isAwaiting, setSetting,
+  state, on, api, sortedChats, openChat, stageById, typeById, chatMatchesRules, isAwaiting, setSetting, setView,
 } from '../store.js';
 import { avatarEl, ticks, stagePill, tagDots, typeMenu } from '../components.js';
 import { newCaseDialog } from './casemodal.js';
@@ -26,8 +26,10 @@ export function mountChatList(root) {
 
   const header = h('div', { class: 'chatlist-head' },
     h('div', { class: 'row' },
-      h('h2', null, 'Conversas'),
-      h('button', { class: 'icon-btn', title: 'Nova conversa (por número)', onclick: newChatDialog }, '＋')),
+      h('h2', null, 'WhatsApp'),
+      h('div', { class: 'row' },
+        h('button', { class: 'icon-btn', title: 'Contatos do WhatsApp (tabela)', onclick: () => setView('contacts') }, '👥'),
+        h('button', { class: 'icon-btn', title: 'Nova conversa (por número)', onclick: newChatDialog }, '＋'))),
     searchInput, chipsEl, selectsEl);
 
   root.append(header, listEl);

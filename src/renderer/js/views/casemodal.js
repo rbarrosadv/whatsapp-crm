@@ -4,7 +4,7 @@ import {
   h, fill, modal, toast, errToast, confirmDialog, promptDialog, popupMenu, fmtMoney, fmtDateTime, fmtDuration,
   fmtSize, toLocalInput, fromLocalInput, normalize, openMedia, saveMedia, pickFiles, uploadFiles,
 } from '../util.js';
-import { state, on, api, stageById, openChat } from '../store.js';
+import { state, on, api, stageById, openChat, openClient } from '../store.js';
 import { avatarEl, caseStageMenu, stagePicker } from '../components.js';
 import { taskRow, taskDialog } from './crmpanel.js';
 import { caseFolderPanel } from './docs.js';
@@ -37,10 +37,15 @@ export function feeLabel(k) {
 
 // ------------------------------------------------------------ novo caso
 
-export function newCaseDialog(jid, { stageId } = {}) {
-  let chosenJid = jid;
+/**
+ * Novo processo/caso. Sempre de um cliente: vindo de uma conversa (jid), o
+ * cliente é o dela (criado na hora se preciso); senão escolhe-se o cliente.
+ */
+export function newCaseDialog(jid, { stageId, clientId } = {}) {
+  let chosen = clientId || null;
   let stage = stageId || state.pipelines[0]?.stages[0]?.id;
-  const title = h('input', { class: 'input', placeholder: 'Ex.: Reclamação trabalhista, Inventário, Consulta contrato…' });
+  const title = h('input', { class: 'input', placeholder: 'Ex.: Reclamação trabalhista, Inventário, Revisional de aluguel…' });
+  const opposing = h('input', { class: 'input', placeholder: 'Parte contrária (opcional)' });
   const stageBtn = h('button', { class: 'stage-btn wide' });
   const drawStage = () => {
     const st = stageById(stage);
@@ -50,45 +55,56 @@ export function newCaseDialog(jid, { stageId } = {}) {
   stageBtn.onclick = (e) => stagePicker(e.currentTarget, stage, (sid) => { stage = sid; drawStage(); });
   drawStage();
 
-  let contactField = null;
-  if (!jid) {
-    const input = h('input', { class: 'input', type: 'search', placeholder: 'Pesquisar contato…' });
+  let clientField = null;
+  if (!jid && !clientId) {
+    const input = h('input', { class: 'input', type: 'search', placeholder: 'Pesquisar cliente pelo nome ou CPF…' });
     const list = h('div', { class: 'picker-list short' });
-    const draw = () => {
-      const nq = normalize(input.value);
-      const items = [...state.chats.values()].filter((c) => !c.is_group)
-        .filter((c) => !nq || normalize(`${c.display_name} ${c.jid}`).includes(nq))
-        .sort((a, b) => b.last_ts - a.last_ts).slice(0, 40);
-      fill(list, ...items.map((c) => h('div', {
-        class: `picker-item ${chosenJid === c.jid ? 'active' : ''}`,
-        onclick: () => { chosenJid = c.jid; draw(); },
-      }, avatarEl(c, 28), h('div', null, c.display_name))));
+    let clients = [];
+    const draw = async () => {
+      clients = await api('clients:list', { q: input.value }).catch(() => []);
+      fill(list, clients.slice(0, 40).map((c) => h('div', {
+        class: `picker-item ${chosen === c.id ? 'active' : ''}`,
+        onclick: () => { chosen = c.id; draw(); },
+      }, h('div', null, h('b', null, c.name), c.cpf ? h('span', { class: 'muted small' }, ` · ${c.cpf}`) : null))),
+      input.value.trim() ? h('div', {
+        class: 'picker-item',
+        onclick: async () => { chosen = await api('clients:save', { name: input.value.trim(), origin: 'Cadastro' }); input.value = ''; draw(); },
+      }, h('div', null, `＋ Cadastrar novo cliente “${input.value.trim()}”`)) : null);
     };
-    input.addEventListener('input', draw);
+    input.addEventListener('input', debounceLocal(draw, 200));
     draw();
-    contactField = h('div', { class: 'field' }, h('span', null, 'Cliente'), input, list);
+    clientField = h('div', { class: 'field' }, h('span', null, 'Cliente'), input, list);
   }
 
   modal({
-    title: 'Novo caso',
+    title: 'Novo processo / caso',
     body: h('div', { class: 'form' },
-      contactField,
-      h('label', { class: 'field' }, h('span', null, 'Nome do caso'), title),
+      clientField,
+      h('label', { class: 'field' }, h('span', null, 'Assunto'), title),
+      h('label', { class: 'field' }, h('span', null, 'Parte contrária'), opposing),
       h('div', { class: 'field' }, h('span', null, 'Funil e etapa'), stageBtn)),
     actions: [
       { label: 'Cancelar' },
       {
-        label: 'Criar caso',
+        label: 'Criar',
         primary: true,
         onClick: async () => {
-          if (!chosenJid) { toast('Escolha o cliente', 'error'); return false; }
-          const id = await api('cases:save', { jid: chosenJid, title: title.value.trim() || undefined, stage_id: stage });
+          if (!jid && !chosen) { toast('Escolha o cliente', 'error'); return false; }
+          const id = await api('cases:save', {
+            jid: chosen ? undefined : jid, client_id: chosen || undefined,
+            title: title.value.trim() || undefined, stage_id: stage, opposing_party: opposing.value.trim() || undefined,
+          });
           setTimeout(() => openCase(id, { tab: 'dados' }), 50);
           return true;
         },
       },
     ],
   });
+}
+
+function debounceLocal(fn, ms) {
+  let t;
+  return (...a) => { clearTimeout(t); t = setTimeout(() => fn(...a), ms); };
 }
 
 // ---------------------------------------------------------- ficha do caso
@@ -109,7 +125,7 @@ export async function openCase(id, { tab = 'dados' } = {}) {
   const off2 = on('tasks', () => reload());
 
   function render() {
-    const chat = state.chats.get(k.jid) || { jid: k.jid, display_name: 'Contato' };
+    const chat = (k.client_jid && state.chats.get(k.client_jid)) || { jid: k.jid, display_name: k.client_name || 'Cliente' };
     const st = stageById(k.stage_id);
     const closed = k.status !== 'aberto';
     const since = Date.now() - (k.last_update_at || k.created_at);
@@ -126,8 +142,10 @@ export async function openCase(id, { tab = 'dados' } = {}) {
     const content = h('div', { class: 'case-content' });
     fill(body,
       h('div', { class: 'case-head' },
-        h('div', { class: 'case-client', onclick: () => { m.close(); openChat(k.jid); }, title: 'Abrir conversa' },
-          avatarEl(chat, 36), h('div', null, h('b', null, chat.display_name), h('div', { class: 'muted small' }, '💬 abrir conversa'))),
+        h('div', { class: 'case-client', onclick: () => { m.close(); if (k.client_id) openClient(k.client_id); }, title: 'Abrir a ficha do cliente' },
+          avatarEl(chat, 36), h('div', null, h('b', null, k.client_name || chat.display_name),
+            h('div', { class: 'muted small' }, '👤 ficha do cliente',
+              k.client_jid ? h('a', { href: '#', class: 'case-wa', onclick: (e) => { e.preventDefault(); e.stopPropagation(); m.close(); openChat(k.client_jid); } }, ' · 💬 WhatsApp') : null))),
         h('button', {
           class: `stage-btn ${st ? '' : 'unset'}`, style: st ? { '--c': st.color } : null,
           onclick: (e) => caseStageMenu(e.currentTarget, k),
@@ -275,7 +293,7 @@ export function paymentRow(p, { showCase = false } = {}) {
   const chat = state.chats.get(p.jid);
   return h('tr', { class: `pay-${st.key}` },
     h('td', null, h('span', { class: `status-pill ${st.cls}` }, st.label)),
-    showCase ? h('td', null, h('a', { class: 'link', onclick: () => openChat(p.jid) }, chat?.display_name || 'Contato'),
+    showCase ? h('td', null, h('a', { class: 'link', onclick: () => (p.client_id ? openClient(p.client_id) : openChat(p.jid)) }, p.client_name || chat?.display_name || 'Cliente'),
       h('div', { class: 'muted small ellipsis' }, h('a', { class: 'link', onclick: () => openCase(p.case_id, { tab: 'honorarios' }) }, p.case_title))) : null,
     h('td', null, p.description || 'Honorários', p.charged_at ? h('div', { class: 'muted small' }, `📤 cobrado em ${new Date(p.charged_at).toLocaleDateString('pt-BR')}`) : null),
     h('td', null, p.due_at ? new Date(p.due_at).toLocaleDateString('pt-BR') : '—',

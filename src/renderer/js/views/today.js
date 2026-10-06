@@ -4,7 +4,8 @@
 import {
   h, fill, fmtMoney, fmtTime, fmtDuration, toast, errToast, confirmDialog, debounce, openExternal,
 } from '../util.js';
-import { state, on, api, openChat, isAwaiting, emit, setView } from '../store.js';
+import { state, on, api, openChat, openClient, openLegal, isAwaiting, emit, setView } from '../store.js';
+import { showTasks } from './tasks.js';
 import { taskRow, taskDialog } from './crmpanel.js';
 import { openCase, chargeDialog, TASK_KINDS } from './casemodal.js';
 import { avatarEl } from '../components.js';
@@ -108,14 +109,14 @@ async function render() {
       alerts.length ? `⚠ ${alerts.join(' · ')}` : '✓ Nada atrasado. Bom trabalho!'),
 
     h('div', { class: 'stats' },
-      stat('Compromissos hoje', openToday.length, prazosHoje ? `${prazosHoje} prazo(s)` : 'em aberto'),
-      stat('Atrasados', sum.overdue.length, sum.overdue.length ? 'resolver primeiro' : 'nenhum', sum.overdue.length ? 'stat-bad' : ''),
-      stat('Clientes aguardando', awaiting.length, awaiting.length ? `o mais antigo: há ${fmtDuration(Date.now() - awaiting[0].last_ts)}` : 'todos respondidos',
-        awaiting.length ? 'stat-warn' : '', () => { setView('inbox'); emit('open-filter', 'awaiting'); }),
-      stat('Casos sem retorno', sum.staleCases.length, `há mais de ${sum.staleDays} dias`, sum.staleCases.length ? 'stat-warn' : ''),
+      stat('Compromissos hoje', openToday.length, prazosHoje ? `${prazosHoje} prazo(s)` : 'em aberto', '', () => showTasks({ who: scope === 'mine' ? 'me' : 'all' })),
+      stat('Atrasados', sum.overdue.length, sum.overdue.length ? 'resolver primeiro' : 'nenhum', sum.overdue.length ? 'stat-bad' : '', () => showTasks({ who: scope === 'mine' ? 'me' : 'all' })),
+      stat('Processos sem retorno', sum.staleCases.length, `cliente sem notícia há mais de ${sum.staleDays} dias`, sum.staleCases.length ? 'stat-warn' : '', () => openLegal('processos', { status: 'aberto' })),
       sum.payments ? stat('A receber na semana', h('span', { class: 'money' }, fmtMoney(sum.payments.weekTotal)),
         sum.payments.overdue.length ? `${sum.payments.overdue.length} vencida(s)` : 'nenhuma vencida', sum.payments.overdue.length ? 'stat-bad' : '',
-        () => setView('finance')) : null),
+        () => setView('finance')) : null,
+      stat('Mensagens aguardando', awaiting.length, awaiting.length ? `Atendimento · a mais antiga há ${fmtDuration(Date.now() - awaiting[0].last_ts)}` : 'Atendimento em dia',
+        awaiting.length ? 'stat-warn' : '', () => { setView('inbox'); emit('open-filter', 'awaiting'); })),
 
     mode === 'day' ? dayView(sum, events, awaiting) : weekView(events, r),
 
@@ -147,21 +148,13 @@ function dayView(sum, events, awaiting) {
   if (sum.overdue.length) groups.push(group('⚠ Atrasados', 'Compromissos que já passaram da hora', sum.overdue.map((t) => taskRow(t, { showChat: true }))));
   const todayTasks = sum.today.filter((t) => !t.done);
   if (todayTasks.length) groups.push(group('📅 Para hoje', null, todayTasks.map((t) => taskRow(t, { showChat: true }))));
-  if (awaiting.length) {
-    groups.push(group('💬 Clientes aguardando resposta', 'WhatsApp do escritório', awaiting.slice(0, 8).map((c) => actionRow({
-      who: c.display_name, chat: c,
-      text: (c.last_preview || '').slice(0, 120),
-      meta: `há ${fmtDuration(Date.now() - c.last_ts)}`,
-      action: 'Responder', onAction: () => openChat(c.jid),
-    })), awaiting.length > 8 ? `e mais ${awaiting.length - 8}` : null));
-  }
   if (sum.payments && (sum.payments.overdue.length || sum.payments.dueSoon.length)) {
     const list = [...sum.payments.overdue, ...sum.payments.dueSoon].slice(0, 8);
     groups.push(group('💰 Cobranças', 'Parcelas vencidas e dos próximos 7 dias', list.map((p) => {
       const chat = state.chats.get(p.jid);
       const late = p.due_at < startOfDay(Date.now());
       return actionRow({
-        who: chat?.display_name || p.case_title, chat,
+        who: p.client_name || chat?.display_name || p.case_title, chat, clientId: p.client_id,
         text: h('span', null, `${p.case_title} · `, h('span', { class: 'money' }, fmtMoney(p.amount))),
         meta: late ? `venceu ${new Date(p.due_at).toLocaleDateString('pt-BR')}` : `vence ${new Date(p.due_at).toLocaleDateString('pt-BR')}`,
         late,
@@ -170,16 +163,24 @@ function dayView(sum, events, awaiting) {
     })));
   }
   if (sum.staleCases.length) {
-    groups.push(group('📣 Casos sem retorno ao cliente', `Sem notícia há mais de ${sum.staleDays} dias`, sum.staleCases.slice(0, 6).map((k) => {
+    groups.push(group('📣 Processos sem retorno ao cliente', `Sem notícia há mais de ${sum.staleDays} dias`, sum.staleCases.slice(0, 6).map((k) => {
       const chat = state.chats.get(k.jid);
       return actionRow({
-        who: chat?.display_name || 'Cliente', chat,
+        who: k.client_name || chat?.display_name || 'Cliente', chat, clientId: k.client_id,
         text: k.title,
         meta: `último retorno há ${fmtDuration(Date.now() - k.since)}`,
-        action: 'Dar notícia', onAction: () => openChat(k.jid),
-        secondary: { label: 'Abrir caso', onClick: () => openCase(k.id) },
+        action: 'Dar notícia', onAction: () => (chat ? openChat(k.jid) : openCase(k.id)),
+        secondary: { label: 'Abrir processo', onClick: () => openCase(k.id) },
       });
     })));
+  }
+  if (awaiting.length) {
+    groups.push(group('💬 Mensagens aguardando resposta', 'Atendimento (WhatsApp)', awaiting.slice(0, 8).map((c) => actionRow({
+      who: c.display_name, chat: c,
+      text: (c.last_preview || '').slice(0, 120),
+      meta: `há ${fmtDuration(Date.now() - c.last_ts)}`,
+      action: 'Responder', onAction: () => openChat(c.jid),
+    })), awaiting.length > 8 ? `e mais ${awaiting.length - 8}` : null));
   }
   return h('div', { class: 'today-grid' },
     h('section', { class: 'panel today-agenda' },
@@ -196,10 +197,11 @@ function group(title, hint, rows, more) {
     rows, more ? h('div', { class: 'muted small' }, more) : null);
 }
 
-function actionRow({ who, chat, text, meta, late, action, onAction, secondary }) {
+function actionRow({ who, chat, clientId, text, meta, late, action, onAction, secondary }) {
+  const open = clientId ? () => openClient(clientId) : chat ? () => openChat(chat.jid) : null;
   return h('div', { class: 'action-row' },
     chat ? avatarEl(chat, 34) : null,
-    h('div', { class: 'grow action-main', onclick: chat ? () => openChat(chat.jid) : null },
+    h('div', { class: 'grow action-main', onclick: open, title: clientId ? 'Abrir a ficha do cliente' : null },
       h('div', { class: 'action-who' }, who),
       text ? h('div', { class: 'action-text' }, text) : null,
       meta ? h('div', { class: `small ${late ? 'bad-text' : 'muted'}` }, meta) : null),

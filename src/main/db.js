@@ -8,7 +8,7 @@ import fs from 'node:fs';
 
 let db;
 
-const SCHEMA_VERSION = 8;
+const SCHEMA_VERSION = 9;
 
 const DEFAULT_PIPELINES = [
   {
@@ -107,6 +107,8 @@ export function openDb(dir) {
 export function closeDb() {
   try { db?.close(); } catch { /* já fechado */ }
   db = undefined;
+  // consultas preparadas são do banco fechado: reabrir precisa de novas
+  stmtCache.clear();
 }
 
 function migrate() {
@@ -340,6 +342,26 @@ function migrate() {
   for (const c of CLIENT_FIELDS) addColumn('crm', c, 'TEXT');
   addColumn('crm', 'folder', 'TEXT');
   addColumn('cases', 'folder', 'TEXT');
+  // versão 9: o CLIENTE passa a ser o centro (independente do WhatsApp). Casos,
+  // notas, tarefas e histórico continuam com a coluna jid, que agora guarda a
+  // "chave" do cliente: o jid do WhatsApp dele, ou "cliente:<id>" se não tiver.
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS clients (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      name TEXT NOT NULL,
+      kind TEXT NOT NULL DEFAULT 'pf',
+      cpf TEXT, rg TEXT, nationality TEXT, marital TEXT, profession TEXT, address TEXT, birth TEXT,
+      email TEXT, phone TEXT, phone2 TEXT,
+      jid TEXT UNIQUE,
+      folder TEXT,
+      notes TEXT,
+      origin TEXT,
+      status TEXT NOT NULL DEFAULT 'ativo',
+      created_at INTEGER NOT NULL,
+      updated_at INTEGER NOT NULL
+    );
+  `);
+  addColumn('cases', 'client_id', 'INTEGER');
   db.exec(`
     CREATE TABLE IF NOT EXISTS doc_index (
       rel TEXT PRIMARY KEY,
@@ -356,6 +378,7 @@ function migrate() {
   if (version < 2) seedV2();
   if (version < 3) migrateV3();
   if (version < 5) run("UPDATE contact_types SET autodownload = 1 WHERE id = 'cliente'");
+  if (version < 9) migrateV9();
   run('INSERT OR REPLACE INTO meta (key, value) VALUES (?, ?)', 'schema', String(SCHEMA_VERSION));
 }
 
@@ -521,6 +544,7 @@ function mergeJid(from, to) {
   run('UPDATE tasks SET jid = ? WHERE jid = ?', to, from);
   run('UPDATE cases SET jid = ? WHERE jid = ?', to, from);
   run('UPDATE activity SET jid = ? WHERE jid = ?', to, from);
+  if (!get('SELECT 1 AS x FROM clients WHERE jid = ?', to)) run('UPDATE clients SET jid = ? WHERE jid = ?', to, from);
   return true;
 }
 
@@ -575,7 +599,7 @@ export function listChats() {
   return all(`
     SELECT c.*, ct.name AS contact_name, ct.notify, ct.verified_name, ct.phone,
       crm.custom_name, crm.email, crm.company, crm.value, crm.pipeline_id, crm.stage_id, crm.stage_changed_at, crm.type_id,
-      crm.cpf, crm.rg, crm.nationality, crm.marital, crm.profession, crm.address, crm.birth, crm.folder,
+      (SELECT id FROM clients WHERE clients.jid = c.jid) AS client_id,
       (SELECT group_concat(k.stage_id) FROM (SELECT stage_id FROM cases WHERE jid = c.jid AND status = 'aberto' ORDER BY updated_at DESC) k) AS case_stage_ids,
       (SELECT COUNT(*) FROM cases WHERE jid = c.jid AND status = 'aberto') AS open_cases,
       (SELECT COUNT(*) FROM payments pm JOIN cases cs ON cs.id = pm.case_id WHERE cs.jid = c.jid AND pm.paid_at IS NULL AND pm.due_at < strftime('%s','now') * 1000) AS overdue_payments,
@@ -594,7 +618,7 @@ export function getChat(jid) {
   const row = get(`
     SELECT c.*, ct.name AS contact_name, ct.notify, ct.verified_name, ct.phone,
       crm.custom_name, crm.email, crm.company, crm.value, crm.pipeline_id, crm.stage_id, crm.stage_changed_at, crm.type_id,
-      crm.cpf, crm.rg, crm.nationality, crm.marital, crm.profession, crm.address, crm.birth, crm.folder,
+      (SELECT id FROM clients WHERE clients.jid = c.jid) AS client_id,
       (SELECT group_concat(k.stage_id) FROM (SELECT stage_id FROM cases WHERE jid = c.jid AND status = 'aberto' ORDER BY updated_at DESC) k) AS case_stage_ids,
       (SELECT COUNT(*) FROM cases WHERE jid = c.jid AND status = 'aberto') AS open_cases,
       (SELECT COUNT(*) FROM payments pm JOIN cases cs ON cs.id = pm.case_id WHERE cs.jid = c.jid AND pm.paid_at IS NULL AND pm.due_at < strftime('%s','now') * 1000) AS overdue_payments,
@@ -833,8 +857,11 @@ function caseRow(c) {
                           COUNT(*) AS n, SUM(CASE WHEN paid_at IS NULL AND due_at < ? THEN 1 ELSE 0 END) AS overdue
                    FROM payments WHERE case_id = ?`, now(), c.id);
   const next = get(`SELECT MIN(due_at) AS t FROM tasks WHERE case_id = ? AND done = 0 AND due_at IS NOT NULL`, c.id)?.t || null;
+  const cl = c.client_id ? get('SELECT name, jid FROM clients WHERE id = ?', c.client_id) : null;
   return {
     ...c,
+    client_name: cl?.name || (c.jid && !c.jid.startsWith('cliente:') ? getChat(c.jid)?.display_name : null) || null,
+    client_jid: cl ? cl.jid : (c.jid && !c.jid.startsWith('cliente:') ? c.jid : null),
     fee_fixed: !!c.fee_fixed, fee_installments: !!c.fee_installments, fee_success: !!c.fee_success,
     paid_total: pay.paid, billed_total: pay.total, payments_count: pay.n, overdue_payments: pay.overdue || 0,
     next_due: next,
@@ -843,10 +870,137 @@ function caseRow(c) {
   };
 }
 
-export function listCases({ jid, pipelineId, includeClosed = true } = {}) {
+// ------------------------------------------------------------------ clientes
+//
+// O cliente é o centro do sistema; o WhatsApp é só um canal ligado a ele
+// (clients.jid, opcional). Casos, notas, tarefas e histórico usam a "chave" do
+// cliente na coluna jid: o jid do WhatsApp, ou "cliente:<id>" sem WhatsApp.
+
+const CLIENT_COLS = ['name', 'kind', 'cpf', 'rg', 'nationality', 'marital', 'profession', 'address', 'birth',
+  'email', 'phone', 'phone2', 'folder', 'notes', 'origin', 'status'];
+export const clientKey = (c) => (c ? c.jid || `cliente:${c.id}` : null);
+
+/** Converte os contatos que já tinham casos (ou eram "Cliente") em clientes. */
+function migrateV9() {
+  const jids = new Set([
+    ...all('SELECT DISTINCT jid FROM cases WHERE jid IS NOT NULL').map((r) => r.jid),
+    ...all("SELECT jid FROM crm WHERE type_id = 'cliente'").map((r) => r.jid),
+  ]);
+  for (const jid of jids) {
+    if (!jid || jid.endsWith('@g.us') || get('SELECT 1 AS x FROM clients WHERE jid = ?', jid)) continue;
+    const chat = getChat(jid);
+    const crm = get('SELECT * FROM crm WHERE jid = ?', jid) || {};
+    const phone = jid.endsWith('@s.whatsapp.net') ? jid.split('@')[0] : null;
+    const id = Number(run(`INSERT INTO clients (name, cpf, rg, nationality, marital, profession, address, birth, email, phone, jid, folder, origin, created_at, updated_at)
+                           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    chat?.display_name || crm.custom_name || phone || 'Cliente', crm.cpf || null, crm.rg || null, crm.nationality || null,
+    crm.marital || null, crm.profession || null, crm.address || null, crm.birth || null, crm.email || null, phone, jid,
+    crm.folder || null, 'WhatsApp', now(), now()).lastInsertRowid);
+    run('UPDATE cases SET client_id = ? WHERE jid = ?', id, jid);
+  }
+}
+
+function clientRow(c) {
+  if (!c) return null;
+  const key = clientKey(c);
+  const st = get(`SELECT COUNT(*) AS total, SUM(CASE WHEN status = 'aberto' THEN 1 ELSE 0 END) AS open FROM cases WHERE client_id = ?`, c.id);
+  return {
+    ...c,
+    key,
+    cases_total: st?.total || 0,
+    cases_open: st?.open || 0,
+    overdue_payments: get(`SELECT COUNT(*) AS n FROM payments p JOIN cases k ON k.id = p.case_id
+                           WHERE k.client_id = ? AND p.paid_at IS NULL AND p.due_at < ?`, c.id, now())?.n || 0,
+    next_due: get('SELECT MIN(due_at) AS t FROM tasks WHERE jid = ? AND done = 0 AND due_at IS NOT NULL', key)?.t || null,
+  };
+}
+
+export function listClients({ q, status = 'ativo' } = {}) {
+  const where = [];
+  const args = [];
+  if (status && status !== 'todos') { where.push('status = ?'); args.push(status); }
+  const rows = all(`SELECT * FROM clients ${where.length ? `WHERE ${where.join(' AND ')}` : ''} ORDER BY name COLLATE NOCASE`, ...args);
+  const f = (x) => String(x || '').normalize('NFD').replace(/\p{M}/gu, '').toLowerCase();
+  const digits = String(q || '').replace(/\D/g, '');
+  const words = f(q).split(/\s+/).filter(Boolean);
+  const hit = (c) => !words.length
+    || words.every((w) => f(`${c.name} ${c.email || ''}`).includes(w))
+    || (digits.length >= 3 && [c.cpf, c.phone, c.phone2].some((v) => String(v || '').replace(/\D/g, '').includes(digits)));
+  return rows.filter(hit).map(clientRow);
+}
+
+export function getClient(id) { return clientRow(get('SELECT * FROM clients WHERE id = ?', id)); }
+export function clientByJid(jid) { return jid ? clientRow(get('SELECT * FROM clients WHERE jid = ?', jid)) : null; }
+/** Cliente a partir da chave usada nos casos/tarefas (jid ou "cliente:<id>"). */
+export function clientByKey(key) {
+  const m = /^cliente:(\d+)$/.exec(String(key || ''));
+  return m ? getClient(Number(m[1])) : clientByJid(key);
+}
+
+export function saveClient(c) {
+  return tx(() => {
+    let id = c.id;
+    if (!id) {
+      if (!String(c.name || '').trim()) throw new Error('Informe o nome do cliente.');
+      if (c.jid && get('SELECT 1 AS x FROM clients WHERE jid = ?', c.jid)) throw new Error('Este WhatsApp já está ligado a outro cliente.');
+      id = Number(run('INSERT INTO clients (name, jid, created_at, updated_at) VALUES (?, ?, ?, ?)', String(c.name).trim(), c.jid || null, now(), now()).lastInsertRowid);
+      logActivity(clientKey(getClientRaw(id)), 'client', `Cliente cadastrado: ${String(c.name).trim()}`, c.userName || null);
+    }
+    for (const f of CLIENT_COLS) {
+      if (c[f] === undefined) continue;
+      let v = c[f] == null ? null : String(c[f]).trim() || null;
+      if (f === 'name' && !v) continue;
+      if (f === 'kind') v = v === 'pj' ? 'pj' : 'pf';
+      if (f === 'status') v = v === 'arquivado' ? 'arquivado' : 'ativo';
+      run(`UPDATE clients SET ${f} = ?, updated_at = ? WHERE id = ?`, v, now(), id);
+    }
+    return id;
+  });
+}
+const getClientRaw = (id) => get('SELECT * FROM clients WHERE id = ?', id);
+
+/** Liga (ou desliga, com jid nulo) o WhatsApp do cliente; casos e notas acompanham. */
+export function linkClientChat(id, jid) {
+  return tx(() => {
+    const c = getClientRaw(id);
+    if (!c) throw new Error('Cliente não encontrado');
+    if (jid && get('SELECT 1 AS x FROM clients WHERE jid = ? AND id <> ?', jid, id)) throw new Error('Este WhatsApp já está ligado a outro cliente.');
+    const from = clientKey(c);
+    const to = jid || `cliente:${id}`;
+    if (from === to) return to;
+    run('UPDATE clients SET jid = ?, updated_at = ? WHERE id = ?', jid || null, now(), id);
+    run('UPDATE cases SET jid = ? WHERE client_id = ?', to, id);
+    // o que era do cliente sem WhatsApp passa para a conversa (e vice-versa só o que é de casos)
+    if (!c.jid) for (const t of ['notes', 'tasks', 'activity']) run(`UPDATE ${t} SET jid = ? WHERE jid = ?`, to, from);
+    else run('UPDATE tasks SET jid = ? WHERE case_id IN (SELECT id FROM cases WHERE client_id = ?)', to, id);
+    if (jid && !c.phone && jid.endsWith('@s.whatsapp.net')) run('UPDATE clients SET phone = ? WHERE id = ?', jid.split('@')[0], id);
+    logActivity(to, 'client', jid ? 'WhatsApp ligado ao cliente' : 'WhatsApp desligado do cliente');
+    return to;
+  });
+}
+
+/** Cliente da conversa; cria um com os dados do contato se ainda não houver. */
+export function ensureClientForChat(jid, userName) {
+  const have = clientByJid(jid);
+  if (have) return have.id;
+  const chat = getChat(jid);
+  const crm = get('SELECT * FROM crm WHERE jid = ?', jid) || {};
+  const phone = jid.endsWith('@s.whatsapp.net') ? jid.split('@')[0] : null;
+  const id = saveClient({
+    name: chat?.display_name || phone || 'Cliente', jid, phone, email: crm.email, origin: 'WhatsApp', userName,
+    cpf: crm.cpf, rg: crm.rg, nationality: crm.nationality, marital: crm.marital, profession: crm.profession,
+    address: crm.address, birth: crm.birth, folder: crm.folder,
+  });
+  run('UPDATE cases SET client_id = ? WHERE jid = ? AND client_id IS NULL', id, jid);
+  return id;
+}
+
+export function listCases({ jid, clientId, pipelineId, includeClosed = true, status } = {}) {
   const where = [];
   const args = [];
   if (jid) { where.push('jid = ?'); args.push(jid); }
+  if (clientId) { where.push('client_id = ?'); args.push(clientId); }
+  if (status) { where.push('status = ?'); args.push(status); }
   if (pipelineId) { where.push('pipeline_id = ?'); args.push(pipelineId); }
   if (!includeClosed) where.push("status = 'aberto'");
   return all(`SELECT * FROM cases ${where.length ? `WHERE ${where.join(' AND ')}` : ''}
@@ -861,10 +1015,16 @@ export function saveCase(c) {
     if (!id) {
       const st = c.stage_id ? get('SELECT s.*, p.name AS pname FROM stages s JOIN pipelines p ON p.id = s.pipeline_id WHERE s.id = ?', c.stage_id) : null;
       if (c.stage_id && !st) throw new Error('Etapa não encontrada');
-      id = Number(run(`INSERT INTO cases (jid, title, pipeline_id, stage_id, stage_changed_at, last_update_at, created_at, updated_at)
-                       VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
-      c.jid, (c.title || st?.pname || 'Novo caso').trim(), st?.pipeline_id || null, st?.id || null, now(), now(), now(), now()).lastInsertRowid);
-      logActivity(c.jid, 'case', `Caso aberto: ${c.title || st?.pname || 'Novo caso'}${st ? ` (${st.name})` : ''}`);
+      // todo caso é de um cliente; vindo de uma conversa, o cliente é o dela
+      let clientId = c.client_id || null;
+      if (!clientId && c.jid && !String(c.jid).endsWith('@g.us')) clientId = clientByKey(c.jid)?.id || ensureClientForChat(c.jid);
+      const cl = clientId ? getClientRaw(clientId) : null;
+      if (!cl && !c.jid) throw new Error('Escolha o cliente do caso.');
+      const key = cl ? clientKey(cl) : c.jid;
+      id = Number(run(`INSERT INTO cases (jid, client_id, title, pipeline_id, stage_id, stage_changed_at, last_update_at, created_at, updated_at)
+                       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      key, cl?.id || null, (c.title || st?.pname || 'Novo caso').trim(), st?.pipeline_id || null, st?.id || null, now(), now(), now(), now()).lastInsertRowid);
+      logActivity(key, 'case', `Caso aberto: ${c.title || st?.pname || 'Novo caso'}${st ? ` (${st.name})` : ''}`);
     }
     const sets = [];
     const vals = [];
@@ -942,7 +1102,7 @@ export function listPayments({ caseId, status } = {}) {
   if (status === 'overdue') { where.push('p.paid_at IS NULL AND p.due_at < ?'); args.push(now()); }
   if (status === 'upcoming') { where.push('p.paid_at IS NULL AND (p.due_at IS NULL OR p.due_at >= ?)'); args.push(now()); }
   if (status === 'paid') where.push('p.paid_at IS NOT NULL');
-  return all(`SELECT p.*, c.title AS case_title, c.jid, c.process_number,
+  return all(`SELECT p.*, c.title AS case_title, c.jid, c.process_number, c.client_id, (SELECT name FROM clients WHERE id = c.client_id) AS client_name,
                 (SELECT COUNT(*) FROM payments x WHERE x.case_id = p.case_id) AS of_total,
                 (SELECT COUNT(*) FROM payments x WHERE x.case_id = p.case_id AND (x.due_at < p.due_at OR (x.due_at = p.due_at AND x.id <= p.id))) AS seq
               FROM payments p JOIN cases c ON c.id = p.case_id
@@ -1201,8 +1361,11 @@ export function addNote(jid, text, caseId) {
 export function deleteNote(id) { run('DELETE FROM notes WHERE id = ?', id); }
 
 // tasks
-const TASK_SELECT = `SELECT k.*, c.title AS case_title, c.process_number, u.name AS assignee_name
-  FROM tasks k LEFT JOIN cases c ON c.id = k.case_id LEFT JOIN users u ON u.id = k.assignee_id`;
+const TASK_SELECT = `SELECT k.*, c.title AS case_title, c.process_number, u.name AS assignee_name,
+    COALESCE(cl.id, ck.id) AS client_id, COALESCE(cl.name, ck.name) AS client_name
+  FROM tasks k LEFT JOIN cases c ON c.id = k.case_id LEFT JOIN users u ON u.id = k.assignee_id
+  LEFT JOIN clients cl ON cl.id = c.client_id
+  LEFT JOIN clients ck ON c.id IS NULL AND (ck.jid = k.jid OR 'cliente:' || ck.id = k.jid)`;
 
 /** `assignee`: id de uma pessoa → as dela e as sem responsável. */
 export function listTasks({ jid, caseId, includeDone = false, assignee } = {}) {
@@ -1231,7 +1394,7 @@ export function tasksForDay({ dayStart, dayEnd, weekStart, weekEnd, assignee }) 
 
 /** Casos abertos sem retorno ao cliente há mais de `ms` (para o painel; não marca aviso). */
 export function casesWithoutUpdate(ms, limit = 20) {
-  return all(`SELECT id, jid, title, COALESCE(last_update_at, created_at) AS since FROM cases
+  return all(`SELECT id, jid, client_id, (SELECT name FROM clients WHERE id = cases.client_id) AS client_name, title, COALESCE(last_update_at, created_at) AS since FROM cases
               WHERE status = 'aberto' AND COALESCE(last_update_at, created_at) < ? ORDER BY since LIMIT ?`, now() - ms, limit);
 }
 export function saveTask({ id, jid, title, due_at, done, case_id, kind, end_at, assignee_id }) {
