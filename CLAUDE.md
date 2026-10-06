@@ -174,6 +174,21 @@ Motor (`src/main`, sem Electron apesar do nome da pasta):
   não faz proposta; excluir interessado só sócio. O antigo funil de casos
   "Captação" saiu na v16 (o comercial é pelos interessados; funis de casos =
   Casos em andamento e Consultoria).
+- `reports.js` — **Relatórios** por período (`reports:get(seção, {from,to})`,
+  sócio e advogado; estagiário não): `overview` (processos abertos/encerrados —
+  `cases.closed_at`, v17 —, 12 meses, por área/responsável/etapa, prazos
+  `kind='prazo'` que venciam no período: no prazo = `done_at` até o fim do dia
+  do vencimento, com atraso, vencidos em aberto; audiências, clientes novos,
+  intimações, andamentos automáticos), `team` (por pessoa: processos, tarefas
+  concluídas/atrasadas, prazos, atendimentos, mensagens enviadas — contadas pela
+  assinatura `*Nome:*` —, interessados que fecharam), `commercial` (`leadStats`
+  + mediana de dias até fechar, origem × fechados), `whatsapp` (conversas de
+  trabalho sem grupos/pessoais: recebidas, enviadas, mediana até a 1ª resposta,
+  % em até 1 h, sem resposta, contatos novos, mensagens por hora) e `finance`
+  (só `can.finance`: recebido = honorários + avulsas + reembolsos, despesas,
+  resultado, % recebido do que venceu, atraso, maiores clientes, por área, por
+  responsável, despesas por categoria, por mês). Processo novo sem responsável
+  fica com quem criou.
 - `ogg.js` — remux WebM/Opus (MediaRecorder) → OGG/Opus (mensagem de voz).
 - `google.js` — `GoogleService`: Google Agenda pela API oficial com a chave
   (client_secret JSON, tipo "App para computador") do próprio usuário;
@@ -267,7 +282,7 @@ Interface (`src/renderer`, JS puro em módulos ES, sem build):
   úteis) e "Recebido" (arquivo vai para a pasta do caso) —, Andamentos (linha
   do tempo; manual por enquanto, `source` datajud/djen depois), Prazos,
   Documentos, Honorários só com `can.finance`, Notas; dados via `cases:full`), `finance`, `agenda`,
-  `board` (kanban de CASOS), `contacts`, `tasks`, `dashboard`, `settings`
+  `board` (kanban de CASOS), `contacts`, `tasks`, `dashboard` (**Relatórios**: período, abas Visão geral · Equipe · Comercial · Atendimento · Financeiro, gráficos de `charts.js`, CSV com `;` e BOM por tabela, Imprimir/PDF com `@media print`), `settings`
   (Minha conta, Equipe — só sócio —, conexão, notificações…), `connect`.
 - `js/icons.js` — ícones de traço em SVG (`icon(nome)`), sem emoji na
   interface. Funis, tipos de contato e filtros guardam o **nome** do ícone

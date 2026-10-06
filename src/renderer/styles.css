@@ -1077,3 +1077,19 @@ h2, h3 { letter-spacing: -0.01em; }
 .lead-chip > .ico { color: var(--accent); }
 .lead-chip:hover { border-color: var(--accent); }
 .btn.wide { width: 100%; justify-content: center; }
+
+/* ---------------------------------------------------------- Relatórios */
+.report-period { margin-top: 2px; }
+.report-body > .panel { margin-bottom: 14px; }
+.report-body .fin-grid { margin-top: 14px; }
+.table-wrap { overflow-x: auto; }
+.print-only { display: none; }
+@media print {
+  .rail, .no-print, .banner-wrap, .connect-overlay, .toast-wrap, .viz-toggle { display: none !important; }
+  .print-only { display: block; margin: 0 0 10px; }
+  body, .main, .view-page.active { background: #fff !important; overflow: visible !important; height: auto !important; }
+  .view-page.active { padding: 0 !important; }
+  .panel, .stat { box-shadow: none !important; break-inside: avoid; }
+  body.discreet .money, body.discreet td.num { filter: none !important; }
+}
+.panel.has-csv .viz-toggle { right: 62px; }

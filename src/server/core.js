@@ -20,6 +20,7 @@ import { DocsService, guessRoot, templateValues, PLACEHOLDERS, FOLDERS } from '.
 import { seedDemoDocs, demoCourtsFetch } from '../main/demo.js';
 import { reais } from '../main/extenso.js';
 import * as leads from '../main/leads.js';
+import * as reports from '../main/reports.js';
 import { CourtsService, DATAJUD_PUBLIC_KEY, deadlineFromAvailability, formatCnj, tribunalOf, nameCase } from '../main/courts.js';
 import { computeSteps, suggestedChecklist, docsRequestText, addBusinessDays, STEPS, PARTY_ROLES, DEFAULT_DOCS_TEMPLATE } from '../main/workflow.js';
 
@@ -1008,6 +1009,8 @@ export async function createCore({ dataDir, demo = false, version = '', safeStor
     'cases:get': (ctx, id) => forMoney(ctx, db.getCase(id)),
     'cases:save': (ctx, c) => {
       if (!auth.can(ctx.user.role, 'finance:list')) c = auth.stripMoney(c);
+      // processo novo sem responsável escolhido fica com quem criou (como as tarefas)
+      if (!c.id && c.responsible_id === undefined) c = { ...c, responsible_id: ctx.user.id };
       const id = db.saveCase(c);
       if (c.process_number !== undefined) db.relinkIntimations(id);
       const k = db.getCase(id);
@@ -1293,7 +1296,21 @@ export async function createCore({ dataDir, demo = false, version = '', safeStor
     'tags:delete': (_c, id) => { db.deleteTag(id); broadcastConfig(); refreshAllChats(); },
     'quick:save': (_c, q) => { const id = db.saveQuickReply(q); broadcastConfig(); return id; },
     'quick:delete': (_c, id) => { db.deleteQuickReply(id); broadcastConfig(); },
-    stats: () => db.stats(),
+    /** Relatórios por período (sócio e advogado; o financeiro só para quem vê dinheiro). */
+    'reports:get': (ctx, section, { from, to } = {}) => {
+      if (!Number.isFinite(from) || !Number.isFinite(to) || to <= from || to - from > 3 * 366 * DAY) throw new Error('Período inválido.');
+      const range = { from, to };
+      switch (section) {
+        case 'overview': return reports.overview(range);
+        case 'team': return reports.team(range);
+        case 'commercial': return forMoney(ctx, reports.commercial(range));
+        case 'whatsapp': return reports.whatsapp(range);
+        case 'finance':
+          if (!auth.can(ctx.user.role, 'finance:list')) throw new Error('Sem permissão para o financeiro.');
+          return reports.finance(range);
+        default: throw new Error('Relatório desconhecido');
+      }
+    },
     // palavras mais usadas nas mensagens enviadas (sugestão ao digitar)
     'words:vocab': () => db.vocabulary(),
 

@@ -8,7 +8,7 @@ import fs from 'node:fs';
 
 let db;
 
-const SCHEMA_VERSION = 16;
+const SCHEMA_VERSION = 17;
 
 // Tipos de contato (editáveis). `personal` = não conta como trabalho
 // (fica fora de "Aguardando resposta" e dos avisos de conversa esquecida).
@@ -407,6 +407,8 @@ function migrate() {
     CREATE INDEX IF NOT EXISTS lead_contacts_lead ON lead_contacts(lead_id);
     CREATE INDEX IF NOT EXISTS lead_contacts_client ON lead_contacts(client_id);
   `);
+  // versão 17: data de encerramento do caso (relatórios)
+  addColumn('cases', 'closed_at', 'INTEGER');
   addColumn('cases', 'datajud_checked_at', 'INTEGER');
   addColumn('cases', 'datajud_error', 'TEXT');
   db.exec(`
@@ -453,6 +455,7 @@ function migrate() {
   if (version < 9) migrateV9();
   if (version < 14) migrateV14();
   if (version < 16) migrateV16();
+  if (version < 17) run("UPDATE cases SET closed_at = updated_at WHERE status <> 'aberto' AND closed_at IS NULL");
   run('INSERT OR REPLACE INTO meta (key, value) VALUES (?, ?)', 'schema', String(SCHEMA_VERSION));
 }
 
@@ -490,7 +493,7 @@ function migrateV16() {
       // casos que estavam lá: quem não contratou é encerrado; o resto segue em "Casos em andamento"
       const first = get("SELECT id FROM stages WHERE pipeline_id = 'casos' ORDER BY position LIMIT 1")?.id || null;
       const last = get("SELECT id FROM stages WHERE pipeline_id = 'casos' ORDER BY position DESC LIMIT 1")?.id || null;
-      run(`UPDATE cases SET status = 'encerrado', pipeline_id = ?, stage_id = ? WHERE stage_id = 'captacao.nao'`, last ? 'casos' : null, last);
+      run(`UPDATE cases SET status = 'encerrado', closed_at = updated_at, pipeline_id = ?, stage_id = ? WHERE stage_id = 'captacao.nao'`, last ? 'casos' : null, last);
       run("UPDATE cases SET pipeline_id = ?, stage_id = ? WHERE pipeline_id = 'captacao'", first ? 'casos' : null, first);
       run("UPDATE crm SET pipeline_id = NULL, stage_id = NULL WHERE pipeline_id = 'captacao'");
       run("DELETE FROM stages WHERE pipeline_id = 'captacao'");
@@ -1163,7 +1166,7 @@ export function setCaseStage(id, stageId) {
     const st = get('SELECT s.*, p.name AS pname FROM stages s JOIN pipelines p ON p.id = s.pipeline_id WHERE s.id = ?', stageId);
     if (!st) throw new Error('Etapa não encontrada');
     if (c.stage_id === stageId) return id;
-    run(`UPDATE cases SET pipeline_id = ?, stage_id = ?, stage_changed_at = ?, status = 'aberto', updated_at = ? WHERE id = ?`,
+    run(`UPDATE cases SET pipeline_id = ?, stage_id = ?, stage_changed_at = ?, status = 'aberto', closed_at = NULL, updated_at = ? WHERE id = ?`,
       st.pipeline_id, stageId, now(), now(), id);
     logActivity(c.jid, 'stage', `${c.title}: ${st.pname} → ${st.name}`);
     return id;
@@ -1173,7 +1176,7 @@ export function setCaseStage(id, stageId) {
 export function setCaseStatus(id, status) {
   const c = get('SELECT * FROM cases WHERE id = ?', id);
   if (!c) throw new Error('Caso não encontrado');
-  run('UPDATE cases SET status = ?, updated_at = ? WHERE id = ?', status, now(), id);
+  run('UPDATE cases SET status = ?, closed_at = ?, updated_at = ? WHERE id = ?', status, status === 'aberto' ? null : now(), now(), id);
   logActivity(c.jid, 'case', `${c.title}: ${status === 'aberto' ? 'reaberto' : 'encerrado'}`);
 }
 
@@ -1924,18 +1927,4 @@ export function setSetting(key, value) {
   run('INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)', key, JSON.stringify(value));
 }
 
-export function stats() {
-  const since = now() - 7 * 24 * 3600 * 1000;
-  return {
-    chats: get('SELECT COUNT(*) AS n FROM chats WHERE last_ts > 0')?.n || 0,
-    unreadChats: get('SELECT COUNT(*) AS n FROM chats WHERE unread > 0')?.n || 0,
-    messages: get('SELECT COUNT(*) AS n FROM messages')?.n || 0,
-    inWeek: get('SELECT COUNT(*) AS n FROM messages WHERE ts >= ? AND from_me = 0', since)?.n || 0,
-    outWeek: get('SELECT COUNT(*) AS n FROM messages WHERE ts >= ? AND from_me = 1', since)?.n || 0,
-    openTasks: get('SELECT COUNT(*) AS n FROM tasks WHERE done = 0')?.n || 0,
-    overdueTasks: get('SELECT COUNT(*) AS n FROM tasks WHERE done = 0 AND due_at IS NOT NULL AND due_at < ?', now())?.n || 0,
-    byStage: all(`SELECT s.id AS stage_id, s.pipeline_id, COUNT(c.id) AS n, COALESCE(SUM(c.fee_total), 0) AS total
-                  FROM stages s LEFT JOIN cases c ON c.stage_id = s.id AND c.status = 'aberto' GROUP BY s.id`),
-  };
-}
 

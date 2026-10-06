@@ -175,7 +175,7 @@ const DENY = {
   advogado: ADMIN_ONLY,
   estagiario: [
     ...ADMIN_ONLY,
-    /^finance:/, 'stats',
+    /^finance:/, /^reports:/,
     /^(pipelines|types|filters|tags):(save|delete|reorder)$/,
     'cases:setStatus', 'messages:delete', /^oabs:(save|delete)$/, /^leads:proposal/,
   ],

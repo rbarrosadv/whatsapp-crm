@@ -628,7 +628,21 @@ try {
   check(true, 'tela de tarefas');
   await page.click('.rail-btn[title="Relatórios"]');
   await page.waitForSelector('.view.active .stat');
+  await page.waitForSelector('.view.active .viz-svg');
   await shot(page, '08-dashboard');
+  check(await page.locator('.view.active .stat-label:has-text("Processos abertos no período")').count() === 1, 'relatórios: visão geral do período');
+  for (const [tabName, probe] of [['Equipe', 'table'], ['Comercial', '.stat'], ['Atendimento', '.viz-svg'], ['Financeiro', '.viz-bars, .viz-svg']]) {
+    await page.click(`.view.active .tab:has-text("${tabName}")`);
+    await page.waitForSelector(`.view.active .report-body ${probe.split(', ').join(`, .view.active .report-body `)}`);
+  }
+  await shot(page, '08b-relatorio-financeiro');
+  check(true, 'relatórios: equipe, comercial, atendimento e financeiro');
+  const [csv] = await Promise.all([page.waitForEvent('download'), page.click('.view.active .panel button[title^="Baixar em CSV"]')]);
+  check(/\.csv$/.test(csv.suggestedFilename()), 'relatório exportado em CSV');
+  await page.click('.view.active .tab:has-text("Equipe")');
+  await page.waitForSelector('.view.active .report-body table');
+  await shot(page, '08c-relatorio-equipe');
+  await page.click('.view.active .tab:has-text("Visão geral")');
   await page.click('.rail-btn[title="Configurações"]');
   await page.waitForSelector('.settings-grid');
   await shot(page, '09-settings');

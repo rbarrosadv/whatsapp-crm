@@ -598,3 +598,50 @@ test('comercial: interessado, consulta na agenda, atendimento, proposta pelo Wha
   await c.call('leads:delete', lost);
   assert.equal((await c.call('leads:list', {})).some((x) => x.id === lost), false);
 });
+
+test('relatórios: processos abertos/encerrados, prazos no prazo x atrasados, equipe, atendimento, financeiro; estagiária não vê', async () => {
+  const c = client();
+  await c.req('/auth/login', { body: { login: 'barros', password: 'segredo1' } });
+  await connected(c);
+  const me = (await c.call('bootstrap')).me;
+  const range = { from: Date.now() - 30 * 86400e3, to: Date.now() + 60 * 86400e3 };
+  const base = await c.call('reports:get', 'overview', range);
+  const baseTeam = (await c.call('reports:get', 'team', range)).rows.find((r) => r.id === me.id);
+
+  const cid = await c.call('clients:save', { name: 'Cliente do Relatório' });
+  const k = await c.call('cases:save', { client_id: cid, title: 'Caso relatório', area: 'Tributário', responsible_id: me.id });
+  await c.call('cases:setStatus', k, 'encerrado');
+  // prazo cumprido com atraso (venceu ontem) e um cumprido antes de vencer
+  const late = await c.call('tasks:save', { title: 'Contestação', kind: 'prazo', due_at: Date.now() - 86400e3, case_id: k, assignee_id: me.id });
+  const ok = await c.call('tasks:save', { title: 'Réplica', kind: 'prazo', due_at: Date.now() + 86400e3, case_id: k, assignee_id: me.id });
+  await c.call('tasks:save', { id: late, done: true });
+  await c.call('tasks:save', { id: ok, done: true });
+  const chat = (await c.call('chats:list')).find((x) => !x.is_group);
+  await c.call('messages:sendText', chat.jid, 'Mensagem para o relatório');
+
+  const o = await c.call('reports:get', 'overview', range);
+  assert.equal(o.cases.opened, base.cases.opened + 1);
+  assert.equal(o.cases.closed, base.cases.closed + 1);
+  assert.equal(o.deadlines.onTime, base.deadlines.onTime + 1);
+  assert.equal(o.deadlines.late, base.deadlines.late + 1);
+  assert.equal(o.clients.created, base.clients.created + 1);
+  assert.equal(o.cases.months.length, 12);
+
+  const t = (await c.call('reports:get', 'team', range)).rows.find((r) => r.id === me.id);
+  assert.equal(t.tasksDone, baseTeam.tasksDone + 2);
+  assert.equal(t.deadlinesLate, baseTeam.deadlinesLate + 1);
+  assert.equal(t.messages, baseTeam.messages + 1, 'mensagem assinada conta para quem enviou');
+
+  const w = await c.call('reports:get', 'whatsapp', range);
+  assert.ok(w.received > 0 && w.sent > 0);
+  assert.equal(w.hours.length, 24);
+  const f = await c.call('reports:get', 'finance', range);
+  assert.ok('received' in f && Array.isArray(f.topClients) && f.months.length >= 3);
+  const cm = await c.call('reports:get', 'commercial', range);
+  assert.ok(cm.won >= 1);
+  await assert.rejects(c.call('reports:get', 'overview', { from: 10, to: 5 }), /Período/);
+
+  const est = client();
+  await est.req('/auth/login', { body: { login: 'bia', password: 'estagio1' } });
+  await assert.rejects(est.call('reports:get', 'overview', range), /permissão/);
+});
