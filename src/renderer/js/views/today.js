@@ -50,7 +50,7 @@ const kindTag = (kind) => {
 
 /** Título do evento sem o "✔" e sem o ícone do tipo (já aparece na etiqueta). */
 function cleanTitle(e) {
-  let t = cleanTitle(e);
+  let t = String(e.title || '').replace(/^✔\s*/, '');
   const icon = TASK_KINDS[e.kind]?.icon;
   if (icon && t.startsWith(icon)) t = t.slice(icon.length).trim();
   return t;
