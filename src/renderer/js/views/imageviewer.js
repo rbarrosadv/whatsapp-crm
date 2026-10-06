@@ -1,6 +1,7 @@
 // Visualizador de imagens em tela cheia: zoom (rodinha, pinça, +/−, duplo clique),
 // arrastar para mover, girar e passar para a foto anterior/próxima da conversa.
 import { h } from '../util.js';
+import { icon } from '../icons.js';
 
 const MIN = 0.2;
 const MAX = 12;
@@ -32,9 +33,9 @@ export function openImageViewer(items, index, { actions = () => [] } = {}) {
     zoomLabel,
     btn('+', 'Aumentar (+)', () => zoomAt(scale * 1.4)),
     btn('⤢', 'Ajustar à tela (0)', reset),
-    btn('⟳', 'Girar (R)', () => { rot = (rot + 90) % 360; apply(); }),
+    btn(icon('refresh', 16), 'Girar (R)', () => { rot = (rot + 90) % 360; apply(); }),
     extra,
-    btn('✕', 'Fechar (Esc)', close));
+    btn(icon('x', 18), 'Fechar (Esc)', close));
   const overlay = h('div', { class: 'iv-overlay', role: 'dialog' }, stage, prevBtn, nextBtn, bar);
 
   function apply() {

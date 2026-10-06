@@ -8,7 +8,7 @@ import { state, on, api, stageById, openChat, openClient } from '../store.js';
 import { avatarEl, caseStageMenu, stagePicker } from '../components.js';
 import { taskRow, taskDialog } from './crmpanel.js';
 import { caseFolderPanel } from './docs.js';
-import { icon } from '../icons.js';
+import { icon, dataIcon } from '../icons.js';
 
 export const TASK_KINDS = {
   prazo: { icon: '', label: 'Prazo' },
@@ -52,7 +52,7 @@ export function newCaseDialog(jid, { stageId, clientId } = {}) {
   const drawStage = () => {
     const st = stageById(stage);
     stageBtn.style.setProperty('--c', st?.color || '#94a3b8');
-    fill(stageBtn, st ? `${st.pipeline.icon || ''} ${st.pipeline.name} → ${st.name}` : 'Escolher etapa', ' ▾');
+    fill(stageBtn, st ? [dataIcon(st.pipeline.icon, 14), `${st.pipeline.name} → ${st.name}`] : 'Escolher etapa', ' ▾');
   };
   stageBtn.onclick = (e) => stagePicker(e.currentTarget, stage, (sid) => { stage = sid; drawStage(); });
   drawStage();
@@ -160,7 +160,7 @@ export async function openCase(id, { tab = 'dados' } = {}) {
         h('button', {
           class: `stage-btn ${st ? '' : 'unset'}`, style: st ? { '--c': st.color } : null,
           onclick: (e) => caseStageMenu(e.currentTarget, k),
-        }, st ? `${st.pipeline.icon || ''} ${st.pipeline.name} → ${st.name}` : 'Escolher etapa', ' ▾'),
+        }, st ? [dataIcon(st.pipeline.icon, 14), `${st.pipeline.name} → ${st.name}`] : 'Escolher etapa', ' ▾'),
         closed ? h('span', { class: 'status-pill muted' }, 'Encerrado') : null,
         h('div', { class: 'case-next', title: 'Próximo passo do fluxo do caso', onclick: () => { current = 'fluxo'; render(); } },
           h('span', { class: 'muted small' }, 'Próximo passo'), h('b', null, full.flow.next || 'Fluxo concluído')),

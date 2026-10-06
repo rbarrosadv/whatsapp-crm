@@ -1,5 +1,6 @@
 // Tela de conexão (QR code ou código pelo número) e faixa de status.
 import { h, fill, errToast, confirmDialog, downloadUrl } from '../util.js';
+import { icon } from '../icons.js';
 import { state, on, api } from '../store.js';
 import { statusLabel, runDiagnosis } from './settings.js';
 
@@ -79,11 +80,11 @@ function renderOverlay(el, s) {
       tabs,
       errorBox(s),
       steps,
-      h('p', { class: 'muted small' }, '🔒 Você só precisa fazer isso uma vez. A sessão fica salva no servidor do escritório e as conversas ficam armazenadas lá, para toda a equipe.'),
+      h('p', { class: 'muted small' }, icon('lock', 13, 'inline'), 'Você só precisa fazer isso uma vez. A sessão fica salva no servidor do escritório e as conversas ficam armazenadas lá, para toda a equipe.'),
       h('div', { class: 'row wrap' },
         h('button', { class: 'btn', onclick: () => { api('wa:reset').catch(errToast); } }, '⟳ Gerar novo código'),
-        h('button', { class: 'btn', onclick: runDiagnosis }, '🩺 Testar conexão'),
-        state.can.admin ? h('button', { class: 'btn', onclick: () => downloadUrl('/download/logs', 'registro-whatsapp.log') }, '📄 Baixar registros de erro') : null),
+        h('button', { class: 'btn', onclick: runDiagnosis }, [icon('activity', 15), 'Testar conexão']),
+        state.can.admin ? h('button', { class: 'btn', onclick: () => downloadUrl('/download/logs', 'registro-whatsapp.log') }, [icon('download', 15), 'Baixar registros de erro']) : null),
       state.demo ? h('p', { class: 'alert info' }, 'Modo demonstração: o código é fictício e a conexão acontece sozinha.') : null),
     right));
 }
@@ -122,10 +123,10 @@ function renderBanner(el, s) {
           mode = 'qr';
           api('wa:repair').catch(errToast);
         },
-      }, '📱 Conectar de novo (QR code)') : null,
-      h('button', { class: 'btn btn-sm', onclick: runDiagnosis }, '🩺 Testar conexão'));
+      }, [icon('smartphone', 15), 'Conectar de novo (QR code)']) : null,
+      h('button', { class: 'btn btn-sm', onclick: runDiagnosis }, [icon('activity', 15), 'Testar conexão']));
   } else if (s.state === 'replaced') {
-    content = h('div', { class: 'banner warn' }, '⚠ ', s.error || statusLabel(s.state),
+    content = h('div', { class: 'banner warn' }, icon('alert', 15, 'inline'), s.error || statusLabel(s.state),
       h('button', { class: 'btn btn-sm', onclick: () => api('wa:reconnect') }, 'Usar aqui'));
   } else if (syncing) {
     content = h('div', { class: 'banner info' }, h('span', { class: 'spinner small' }), `Sincronizando histórico de conversas… ${Math.round(h_.progress)}%`);

@@ -316,11 +316,11 @@ try {
   await shot(page, '04-board');
   const card = page.locator('.card', { hasText: 'Plano anual' });
   check(await card.count() === 1, 'caso aparece no funil');
-  const target = page.locator('.col', { hasText: 'Contratou ✔' });
+  const target = page.locator('.col').filter({ has: page.locator('.col-title', { hasText: /^Contratou\d*$/ }) });
   await card.dragTo(target);
-  await page.waitForSelector('.col:has-text("Contratou ✔") .card:has-text("Plano anual")', { timeout: 5000 });
-  check(true, 'caso arrastado para "Contratou ✔"');
-  check((await page.locator('.col:has-text("Contratou ✔") .col-total').innerText()).includes('2.388'), 'total da coluna soma os honorários');
+  await target.locator('.card:has-text("Plano anual")').waitFor({ timeout: 5000 });
+  check(true, 'caso arrastado para "Contratou"');
+  check((await target.locator('.col-total').innerText()).includes('2.388'), 'total da coluna soma os honorários');
   // novo caso pela coluna
   await page.click('.col:has-text("Primeiro contato") .col-add');
   // cliente novo direto do "novo processo"
@@ -586,6 +586,14 @@ try {
   check(true, 'painel e configurações');
   check(await page.locator('.settings-grid .list-row', { hasText: 'Cliente' }).locator('text=baixa arquivos').count() === 1,
     'tipo Cliente baixa arquivos automaticamente');
+  // ícone do tipo: escolhido entre desenhos (não emoji)
+  await page.locator('.settings-grid .list-row', { hasText: 'Empresa' }).first().locator('button:has-text("Editar")').click();
+  await page.waitForSelector('.modal .icon-picker .icon-pick.on');
+  await page.click('.modal .icon-pick:nth-child(10)');
+  await shot(page, '09c-icone-tipo');
+  await page.click('.modal button:has-text("Salvar")');
+  await page.waitForSelector('.modal', { state: 'detached' });
+  check(await page.locator('.settings-grid .list-row', { hasText: 'Empresa' }).first().locator('svg.ico').count() === 1, 'tipo de contato com ícone desenhado');
 
   // tema claro
   await page.selectOption('.settings-grid select', 'light');

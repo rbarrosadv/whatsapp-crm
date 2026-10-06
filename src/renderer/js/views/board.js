@@ -5,7 +5,7 @@ import { state, on, api, openChat, setSetting } from '../store.js';
 import { avatarEl, caseStageMenu, emptyState } from '../components.js';
 import { pipelineEditor } from './settings.js';
 import { openCase, newCaseDialog, feeLabel } from './casemodal.js';
-import { icon } from '../icons.js';
+import { icon, named } from '../icons.js';
 
 let root;
 let q = '';
@@ -43,7 +43,7 @@ async function render() {
     h('div', { class: 'tabs' }, state.pipelines.map((p) => h('button', {
       class: `tab ${p.id === pipe.id ? 'active' : ''}`,
       onclick: () => setSetting('lastPipeline', p.id).then(render),
-    }, `${p.icon || ''} ${p.name}`)),
+    }, named(p))),
     h('button', { class: 'tab add', title: 'Novo funil', onclick: () => pipelineEditor() }, icon('plus', 16))),
     h('div', { class: 'row' },
       search,
@@ -115,5 +115,5 @@ function card(k) {
       ? h('span', { class: k.overdue_payments ? 'bad-text small' : 'money' }, k.overdue_payments ? `${k.overdue_payments} vencida(s)` : `${fmtMoney(k.paid_total)} / ${fmtMoney(k.billed_total)}`)
       : k.fee_total ? h('span', { class: 'money' }, fmtMoney(k.fee_total)) : h('span', { class: 'muted small' }, feeLabel(k)),
     k.next_due ? h('span', { class: `task-flag ${late ? 'late' : ''}`, title: 'Próximo prazo/compromisso' }, `${fmtDue(k.next_due)}`) : null,
-    h('span', { class: 'muted small', title: 'Tempo nesta etapa' }, `⏱ ${fmtDuration(Date.now() - (k.stage_changed_at || k.created_at))}`)));
+    h('span', { class: 'muted small', title: 'Tempo nesta etapa' }, icon('timer', 12, 'inline'), fmtDuration(Date.now() - (k.stage_changed_at || k.created_at)))));
 }

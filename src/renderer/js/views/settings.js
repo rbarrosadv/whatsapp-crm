@@ -2,7 +2,7 @@
 // rápidas, backup e importação do Kanban antigo.
 import { h, fill, modal, toast, errToast, confirmDialog, formatPhone, phoneOf, PALETTE, downloadUrl, fmtDateTime, pickFiles } from '../util.js';
 import { state, on, api, setSetting } from '../store.js';
-import { icon } from '../icons.js';
+import { icon, named, iconName, PICK_ICONS } from '../icons.js';
 
 let root;
 
@@ -246,7 +246,7 @@ function render() {
       state.can.configure && section('Tipos de contato',
         h('p', { class: 'muted small' }, 'Classifique cada conversa (ex.: Pessoal, Cliente, Empresa). Tipos marcados como pessoais não entram em "Aguardando resposta" nem nos avisos de conversa esquecida.'),
         ...state.contactTypes.map((t, i) => h('div', { class: 'list-row' },
-          h('span', { class: 'tag-chip', style: { '--c': t.color } }, `${t.icon || ''} ${t.name}`),
+          h('span', { class: 'tag-chip', style: { '--c': t.color } }, named(t, 13)),
           h('span', { class: 'muted small grow' }, [t.personal ? 'pessoal' : 'trabalho', t.notify ? null : 'sem avisos', t.autodownload ? 'baixa arquivos' : null].filter(Boolean).join(' · ')),
           h('div', { class: 'row' },
             h('button', { class: 'icon-btn small', title: 'Subir', disabled: i === 0, onclick: () => moveItem('types', state.contactTypes, i, -1) }, '↑'),
@@ -257,7 +257,7 @@ function render() {
       state.can.configure && section('Filtros das conversas',
         h('p', { class: 'muted small' }, 'Os botões no topo da lista de conversas. Crie os seus combinando tipo de contato, etiquetas, etapas, não lidas, aguardando resposta… Nada some: é só uma forma de ver a lista.'),
         ...state.filters.map((f, i) => h('div', { class: 'list-row' },
-          h('span', null, `${f.icon || ''} ${f.name}`),
+          h('span', { class: 'with-ico' }, named(f)),
           h('span', { class: 'muted small grow ellipsis' }, describeRules(f.rules)),
           h('div', { class: 'row' },
             h('button', { class: 'icon-btn small', title: 'Subir', disabled: i === 0, onclick: () => moveItem('filters', state.filters, i, -1) }, '↑'),
@@ -304,7 +304,7 @@ function render() {
       state.can.configure && section('Funis e etapas',
         h('p', { class: 'muted small' }, 'Cada funil tem suas etapas (colunas do quadro). Ex.: Atendimento → Novo, Proposta, Fechado.'),
         ...state.pipelines.map((p, i) => h('div', { class: 'list-row' },
-          h('span', null, `${p.icon || ''} ${p.name}`),
+          h('span', { class: 'with-ico' }, named(p)),
           h('span', { class: 'stage-dots' }, p.stages.map((s) => h('span', { class: 'dot', style: { background: s.color }, title: s.name }))),
           h('div', { class: 'row' },
             h('button', { class: 'icon-btn small', title: 'Subir', disabled: i === 0, onclick: () => movePipeline(i, -1) }, '↑'),
@@ -407,11 +407,25 @@ function colorPicker(value, onPick) {
   return wrap;
 }
 
+/** Escolha do ícone (desenhos de traço) para funis, tipos e filtros. `.value` = nome. */
+function iconPicker(value, allowNone = false) {
+  const wrap = h('div', { class: 'icon-picker', role: 'radiogroup' });
+  wrap.value = iconName(value);
+  const draw = () => fill(wrap,
+    allowNone ? h('button', { type: 'button', class: `icon-pick ${wrap.value ? '' : 'on'}`, title: 'Sem ícone', onclick: (e) => { e.preventDefault(); wrap.value = ''; draw(); } }, icon('ban', 16)) : null,
+    PICK_ICONS.map((n) => h('button', {
+      type: 'button', class: `icon-pick ${wrap.value === n ? 'on' : ''}`, 'aria-pressed': wrap.value === n ? 'true' : 'false',
+      onclick: (e) => { e.preventDefault(); wrap.value = n; draw(); },
+    }, icon(n, 16))));
+  draw();
+  return wrap;
+}
+
 export function pipelineEditor(p) {
   const draft = p ? { ...p, stages: p.stages.map((s) => ({ ...s })) }
     : { name: '', icon: '', stages: [{ name: 'Novo', color: PALETTE[0] }, { name: 'Em andamento', color: PALETTE[1] }, { name: 'Concluído', color: PALETTE[3] }] };
   const name = h('input', { class: 'input', value: draft.name, placeholder: 'Ex.: Vendas' });
-  const iconIn = h('input', { class: 'input icon-input', value: draft.icon || '', maxLength: 4 });
+  const iconIn = iconPicker(draft.icon || 'folder');
   const stagesEl = h('div', { class: 'stage-editor' });
   const draw = () => {
     fill(stagesEl, ...draft.stages.map((s, i) => h('div', { class: 'stage-edit-row' },
@@ -428,9 +442,8 @@ export function pipelineEditor(p) {
     title: p ? `Editar funil “${p.name}”` : 'Novo funil',
     wide: true,
     body: h('div', { class: 'form' },
-      h('div', { class: 'row' },
-        h('label', { class: 'field' }, h('span', null, 'Ícone'), iconIn),
-        h('label', { class: 'field grow' }, h('span', null, 'Nome do funil'), name)),
+      h('label', { class: 'field grow' }, h('span', null, 'Nome do funil'), name),
+      h('div', { class: 'field' }, h('span', null, 'Ícone'), iconIn),
       h('div', { class: 'field' }, h('span', null, 'Etapas (da primeira à última)'), stagesEl),
       p ? h('p', { class: 'muted small' }, 'Ao remover uma etapa, as conversas que estavam nela saem do funil.') : null),
     actions: [
@@ -451,7 +464,7 @@ export function pipelineEditor(p) {
           if (!name.value.trim()) { toast('Dê um nome ao funil', 'error'); return false; }
           const stages = draft.stages.filter((s) => s.name.trim());
           if (!stages.length) { toast('O funil precisa de pelo menos uma etapa', 'error'); return false; }
-          const id = await api('pipelines:save', { id: p?.id, name: name.value.trim(), icon: iconIn.value.trim(), stages });
+          const id = await api('pipelines:save', { id: p?.id, name: name.value.trim(), icon: iconIn.value, stages });
           if (!p) await setSetting('lastPipeline', id);
           return true;
         },
@@ -485,16 +498,15 @@ async function moveItem(kind, list, i, dir) {
 function typeEditor(t) {
   let color = t?.color || PALETTE[Math.floor(Math.random() * PALETTE.length)];
   const name = h('input', { class: 'input', value: t?.name || '', placeholder: 'Ex.: Cliente' });
-  const iconIn = h('input', { class: 'input icon-input', value: t?.icon || '', maxLength: 4 });
+  const iconIn = iconPicker(t?.icon || 'tag');
   const personal = h('input', { type: 'checkbox', class: 'switch', checked: !!t?.personal });
   const notify = h('input', { type: 'checkbox', class: 'switch', checked: t ? !!t.notify : true });
   const autodownload = h('input', { type: 'checkbox', class: 'switch', checked: !!t?.autodownload });
   modal({
     title: t ? `Editar tipo “${t.name}”` : 'Novo tipo de contato',
     body: h('div', { class: 'form' },
-      h('div', { class: 'row' },
-        h('label', { class: 'field' }, h('span', null, 'Ícone'), iconIn),
-        h('label', { class: 'field grow' }, h('span', null, 'Nome'), name)),
+      h('label', { class: 'field grow' }, h('span', null, 'Nome'), name),
+      h('div', { class: 'field' }, h('span', null, 'Ícone'), iconIn),
       h('div', { class: 'field' }, h('span', null, 'Cor'), colorPicker(color, (c) => { color = c; })),
       h('label', { class: 'toggle-row' }, h('div', null, h('div', null, 'É pessoal (não é trabalho)'),
         h('div', { class: 'muted small' }, 'Fica fora de "Aguardando resposta" e dos avisos de conversa esquecida.')), personal),
@@ -516,7 +528,7 @@ function typeEditor(t) {
         label: 'Salvar', primary: true,
         onClick: async () => {
           if (!name.value.trim()) { toast('Dê um nome ao tipo', 'error'); return false; }
-          await api('types:save', { id: t?.id, name: name.value.trim(), icon: iconIn.value.trim(), color, personal: personal.checked, notify: notify.checked, autodownload: autodownload.checked });
+          await api('types:save', { id: t?.id, name: name.value.trim(), icon: iconIn.value, color, personal: personal.checked, notify: notify.checked, autodownload: autodownload.checked });
           return true;
         },
       },
@@ -548,7 +560,7 @@ export function describeRules(r = {}) {
 export function filterEditor(f) {
   const r = structuredClone(f?.rules || {});
   const name = h('input', { class: 'input', value: f?.name || '', placeholder: 'Ex.: Clientes aguardando' });
-  const iconIn = h('input', { class: 'input icon-input', value: f?.icon || '', maxLength: 4 });
+  const iconIn = iconPicker(f?.icon || '', true);
   const check = (label, get, set) => h('label', { class: 'check' },
     h('input', { type: 'checkbox', checked: !!get(), onchange: (e) => set(e.target.checked) }), ' ', label);
   const select = (label, value, options, set) => h('label', { class: 'field' }, h('span', null, label),
@@ -565,11 +577,10 @@ export function filterEditor(f) {
     title: f ? `Editar filtro “${f.name}”` : 'Novo filtro',
     wide: true,
     body: h('div', { class: 'form' },
-      h('div', { class: 'row' },
-        h('label', { class: 'field' }, h('span', null, 'Ícone'), iconIn),
-        h('label', { class: 'field grow' }, h('span', null, 'Nome do filtro'), name)),
+      h('label', { class: 'field grow' }, h('span', null, 'Nome do filtro'), name),
+      h('div', { class: 'field' }, h('span', null, 'Ícone'), iconIn),
       h('div', { class: 'field' }, h('span', null, 'Tipos de contato (nenhum marcado = todos)'),
-        h('div', { class: 'row wrap' }, state.contactTypes.map((t) => check(`${t.icon || ''} ${t.name}`,
+        h('div', { class: 'row wrap' }, state.contactTypes.map((t) => check(named(t, 14),
           () => (r.types || []).includes(t.id), (v) => toggleIn('types', t.id, v))))),
       h('div', { class: 'row wrap' },
         select('Contatos ainda não classificados', r.unclassified || '', [['', 'Seguir os tipos acima'], ['include', 'Incluir sempre'], ['only', 'Mostrar só eles'], ['exclude', 'Não mostrar']], (v) => { r.unclassified = v || undefined; }),
@@ -582,7 +593,7 @@ export function filterEditor(f) {
           check('com tarefa aberta', () => r.tasks, (v) => { r.tasks = v || undefined; }),
           check('sem etapa no funil', () => r.noStage, (v) => { r.noStage = v || undefined; }))),
       h('div', { class: 'row wrap' },
-        select('Funil', r.pipeline || '', [['', 'Qualquer'], ...state.pipelines.map((p) => [p.id, `${p.icon || ''} ${p.name}`])], (v) => { r.pipeline = v || undefined; }),
+        select('Funil', r.pipeline || '', [['', 'Qualquer'], ...state.pipelines.map((p) => [p.id, p.name])], (v) => { r.pipeline = v || undefined; }),
         select('Etapa', r.stages?.[0] || '', [['', 'Qualquer'], ...stageOpts], (v) => { r.stages = v ? [v] : undefined; }),
         select('Esperando resposta há mais de', String(r.awaitingHours || ''), [['', '—'], ['1', '1 hora'], ['4', '4 horas'], ['24', '1 dia'], ['72', '3 dias']], (v) => { r.awaitingHours = v ? Number(v) : undefined; if (v) r.awaiting = true; })),
       h('div', { class: 'field' }, h('span', null, 'Etiquetas (qualquer uma delas)'),
@@ -601,7 +612,7 @@ export function filterEditor(f) {
         label: 'Salvar', primary: true,
         onClick: async () => {
           if (!name.value.trim()) { toast('Dê um nome ao filtro', 'error'); return false; }
-          await api('filters:save', { id: f?.id, name: name.value.trim(), icon: iconIn.value.trim(), rules: r });
+          await api('filters:save', { id: f?.id, name: name.value.trim(), icon: iconIn.value, rules: r });
           return true;
         },
       },

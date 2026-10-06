@@ -52,6 +52,42 @@ const P = {
   moon: '<path d="M21 12.8A9 9 0 1 1 11.2 3a7 7 0 0 0 9.8 9.8Z"/>',
   logout: '<path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4M16 17l5-5-5-5M21 12H9"/>',
   sparkle: '<path d="M12 3v4M12 17v4M3 12h4M17 12h4M5.6 5.6l2.8 2.8M15.6 15.6l2.8 2.8M5.6 18.4l2.8-2.8M15.6 8.4l2.8-2.8"/>',
+  building: '<rect x="4" y="2.5" width="16" height="19" rx="1.5"/><path d="M9 21.5v-4h6v4M8.5 6.5h.01M12 6.5h.01M15.5 6.5h.01M8.5 10.5h.01M12 10.5h.01M15.5 10.5h.01M8.5 14h.01M12 14h.01M15.5 14h.01"/>',
+  target: '<circle cx="12" cy="12" r="9"/><circle cx="12" cy="12" r="5"/><circle cx="12" cy="12" r="1"/>',
+  tag: '<path d="M12.6 2.6A2 2 0 0 0 11.2 2H4a2 2 0 0 0-2 2v7.2a2 2 0 0 0 .6 1.4l8.7 8.7a2.4 2.4 0 0 0 3.4 0l6.6-6.6a2.4 2.4 0 0 0 0-3.4Z"/><circle cx="7.5" cy="7.5" r="1"/>',
+  help: '<circle cx="12" cy="12" r="9"/><path d="M9.1 9a3 3 0 0 1 5.8 1c0 2-3 3-3 3M12 17h.01"/>',
+  dot: '<circle cx="12" cy="12" r="5" fill="currentColor"/>',
+  pin: '<path d="M12 17v5M9 10.8V5h6v5.8l2.5 3.2h-11Z"/><path d="M8 3h8"/>',
+  image: '<rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="9" cy="9" r="2"/><path d="m21 15-3.1-3.1a2 2 0 0 0-2.8 0L6 21"/>',
+  video: '<rect x="2" y="6" width="14" height="12" rx="2"/><path d="m16 10.5 6-3.5v10l-6-3.5"/>',
+  mic: '<rect x="9" y="2" width="6" height="12" rx="3"/><path d="M19 10v1a7 7 0 0 1-14 0v-1M12 18v4"/>',
+  music: '<path d="M9 18V5l12-2v13"/><circle cx="6" cy="18" r="3"/><circle cx="18" cy="16" r="3"/>',
+  mapPin: '<path d="M20 10c0 6-8 12-8 12s-8-6-8-12a8 8 0 0 1 16 0Z"/><circle cx="12" cy="10" r="3"/>',
+  smile: '<circle cx="12" cy="12" r="9"/><path d="M8 14s1.5 2 4 2 4-2 4-2M9 9h.01M15 9h.01"/>',
+  copy: '<rect x="9" y="9" width="12" height="12" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/>',
+  save: '<path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2Z"/><path d="M17 21v-8H7v8M7 3v5h8"/>',
+  zap: '<path d="M13 2 3 14h9l-1 8 10-12h-9Z"/>',
+  menu: '<path d="M4 6h16M4 12h16M4 18h16"/>',
+  eye: '<path d="M2 12s3.5-8 10-8 10 8 10 8-3.5 8-10 8S2 12 2 12Z"/><circle cx="12" cy="12" r="3"/>',
+  lock: '<rect x="4" y="11" width="16" height="10" rx="2"/><path d="M8 11V7a4 4 0 0 1 8 0v4"/>',
+  activity: '<path d="M22 12h-4l-3 9L9 3l-3 9H2"/>',
+  smartphone: '<rect x="6" y="2" width="12" height="20" rx="2"/><path d="M11 18h2"/>',
+  ban: '<circle cx="12" cy="12" r="9"/><path d="m5.6 5.6 12.8 12.8"/>',
+  timer: '<circle cx="12" cy="13" r="8"/><path d="M12 9v4l2 2M10 2h4"/>',
+  archive: '<rect x="2" y="3" width="20" height="5" rx="1"/><path d="M4 8v11a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8M10 12h4"/>',
+  sticker: '<path d="M15.5 3H5a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h9.5L21 14.5V5a2 2 0 0 0-2-2Z"/><path d="M14 21v-5a2 2 0 0 1 2-2h5M9 10h.01M15 10h.01"/>',
+  play: '<path d="m6 3 14 9-14 9Z"/>',
+  star: '<path d="m12 2 3.1 6.3 6.9 1-5 4.9 1.2 6.8L12 17.8 5.8 21l1.2-6.8-5-4.9 6.9-1Z"/>',
+  heart: '<path d="M19 14c1.5-1.5 3-3.2 3-5.5A5.5 5.5 0 0 0 16.5 3c-1.8 0-3 .5-4.5 2-1.5-1.5-2.7-2-4.5-2A5.5 5.5 0 0 0 2 8.5c0 2.3 1.5 4 3 5.5l7 7Z"/>',
+  flag: '<path d="M4 22V4s1-1 4-1 5 2 8 2 4-1 4-1v11s-1 1-4 1-5-2-8-2-4 1-4 1"/>',
+  shield: '<path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10Z"/>',
+  handshake: '<path d="m11 17 2 2a1 1 0 1 0 3-3"/><path d="m14 14 2.5 2.5a1 1 0 1 0 3-3l-3.9-3.9a3 3 0 0 0-4.2 0l-.9.9a1 1 0 1 1-3-3l2.8-2.8a5 5 0 0 1 5.9-.8l.5.3a2 2 0 0 0 1.4.2L21 4M21 3l1 11h-2M3 3 2 14l6.5 6.5a1 1 0 1 0 3-3M3 4h8"/>',
+  landmark: '<path d="M3 22h18M6 18v-7M10 18v-7M14 18v-7M18 18v-7M12 2l8 5H4Z"/>',
+  car: '<path d="M19 17h2v-4l-2-5H5L3 13v4h2"/><circle cx="7" cy="17" r="2"/><circle cx="17" cy="17" r="2"/><path d="M9 17h6M3 13h18"/>',
+  baby: '<circle cx="12" cy="12" r="9"/><path d="M9 12h.01M15 12h.01M10 16c.5.3 1.2.5 2 .5s1.5-.2 2-.5M12 3c-1 1.5-1 3 0 4"/>',
+  graduation: '<path d="M22 10 12 5 2 10l10 5Z"/><path d="M6 12v5c3 2 9 2 12 0v-5M22 10v6"/>',
+  globe: '<circle cx="12" cy="12" r="9"/><path d="M3 12h18M12 3a14 14 0 0 1 0 18M12 3a14 14 0 0 0 0 18"/>',
+  coins: '<circle cx="8" cy="8" r="6"/><path d="M18.1 10.4A6 6 0 1 1 10.3 18M7 6h1v4M16.7 13.9l.7.7-2.8 2.8"/>',
 };
 
 const NS = 'http://www.w3.org/2000/svg';
@@ -73,3 +109,35 @@ export function icon(name, size = 18, cls = '') {
 }
 
 export const ICONS = Object.keys(P);
+
+// Ícones que a equipe escolhe para funis, tipos de contato e filtros.
+export const PICK_ICONS = ['briefcase', 'target', 'scale', 'building', 'user', 'users', 'folder', 'message', 'tag', 'star',
+  'heart', 'flag', 'shield', 'handshake', 'landmark', 'home', 'car', 'baby', 'graduation', 'globe', 'coins', 'wallet',
+  'calendar', 'clock', 'bell', 'phone', 'mail', 'inbox', 'help', 'alert', 'check', 'dot'];
+
+// Emojis gravados por versões antigas → ícone de traço equivalente.
+const EMOJI = {
+  '💼': 'briefcase', '👤': 'user', '👥': 'users', '🎯': 'target', '⚖': 'scale', '🏢': 'building', '🏛': 'landmark',
+  '💬': 'message', '❓': 'help', '⏳': 'clock', '⌛': 'clock', '🔵': 'dot', '🟢': 'dot', '🔴': 'dot', '📁': 'folder',
+  '📂': 'folder', '🏷': 'tag', '⭐': 'star', '❤': 'heart', '🚩': 'flag', '🏠': 'home', '🚗': 'car', '👶': 'baby',
+  '🎓': 'graduation', '🌎': 'globe', '🌍': 'globe', '💰': 'coins', '💵': 'wallet', '📅': 'calendar', '⏰': 'clock',
+  '🔔': 'bell', '📞': 'phone', '📧': 'mail', '✉': 'mail', '📥': 'inbox', '⚠': 'alert', '✅': 'check', '✔': 'check',
+  '🤝': 'handshake', '🛡': 'shield', '👨‍👩‍👧': 'users', '📌': 'pin',
+};
+
+/** Nome do ícone guardado no cadastro (aceita o emoji antigo). '' = sem ícone. */
+export function iconName(v) {
+  const s = String(v || '').trim();
+  if (!s) return '';
+  if (P[s]) return s;
+  return EMOJI[s.replace(/[\uFE0F\u200D]+$/u, '')] || EMOJI[[...s][0]] || 'tag';
+}
+
+/** Ícone de um item do cadastro (funil, tipo, filtro), ou null. */
+export function dataIcon(v, size = 15, cls = '') {
+  const n = iconName(v);
+  return n ? icon(n, size, cls) : null;
+}
+
+/** [ícone, nome] para botões e títulos. */
+export const named = (item, size = 15) => [dataIcon(item?.icon, size), item?.name ?? ''];

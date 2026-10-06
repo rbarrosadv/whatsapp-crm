@@ -8,22 +8,22 @@ import fs from 'node:fs';
 
 let db;
 
-const SCHEMA_VERSION = 13;
+const SCHEMA_VERSION = 14;
 
 const DEFAULT_PIPELINES = [
   {
-    id: 'vendas', name: 'Atendimento', icon: '💼',
+    id: 'vendas', name: 'Atendimento', icon: 'briefcase',
     stages: [
       ['novo', 'Novo contato', '#94a3b8'],
       ['atendimento', 'Em atendimento', '#3b82f6'],
       ['proposta', 'Proposta enviada', '#f59e0b'],
       ['negociacao', 'Negociação', '#a855f7'],
-      ['ganho', 'Fechado ✔', '#22c55e'],
+      ['ganho', 'Fechado', '#22c55e'],
       ['perdido', 'Perdido', '#ef4444'],
     ],
   },
   {
-    id: 'pessoal', name: 'Pessoal', icon: '👤',
+    id: 'pessoal', name: 'Pessoal', icon: 'user',
     stages: [
       ['responder', 'Para responder', '#f59e0b'],
       ['aguardando', 'Aguardando', '#3b82f6'],
@@ -35,35 +35,35 @@ const DEFAULT_PIPELINES = [
 // Tipos de contato (editáveis). `personal` = não conta como trabalho
 // (fica fora de "Aguardando resposta" e dos avisos de conversa esquecida).
 const DEFAULT_CONTACT_TYPES = [
-  ['pessoal', 'Pessoal', '👤', '#a855f7', 1],
-  ['cliente', 'Cliente', '⚖️', '#22c55e', 0],
-  ['empresa', 'Empresa', '🏢', '#3b82f6', 0],
+  ['pessoal', 'Pessoal', 'user', '#a855f7', 1],
+  ['cliente', 'Cliente', 'scale', '#22c55e', 0],
+  ['empresa', 'Empresa', 'building', '#3b82f6', 0],
 ];
 
 // Filtros da lista de conversas (editáveis). Regras em JSON — ver chatMatchesRules no renderer.
 const DEFAULT_FILTERS = [
-  ['Tudo', '💬', {}],
-  ['Trabalho', '💼', { types: ['cliente', 'empresa'], unclassified: 'include', groups: 'exclude' }],
-  ['Pessoal', '👤', { types: ['pessoal'], unclassified: 'include' }],
-  ['Para classificar', '❓', { unclassified: 'only', groups: 'exclude' }],
-  ['Aguardando resposta', '⏳', { awaiting: true, work: true, groups: 'exclude' }],
-  ['Não lidas', '🔵', { unread: true }],
+  ['Tudo', 'message', {}],
+  ['Trabalho', 'briefcase', { types: ['cliente', 'empresa'], unclassified: 'include', groups: 'exclude' }],
+  ['Pessoal', 'user', { types: ['pessoal'], unclassified: 'include' }],
+  ['Para classificar', 'help', { unclassified: 'only', groups: 'exclude' }],
+  ['Aguardando resposta', 'clock', { awaiting: true, work: true, groups: 'exclude' }],
+  ['Não lidas', 'dot', { unread: true }],
 ];
 
 // Funis de casos (versão 3). A última etapa de cada um é a de encerramento.
 const CASE_PIPELINES = [
   {
-    id: 'captacao', name: 'Captação', icon: '🎯',
+    id: 'captacao', name: 'Captação', icon: 'target',
     stages: [
       ['contato', 'Primeiro contato', '#94a3b8'],
       ['consulta', 'Consulta agendada', '#3b82f6'],
       ['proposta', 'Proposta de honorários', '#f59e0b'],
-      ['contratou', 'Contratou ✔', '#22c55e'],
+      ['contratou', 'Contratou', '#22c55e'],
       ['nao', 'Não contratou', '#ef4444'],
     ],
   },
   {
-    id: 'casos', name: 'Casos em andamento', icon: '⚖️',
+    id: 'casos', name: 'Casos em andamento', icon: 'scale',
     stages: [
       ['documentacao', 'Documentação', '#94a3b8'],
       ['protocolo', 'Protocolo / Petição', '#3b82f6'],
@@ -73,7 +73,7 @@ const CASE_PIPELINES = [
     ],
   },
   {
-    id: 'consultoria', name: 'Consultoria', icon: '🏢',
+    id: 'consultoria', name: 'Consultoria', icon: 'building',
     stages: [
       ['demanda', 'Demanda recebida', '#94a3b8'],
       ['analise', 'Em análise', '#3b82f6'],
@@ -464,7 +464,34 @@ function migrate() {
   if (version < 3) migrateV3();
   if (version < 5) run("UPDATE contact_types SET autodownload = 1 WHERE id = 'cliente'");
   if (version < 9) migrateV9();
+  if (version < 14) migrateV14();
   run('INSERT OR REPLACE INTO meta (key, value) VALUES (?, ?)', 'schema', String(SCHEMA_VERSION));
+}
+
+// v14: ícones de funis, tipos e filtros passam de emoji para nome de ícone de traço
+// (a interface desenha em SVG); "✔" sai do nome das etapas.
+const EMOJI_ICONS = {
+  '💼': 'briefcase', '👤': 'user', '👥': 'users', '🎯': 'target', '⚖': 'scale', '🏢': 'building', '🏛': 'landmark',
+  '💬': 'message', '❓': 'help', '⏳': 'clock', '⌛': 'clock', '🔵': 'dot', '🟢': 'dot', '🔴': 'dot', '📁': 'folder',
+  '📂': 'folder', '🏷': 'tag', '⭐': 'star', '❤': 'heart', '🚩': 'flag', '🏠': 'home', '🚗': 'car', '👶': 'baby',
+  '🎓': 'graduation', '🌎': 'globe', '🌍': 'globe', '💰': 'coins', '💵': 'wallet', '📅': 'calendar', '⏰': 'clock',
+  '🔔': 'bell', '📞': 'phone', '📧': 'mail', '✉': 'mail', '📥': 'inbox', '⚠': 'alert', '✅': 'check', '✔': 'check',
+  '🤝': 'handshake', '🛡': 'shield', '📌': 'pin',
+};
+export function emojiToIcon(v) {
+  const s = String(v || '').trim();
+  if (!s || /^[a-zA-Z]+$/.test(s)) return s;
+  return EMOJI_ICONS[s.replace(/[\uFE0F\u200D]/gu, '')] || EMOJI_ICONS[[...s][0]] || 'tag';
+}
+
+function migrateV14() {
+  for (const t of ['pipelines', 'contact_types', 'chat_filters']) {
+    for (const r of all(`SELECT id, icon FROM ${t}`)) {
+      const n = emojiToIcon(r.icon);
+      if (n !== (r.icon || '')) run(`UPDATE ${t} SET icon = ? WHERE id = ?`, n, r.id);
+    }
+  }
+  run("UPDATE stages SET name = TRIM(REPLACE(name, '✔', '')) WHERE name LIKE '%✔%'");
 }
 
 /** Dados do cliente usados nos modelos de documento ({cpf}, {endereco}…). */
@@ -876,7 +903,7 @@ export function savePipeline({ id, name, icon, stages }) {
     const pid = id || uniqueId('funil');
     const pos = get('SELECT COUNT(*) AS n FROM pipelines')?.n || 0;
     run(`INSERT INTO pipelines (id, name, icon, position) VALUES (?, ?, ?, ?)
-         ON CONFLICT(id) DO UPDATE SET name = excluded.name, icon = excluded.icon`, pid, name, icon || '📁', pos);
+         ON CONFLICT(id) DO UPDATE SET name = excluded.name, icon = excluded.icon`, pid, name, emojiToIcon(icon) || 'folder', pos);
     const keep = new Set();
     (stages || []).forEach((s, i) => {
       const sid = s.id || `${pid}.${uniqueId('etapa')}`;
@@ -1661,7 +1688,7 @@ export function saveContactType({ id, name, icon, color, personal, notify, autod
   run(`INSERT INTO contact_types (id, name, icon, color, personal, notify, autodownload, position) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
        ON CONFLICT(id) DO UPDATE SET name = excluded.name, icon = excluded.icon, color = excluded.color,
          personal = excluded.personal, notify = excluded.notify, autodownload = excluded.autodownload`,
-  tid, name, icon || '🏷', color || '#94a3b8', personal ? 1 : 0, notify === false ? 0 : 1, autodownload ? 1 : 0, pos);
+  tid, name, emojiToIcon(icon) || 'tag', color || '#94a3b8', personal ? 1 : 0, notify === false ? 0 : 1, autodownload ? 1 : 0, pos);
   return tid;
 }
 
@@ -1733,12 +1760,12 @@ export function listChatFilters() {
 }
 export function saveChatFilter({ id, name, icon, rules }) {
   if (id) {
-    run('UPDATE chat_filters SET name = ?, icon = ?, rules = ? WHERE id = ?', name, icon || '', JSON.stringify(rules || {}), id);
+    run('UPDATE chat_filters SET name = ?, icon = ?, rules = ? WHERE id = ?', name, emojiToIcon(icon), JSON.stringify(rules || {}), id);
     return id;
   }
   const pos = get('SELECT COUNT(*) AS n FROM chat_filters')?.n || 0;
   return Number(run('INSERT INTO chat_filters (name, icon, rules, position) VALUES (?, ?, ?, ?)',
-    name, icon || '', JSON.stringify(rules || {}), pos).lastInsertRowid);
+    name, emojiToIcon(icon), JSON.stringify(rules || {}), pos).lastInsertRowid);
 }
 export function deleteChatFilter(id) { run('DELETE FROM chat_filters WHERE id = ?', id); }
 export function reorderChatFilters(ids) {

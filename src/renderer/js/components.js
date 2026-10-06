@@ -1,12 +1,13 @@
 // Pedacinhos de interface reaproveitados em várias telas.
 import { h, initials, colorFor, popupMenu, errToast } from './util.js';
 import { state, avatarFor, stageById, tagById, typeById, api } from './store.js';
+import { icon, dataIcon, named } from './icons.js';
 
 export function avatarEl(chat, size = 44) {
   const el = h('div', {
     class: 'avatar',
     style: { width: `${size}px`, height: `${size}px`, fontSize: `${Math.round(size * 0.38)}px`, background: colorFor(chat.jid) },
-  }, chat.is_group ? '👥' : initials(chat.display_name));
+  }, chat.is_group ? icon('users', 18) : initials(chat.display_name));
   avatarFor(chat.jid).then((url) => {
     if (!url) return;
     const img = h('img', { src: url, alt: '', draggable: false });
@@ -18,8 +19,8 @@ export function avatarEl(chat, size = 44) {
 
 export function ticks(status) {
   if (status == null) return null;
-  if (status === 0) return h('span', { class: 'tick tick-error', title: 'Erro ao enviar' }, '⚠');
-  if (status <= 1) return h('span', { class: 'tick', title: 'Enviando' }, '🕓');
+  if (status === 0) return h('span', { class: 'tick tick-error', title: 'Erro ao enviar' }, icon('alert', 13));
+  if (status <= 1) return h('span', { class: 'tick', title: 'Enviando' }, icon('clock', 13));
   if (status === 2) return h('span', { class: 'tick', title: 'Enviada' }, '✓');
   if (status === 3) return h('span', { class: 'tick', title: 'Entregue' }, '✓✓');
   return h('span', { class: 'tick tick-read', title: status === 5 ? 'Reproduzida' : 'Lida' }, '✓✓');
@@ -47,7 +48,7 @@ export function tagDots(tagIds, { max = 4 } = {}) {
 export function stagePicker(anchor, currentStageId, onPick, opts = {}) {
   const items = [];
   for (const p of state.pipelines) {
-    items.push({ label: `${p.icon || ''} ${p.name}`.trim(), header: true });
+    items.push({ label: p.name, icon: dataIcon(p.icon, 14), header: true });
     for (const s of p.stages) {
       items.push({ icon: '●', color: s.color, label: `   ${s.name}`, active: currentStageId === s.id, onClick: () => onPick(s.id) });
     }
@@ -64,9 +65,9 @@ export function caseStageMenu(anchor, kase, opts = {}) {
   return stagePicker(anchor, kase.stage_id, (sid) => api('cases:setStage', kase.id, sid).catch(errToast), opts);
 }
 
-export function emptyState(icon, title, text, action) {
+export function emptyState(ico, title, text, action) {
   return h('div', { class: 'empty' },
-    h('div', { class: 'empty-icon' }, icon),
+    h('div', { class: 'empty-icon' }, ico),
     h('h3', null, title),
     text ? h('p', null, text) : null,
     action || null);
@@ -75,14 +76,14 @@ export function emptyState(icon, title, text, action) {
 export function typePill(typeId) {
   const t = typeById(typeId);
   if (!t) return null;
-  return h('span', { class: 'stage-pill small', style: { '--c': t.color || '#94a3b8' } }, `${t.icon || ''} ${t.name}`);
+  return h('span', { class: 'stage-pill small', style: { '--c': t.color || '#94a3b8' } }, named(t, 13));
 }
 
 /** Menu para classificar o contato (Pessoal, Cliente, Empresa…). */
 export function typeMenu(anchor, chat, opts = {}) {
   return popupMenu(anchor, [
     ...state.contactTypes.map((t) => ({
-      icon: t.icon, label: t.name, active: chat.type_id === t.id,
+      icon: dataIcon(t.icon, 15), color: t.color, label: t.name, active: chat.type_id === t.id,
       onClick: () => api('crm:setType', chat.jid, t.id).catch(errToast),
     })),
     ...(chat.type_id ? ['-', { label: 'Remover classificação', onClick: () => api('crm:setType', chat.jid, null).catch(errToast) }] : []),
@@ -97,5 +98,5 @@ export function classifyBar(chat) {
     ...state.contactTypes.map((t) => h('button', {
       class: 'btn btn-sm', style: { borderColor: t.color },
       onclick: () => api('crm:setType', chat.jid, t.id).catch(errToast),
-    }, `${t.icon || ''} ${t.name}`)));
+    }, named(t))));
 }

@@ -38,3 +38,29 @@ test('banco antigo (v8): casos e contatos "Cliente" viram clientes, com os dados
     fs.rmSync(dir, { recursive: true, force: true });
   }
 });
+
+test('v14: emojis dos funis, tipos e filtros viram nomes de ícone; "✔" sai das etapas', () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'crm-mig-'));
+  try {
+    db.openDb(dir);
+    db.run("UPDATE pipelines SET icon = '🎯' WHERE id = 'captacao'");
+    db.run("UPDATE contact_types SET icon = '⚖️' WHERE id = 'cliente'");
+    db.run("UPDATE chat_filters SET icon = '⏳' WHERE name = 'Aguardando resposta'");
+    db.run("UPDATE stages SET name = 'Contratou ✔' WHERE id = 'captacao.contratou'");
+    db.run("INSERT INTO pipelines (id, name, icon, position) VALUES ('x', 'Outro', '🦄', 9)");
+    db.run("UPDATE meta SET value = '13' WHERE key = 'schema'");
+    db.closeDb();
+
+    db.openDb(dir);
+    assert.equal(db.get("SELECT icon FROM pipelines WHERE id = 'captacao'").icon, 'target');
+    assert.equal(db.get("SELECT icon FROM pipelines WHERE id = 'x'").icon, 'tag', 'emoji desconhecido vira etiqueta');
+    assert.equal(db.get("SELECT icon FROM contact_types WHERE id = 'cliente'").icon, 'scale');
+    assert.equal(db.get("SELECT icon FROM chat_filters WHERE name = 'Aguardando resposta'").icon, 'clock');
+    assert.equal(db.get("SELECT name FROM stages WHERE id = 'captacao.contratou'").name, 'Contratou');
+    assert.equal(db.emojiToIcon('💼'), 'briefcase');
+    assert.equal(db.emojiToIcon('star'), 'star');
+    db.closeDb();
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});

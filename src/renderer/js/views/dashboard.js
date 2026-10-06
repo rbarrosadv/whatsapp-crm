@@ -1,6 +1,7 @@
 // Painel com números gerais do atendimento.
 import { h, fill, fmtMoney } from '../util.js';
 import { state, on, api, setView } from '../store.js';
+import { named } from '../icons.js';
 
 let root;
 
@@ -31,7 +32,7 @@ async function render() {
       const max = Math.max(1, ...rows.map((r) => r.n));
       const total = rows.reduce((a, r) => a + r.total, 0);
       return h('div', { class: 'panel' },
-        h('div', { class: 'panel-head' }, h('h3', null, `${p.icon || ''} ${p.name}`), total ? h('span', { class: 'money' }, fmtMoney(total)) : null),
+        h('div', { class: 'panel-head' }, h('h3', { class: 'with-ico' }, named(p, 16)), total ? h('span', { class: 'money' }, fmtMoney(total)) : null),
         rows.map((r) => h('div', { class: 'funnel-row' },
           h('div', { class: 'funnel-label' }, r.st.name),
           h('div', { class: 'funnel-bar' }, h('div', { style: { width: `${(r.n / max) * 100}%`, background: r.st.color } })),

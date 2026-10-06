@@ -7,7 +7,7 @@ import {
 import { state, on, emit, api, stageById, openChat, openClient, typeById } from '../store.js';
 import { avatarEl, typeMenu } from '../components.js';
 import { openCase, newCaseDialog, TASK_KINDS, feeLabel } from './casemodal.js';
-import { icon } from '../icons.js';
+import { icon, named } from '../icons.js';
 
 let root;
 let jid = null;
@@ -86,7 +86,7 @@ function renderTop() {
         class: `stage-btn wide ${typeById(chat.type_id) ? '' : 'unset'}`,
         style: typeById(chat.type_id) ? { '--c': typeById(chat.type_id).color } : null,
         onclick: (e) => typeMenu(e.currentTarget, chat),
-      }, typeById(chat.type_id) ? `${typeById(chat.type_id).icon || ''} ${typeById(chat.type_id).name}` : 'Não classificado', ' ▾')),
+      }, typeById(chat.type_id) ? named(typeById(chat.type_id), 14) : 'Não classificado', ' ▾')),
     h('div', { class: 'crm-block' }, h('div', { class: 'crm-label' }, 'Etiquetas'), tagBox),
     h('div', { class: 'crm-block crm-fields' },
       field('Nome no CRM', 'custom_name', chat, { placeholder: chat.contact_name || chat.notify || chat.name || '' }),
@@ -175,7 +175,7 @@ async function renderTasks() {
   const done = tasks.filter((t) => t.done).slice(0, 5);
   fill(el, 
     h('div', { class: 'crm-section-head' },
-      h('h4', null, '⏰ Tarefas e lembretes'),
+      h('h4', null, 'Tarefas e lembretes'),
       h('button', { class: 'btn btn-sm', onclick: () => taskDialog({ jid }) }, [icon('plus', 15), 'Nova'])),
     open.length || done.length ? null : h('div', { class: 'muted small' }, 'Nenhuma tarefa. Crie lembretes para retornar ao contato.'),
     ...open.map(taskRow),

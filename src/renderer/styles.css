@@ -1030,3 +1030,16 @@ h2, h3 { letter-spacing: -0.01em; }
 .empty-icon { font-size: 0; width: 64px; height: 64px; border-radius: 16px; background: var(--panel-2); display: grid; place-items: center; color: var(--muted); margin-bottom: 4px; }
 .empty-icon .ico { width: 28px; height: 28px; }
 .empty h3 { font-size: 18px; font-weight: 600; }
+
+/* ícones de traço nos itens do cadastro (funis, tipos, filtros) e no texto */
+.ico.inline { vertical-align: -2px; margin-right: 4px; flex: none; }
+.with-ico, .stage-btn, .stage-pill, .tag-chip, .chip, .board-head .tab, .classify-bar .btn, .type-icon { display: inline-flex; align-items: center; gap: 5px; }
+.popup-icon { display: inline-flex; align-items: center; justify-content: center; width: 18px; }
+.popup-header .popup-icon { color: var(--muted); }
+.icon-picker { display: flex; flex-wrap: wrap; gap: 4px; max-width: 100%; }
+.icon-pick { width: 32px; height: 32px; display: inline-flex; align-items: center; justify-content: center; border-radius: 8px;
+  border: 1px solid var(--border); background: var(--panel); color: var(--text-2, var(--muted)); cursor: pointer; padding: 0; }
+.icon-pick:hover { border-color: var(--accent); color: var(--text); }
+.icon-pick.on { background: var(--accent-soft); border-color: var(--accent); color: var(--accent); }
+.media-icon .ico, .doc-icon .ico { color: var(--muted); }
+.team-presence, .chat-name, .wait-flag, .fee-late, .task-flag { display: inline-flex; align-items: center; gap: 3px; }

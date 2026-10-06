@@ -46,7 +46,7 @@ function render() {
         h('select', { class: 'input select-sm', onchange: (e) => { f.type = e.target.value; renderRows(); } },
           h('option', { value: '' }, 'Todos os tipos'),
           h('option', { value: '_none', selected: f.type === '_none' }, 'Não classificados'),
-          state.contactTypes.map((t) => h('option', { value: t.id, selected: f.type === t.id }, `${t.icon || ''} ${t.name}`))),
+          state.contactTypes.map((t) => h('option', { value: t.id, selected: f.type === t.id }, t.name))),
         h('select', { class: 'input select-sm', onchange: (e) => { f.stage = e.target.value; renderRows(); } },
           h('option', { value: '' }, 'Todas as etapas'),
           h('option', { value: '_none', selected: f.stage === '_none' }, 'Sem etapa'),

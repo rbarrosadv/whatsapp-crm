@@ -243,6 +243,11 @@ Interface (`src/renderer`, JS puro em módulos ES, sem build):
   Documentos, Honorários só com `can.finance`, Notas; dados via `cases:full`), `finance`, `agenda`,
   `board` (kanban de CASOS), `contacts`, `tasks`, `dashboard`, `settings`
   (Minha conta, Equipe — só sócio —, conexão, notificações…), `connect`.
+- `js/icons.js` — ícones de traço em SVG (`icon(nome)`), sem emoji na
+  interface. Funis, tipos de contato e filtros guardam o **nome** do ícone
+  (`PICK_ICONS`, escolhido no `iconPicker` dos Ajustes); `dataIcon`/`named`
+  desenham e aceitam emoji antigo (v14 converteu os gravados via
+  `db.emojiToIcon`). Emojis só no conteúdo das mensagens (seletor e reações).
 - Estilos em `styles.css` com variáveis e `[data-theme=light|dark]`; cor da
   marca em `--accent` (azul-ardósia da logo). Cores por item via `--c`.
 - `manifest.webmanifest` — instalar no celular como app.

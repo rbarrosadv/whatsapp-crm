@@ -6,6 +6,7 @@ import {
 import { avatarEl, ticks, stagePill, tagDots, typeMenu } from '../components.js';
 import { newCaseDialog } from './casemodal.js';
 import { filterEditor } from './settings.js';
+import { icon, dataIcon } from '../icons.js';
 
 const filters = { q: '', filterId: null, stage: '', tag: '', archived: false };
 let searchHits = [];
@@ -28,7 +29,7 @@ export function mountChatList(root) {
     h('div', { class: 'row' },
       h('h2', null, 'WhatsApp'),
       h('div', { class: 'row' },
-        h('button', { class: 'icon-btn', title: 'Contatos do WhatsApp (tabela)', onclick: () => setView('contacts') }, '👥'),
+        h('button', { class: 'icon-btn', title: 'Contatos do WhatsApp (tabela)', onclick: () => setView('contacts') }, icon('users', 18)),
         h('button', { class: 'icon-btn', title: 'Nova conversa (por número)', onclick: newChatDialog }, '＋'))),
     searchInput, chipsEl, selectsEl);
 
@@ -50,15 +51,15 @@ export function mountChatList(root) {
           onclick: () => { filters.filterId = f.id; setSetting('lastFilter', f.id).catch(() => {}); render(); },
           oncontextmenu: (e) => {
             e.preventDefault();
-            popupMenu(null, [{ icon: '✎', label: 'Editar filtro', onClick: () => filterEditor(f) },
+            popupMenu(null, [{ icon: icon('edit', 15), label: 'Editar filtro', onClick: () => filterEditor(f) },
               { icon: '＋', label: 'Novo filtro', onClick: () => filterEditor() }], { x: e.clientX, y: e.clientY });
           },
-        }, f.icon ? `${f.icon} ` : '', f.name, unread ? h('span', { class: 'chip-count' }, unread) : null);
+        }, dataIcon(f.icon, 14), f.name, unread ? h('span', { class: 'chip-count' }, unread) : null);
       }),
       h('button', { class: 'chip chip-edit', title: 'Criar ou editar filtros', onclick: () => filterEditor() }, '＋'));
     const stageSel = h('select', { class: 'input select-sm', onchange: (e) => { filters.stage = e.target.value; render(); } },
       h('option', { value: '' }, 'Etapa: todas'),
-      state.pipelines.map((p) => h('optgroup', { label: `${p.icon || ''} ${p.name}` },
+      state.pipelines.map((p) => h('optgroup', { label: p.name },
         h('option', { value: `p:${p.id}`, selected: filters.stage === `p:${p.id}` }, `Todo o funil ${p.name}`),
         p.stages.map((s) => h('option', { value: s.id, selected: filters.stage === s.id }, s.name)))));
     const tagSel = h('select', { class: 'input select-sm', onchange: (e) => { filters.tag = e.target.value; render(); } },
@@ -68,7 +69,7 @@ export function mountChatList(root) {
       class: `btn btn-sm ${filters.archived ? 'btn-primary' : ''}`,
       title: 'Mostrar conversas arquivadas',
       onclick: () => { filters.archived = !filters.archived; render(); },
-    }, '🗄');
+    }, icon('archive', 18));
     fill(selectsEl, stageSel, tagSel, archBtn);
   }
 
@@ -131,8 +132,8 @@ export function mountChatList(root) {
     avatarEl(c, 46),
     h('div', { class: 'chat-main' },
       h('div', { class: 'chat-top' },
-        h('span', { class: 'chat-name' }, c.pinned ? '📌 ' : '',
-          typeById(c.type_id) ? h('span', { class: 'type-icon', title: typeById(c.type_id).name }, typeById(c.type_id).icon, ' ') : null,
+        h('span', { class: 'chat-name' }, c.pinned ? icon('pin', 13, 'inline') : '',
+          typeById(c.type_id) ? h('span', { class: 'type-icon', title: typeById(c.type_id).name, style: { color: typeById(c.type_id).color } }, dataIcon(typeById(c.type_id).icon, 13)) : null,
           c.display_name),
         h('span', { class: 'chat-time' }, fmtListTime(c.last_ts))),
       h('div', { class: 'chat-bottom' },
@@ -140,21 +141,21 @@ export function mountChatList(root) {
         c.unread > 0 ? h('span', { class: 'badge' }, c.unread > 99 ? '99+' : String(c.unread)) : null),
       (st || c.tag_ids.length || c.open_tasks || waitingMs(c) || c.overdue_payments) ? h('div', { class: 'chat-meta' },
         waitingMs(c) ? h('span', { class: `waiting ${waitingMs(c) > 24 * 3600e3 ? 'late' : ''}`, title: 'Aguardando sua resposta' },
-          `⏳ ${fmtDuration(waitingMs(c))}`) : null,
+          [icon('clock', 12, 'inline'), fmtDuration(waitingMs(c))]) : null,
         st ? stagePill(c.stage_id, { small: true }) : null,
         c.open_cases > 1 ? h('span', { class: 'tag-more' }, `+${c.open_cases - 1} caso(s)`) : null,
-        c.overdue_payments ? h('span', { class: 'fee-late', title: 'Honorários vencidos' }, `💰 ${c.overdue_payments} vencida(s)`) : null,
+        c.overdue_payments ? h('span', { class: 'fee-late', title: 'Honorários vencidos' }, [icon('coins', 12, 'inline'), `${c.overdue_payments} vencida(s)`]) : null,
         tagDots(c.tag_ids, { max: 2 }),
-        c.open_tasks ? h('span', { class: `task-flag ${c.next_due && c.next_due < Date.now() ? 'late' : ''}` }, `⏰ ${c.open_tasks}`) : null) : null));
+        c.open_tasks ? h('span', { class: `task-flag ${c.next_due && c.next_due < Date.now() ? 'late' : ''}` }, [icon('bell', 12, 'inline'), c.open_tasks]) : null) : null));
     return el;
   }
 
   function rowMenu(c, e) {
     popupMenu(null, [
-      { icon: '🏷', label: 'Classificar contato…', onClick: () => typeMenu(null, c, { x: e.clientX, y: e.clientY }) },
-      c.is_group ? null : { icon: '📁', label: 'Novo caso…', onClick: () => newCaseDialog(c.jid) },
+      { icon: icon('tag', 15), label: 'Classificar contato…', onClick: () => typeMenu(null, c, { x: e.clientX, y: e.clientY }) },
+      c.is_group ? null : { icon: icon('folder', 15), label: 'Novo caso…', onClick: () => newCaseDialog(c.jid) },
       c.unread > 0
-        ? { icon: '✔', label: 'Marcar como lida', onClick: () => api('chats:markRead', c.jid) }
+        ? { icon: icon('check', 15), label: 'Marcar como lida', onClick: () => api('chats:markRead', c.jid) }
         : { icon: '●', label: 'Marcar como não lida', onClick: () => api('chats:markUnread', c.jid) },
     ], { x: e.clientX, y: e.clientY });
   }

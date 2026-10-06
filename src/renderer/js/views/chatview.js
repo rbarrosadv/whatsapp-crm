@@ -13,6 +13,7 @@ import {
 import { state, on, emit, api, stageById, openChat, typeById, othersViewing, someoneTyping } from '../store.js';
 import { avatarEl, ticks, emptyState, typeMenu, classifyBar } from '../components.js';
 import { openCase, newCaseDialog } from './casemodal.js';
+import { icon, named } from '../icons.js';
 import { newChatDialog } from './chatlist.js';
 
 export { mediaUrl };
@@ -48,7 +49,7 @@ export function mountChatView(el, { onTogglePanel }) {
 
 function renderEmpty() {
   current = null;
-  fill(root, emptyState('💬', 'Barros Associados',
+  fill(root, emptyState(icon('message', 28), 'Barros Associados',
     'Escolha uma conversa na lista para ver as mensagens e a ficha do contato.',
     h('button', { class: 'btn btn-primary', onclick: newChatDialog }, '＋ Nova conversa')));
 }
@@ -93,14 +94,14 @@ function renderHeader() {
     style: st && n === 1 ? { '--c': st.color } : null,
     title: 'Casos deste contato',
     onclick: (e) => casesMenu(e.currentTarget, chat),
-  }, n === 0 ? '＋ Novo caso' : n === 1 && st ? `📁 ${st.name}` : `📁 ${n} casos`, ' ▾');
+  }, n === 0 ? [icon('plus', 14), 'Novo caso'] : [icon('folder', 14), n === 1 && st ? st.name : `${n} casos`], ' ▾');
   const t = typeById(chat.type_id);
   const typeBtn = h('button', {
     class: `stage-btn ${t ? '' : 'unset'}`,
     style: t ? { '--c': t.color } : null,
     title: 'Tipo de contato',
     onclick: (e) => typeMenu(e.currentTarget, chat),
-  }, t ? `${t.icon || ''} ${t.name}` : '❓ Classificar', ' ▾');
+  }, t ? named(t, 14) : [icon('help', 14), 'Classificar'], ' ▾');
   fill(current.classifyEl, classifyBar(chat));
   fill(current.headerEl, 
     avatarEl(chat, 40),
@@ -110,18 +111,18 @@ function renderHeader() {
       teamPresence(chat.jid)),
     typeBtn,
     stageBtn,
-    h('button', { class: 'icon-btn', title: 'Marcar como não lida', onclick: () => api('chats:markUnread', chat.jid) }, '●'),
-    h('button', { class: 'icon-btn', title: 'Ficha do contato (CRM)', onclick: () => root._togglePanel?.() }, '☰'),
+    h('button', { class: 'icon-btn', title: 'Marcar como não lida', onclick: () => api('chats:markUnread', chat.jid) }, icon('mail', 18)),
+    h('button', { class: 'icon-btn', title: 'Ficha do contato (CRM)', onclick: () => root._togglePanel?.() }, icon('menu', 18)),
   );
 }
 
 /** Outras pessoas da equipe nesta conversa (evita duas respostas ao mesmo cliente). */
 function teamPresence(jid) {
   const writer = someoneTyping(jid);
-  if (writer) return h('div', { class: 'team-presence' }, `✍ ${writer} está respondendo…`);
+  if (writer) return h('div', { class: 'team-presence' }, icon('edit', 13, 'inline'), `${writer} está respondendo…`);
   const others = othersViewing(jid);
   if (!others.length) return null;
-  return h('div', { class: 'team-presence' }, `👀 ${others.join(', ')} também ${others.length > 1 ? 'estão' : 'está'} com esta conversa aberta`);
+  return h('div', { class: 'team-presence' }, icon('eye', 13, 'inline'), `${others.join(', ')} também ${others.length > 1 ? 'estão' : 'está'} com esta conversa aberta`);
 }
 
 async function casesMenu(anchor, chat) {
@@ -130,7 +131,7 @@ async function casesMenu(anchor, chat) {
   popupMenu(anchor, [
     ...list.map((k) => {
       const s = stageById(k.stage_id);
-      return { icon: '📁', label: `${k.title}${s ? ` — ${s.name}` : ''}`, color: s?.color, onClick: () => openCase(k.id) };
+      return { icon: icon('folder', 15), label: `${k.title}${s ? ` — ${s.name}` : ''}`, color: s?.color, onClick: () => openCase(k.id) };
     }),
     ...(list.length ? ['-'] : []),
     { icon: '＋', label: 'Novo caso', onClick: () => newCaseDialog(chat.jid) },
@@ -153,7 +154,7 @@ async function attachToCase(anchor, m) {
     return;
   }
   if (list.length === 1) { attach(list[0].id); return; }
-  popupMenu(anchor, list.map((k) => ({ icon: '📁', label: k.title, onClick: () => attach(k.id) })));
+  popupMenu(anchor, list.map((k) => ({ icon: icon('folder', 15), label: k.title, onClick: () => attach(k.id) })));
 }
 
 // ---------------------------------------------------------------- mensagens
@@ -298,7 +299,7 @@ function msgEl(m) {
   const chat = state.chats.get(current.jid) || {};
   if (m.type === 'system' || m.type === 'call') {
     return h('div', { class: 'sys-msg', dataset: { id: m.id } },
-      h('span', null, m.type === 'call' ? '📞 ' : '', m.sender_name && m.type === 'system' ? `${m.sender_name} ` : '', m.text, ' · ', fmtTime(m.ts)));
+      h('span', null, m.type === 'call' ? icon('phone', 13, 'inline') : '', m.sender_name && m.type === 'system' ? `${m.sender_name} ` : '', m.text, ' · ', fmtTime(m.ts)));
   }
   const out = !!m.from_me;
   const body = h('div', { class: 'bubble-body' });
@@ -320,7 +321,7 @@ function msgEl(m) {
   }
 
   if (m.deleted) {
-    body.append(h('div', { class: 'deleted' }, '🚫 Esta mensagem foi apagada'));
+    body.append(h('div', { class: 'deleted' }, icon('ban', 14, 'inline'), 'Esta mensagem foi apagada'));
   } else {
     const media = mediaBlock(m);
     if (media) body.append(media);
@@ -377,21 +378,21 @@ function mediaBlock(m) {
         });
       }
       return h('div', { class: 'media-placeholder' },
-        m.thumb ? h('img', { class: 'media-img blur', src: m.thumb }) : h('div', { class: 'media-icon' }, m.type === 'sticker' ? '💟' : '📷'),
-        downloadBtn(m, `⬇ Baixar foto ${fmtSize(m.media_size)}`));
+        m.thumb ? h('img', { class: 'media-img blur', src: m.thumb }) : h('div', { class: 'media-icon' }, icon(m.type === 'sticker' ? 'sticker' : 'image', 28)),
+        downloadBtn(m, `Baixar foto ${fmtSize(m.media_size)}`));
     }
     case 'video':
       if (url) return h('video', { class: 'media-video', src: url, controls: true, preload: 'metadata' });
       return h('div', { class: 'media-placeholder' },
-        m.thumb ? h('img', { class: 'media-img blur', src: m.thumb }) : h('div', { class: 'media-icon' }, '🎥'),
-        downloadBtn(m, `⬇ Baixar vídeo ${fmtSize(m.media_size)}`));
+        m.thumb ? h('img', { class: 'media-img blur', src: m.thumb }) : h('div', { class: 'media-icon' }, icon('video', 28)),
+        downloadBtn(m, `Baixar vídeo ${fmtSize(m.media_size)}`));
     case 'audio':
     case 'ptt':
-      if (url) return h('div', { class: 'audio' }, h('span', null, m.type === 'ptt' ? '🎤' : '🎵'), h('audio', { src: url, controls: true, preload: 'metadata' }));
-      return h('div', { class: 'audio' }, h('span', null, '🎤'), downloadBtn(m, `▶ Carregar áudio ${m.media_seconds ? fmtSeconds(m.media_seconds) : ''}`));
+      if (url) return h('div', { class: 'audio' }, h('span', null, icon(m.type === 'ptt' ? 'mic' : 'music', 18)), h('audio', { src: url, controls: true, preload: 'metadata' }));
+      return h('div', { class: 'audio' }, h('span', null, icon('mic', 18)), downloadBtn(m, `Carregar áudio ${m.media_seconds ? fmtSeconds(m.media_seconds) : ''}`));
     case 'document':
       return h('div', { class: 'doc' },
-        h('div', { class: 'doc-icon' }, '📄'),
+        h('div', { class: 'doc-icon' }, icon('file', 22)),
         h('div', { class: 'doc-info' },
           h('div', { class: 'doc-name' }, m.media_name || 'Documento'),
           h('div', { class: 'muted small' }, [fmtSize(m.media_size), (m.media_mime || '').split('/')[1]].filter(Boolean).join(' · '))),
@@ -399,19 +400,19 @@ function mediaBlock(m) {
           ? h('div', { class: 'doc-actions' },
             h('button', { class: 'btn btn-sm', onclick: () => Promise.resolve().then(() => openMedia(m.media_file, m.media_name)).catch(errToast) }, 'Abrir'),
             h('button', { class: 'btn btn-sm', onclick: () => saveMedia(m.media_file, m.media_name) }, 'Salvar como…'))
-          : downloadBtn(m, '⬇ Baixar'));
+          : downloadBtn(m, 'Baixar'));
     case 'location': {
       const loc = parseJson(m.extra, {});
       const href = `https://www.google.com/maps?q=${loc.lat},${loc.lng}`;
       return h('a', { class: 'location', href, target: '_blank' },
-        m.thumb ? h('img', { src: m.thumb }) : h('div', { class: 'media-icon' }, '📍'),
-        h('div', null, h('b', null, '📍 Localização'), m.text ? h('div', null, m.text) : null, h('div', { class: 'small' }, 'Abrir no mapa')));
+        m.thumb ? h('img', { src: m.thumb }) : h('div', { class: 'media-icon' }, icon('mapPin', 28)),
+        h('div', null, h('b', null, icon('mapPin', 14, 'inline'), 'Localização'), m.text ? h('div', null, m.text) : null, h('div', { class: 'small' }, 'Abrir no mapa')));
     }
     case 'contact': {
       const data = parseJson(m.extra, { contacts: [] });
       return h('div', { class: 'contact-card' }, data.contacts.map((c) => {
         const tel = /TEL[^:]*:([+\d\s()-]+)/.exec(c.vcard || '')?.[1]?.trim();
-        return h('div', { class: 'contact-item' }, h('span', { class: 'media-icon small' }, '👤'),
+        return h('div', { class: 'contact-item' }, h('span', { class: 'media-icon small' }, icon('user', 18)),
           h('div', null, h('b', null, c.name || 'Contato'), tel ? h('div', { class: 'small' }, tel) : null),
           tel ? h('button', {
             class: 'btn btn-sm',
@@ -427,7 +428,7 @@ function mediaBlock(m) {
     }
     case 'poll': {
       const data = parseJson(m.extra, { options: [] });
-      return h('div', { class: 'poll' }, h('b', null, '📊 ', m.text), h('ul', null, data.options.map((o) => h('li', null, o))));
+      return h('div', { class: 'poll' }, h('b', null, icon('chart', 14, 'inline'), m.text), h('ul', null, data.options.map((o) => h('li', null, o))));
     }
     default:
       return null;
@@ -441,9 +442,9 @@ function viewImage(url, m) {
   if (index < 0) { items = [{ url, m }]; index = 0; }
   openImageViewer(items, index, {
     actions: (x) => [
-      { label: '📎', title: 'Anexar ao caso', onClick: (e) => attachToCase(e.currentTarget, x) },
-      { label: '💾', title: 'Salvar como…', onClick: () => saveMedia(x.media_file, x.media_name || `imagem-${x.id}.jpg`) },
-      { label: '🖼', title: 'Abrir em outro programa', onClick: () => openMedia(x.media_file, x.media_name || `imagem-${x.id}.jpg`).catch(errToast) },
+      { label: icon('paperclip', 18), title: 'Anexar ao caso', onClick: (e) => attachToCase(e.currentTarget, x) },
+      { label: icon('save', 18), title: 'Salvar como…', onClick: () => saveMedia(x.media_file, x.media_name || `imagem-${x.id}.jpg`) },
+      { label: icon('open', 18), title: 'Abrir em outro programa', onClick: () => openMedia(x.media_file, x.media_name || `imagem-${x.id}.jpg`).catch(errToast) },
     ],
   });
 }
@@ -451,17 +452,17 @@ function viewImage(url, m) {
 function msgMenu(anchor, m) {
   const items = [
     { icon: '↩', label: 'Responder', onClick: () => setReply(m) },
-    ...(!m.deleted ? [{ icon: '😊', label: 'Reagir…', onClick: () => reactMenu(anchor, m) }] : []),
-    ...(m.text ? [{ icon: '📋', label: 'Copiar texto', onClick: () => navigator.clipboard.writeText(m.text) }] : []),
-    ...(m.text ? [{ icon: '📝', label: 'Salvar como nota do contato', onClick: () => saveAsNote(m) }] : []),
-    ...(m.text ? [{ icon: '⏰', label: 'Criar tarefa a partir desta mensagem', onClick: () => import('./crmpanel.js').then((x) => x.taskDialog({ jid: current.jid, title: m.text.slice(0, 120) })) }] : []),
+    ...(!m.deleted ? [{ icon: icon('smile', 15), label: 'Reagir…', onClick: () => reactMenu(anchor, m) }] : []),
+    ...(m.text ? [{ icon: icon('copy', 15), label: 'Copiar texto', onClick: () => navigator.clipboard.writeText(m.text) }] : []),
+    ...(m.text ? [{ icon: icon('note', 15), label: 'Salvar como nota do contato', onClick: () => saveAsNote(m) }] : []),
+    ...(m.text ? [{ icon: icon('bell', 15), label: 'Criar tarefa a partir desta mensagem', onClick: () => import('./crmpanel.js').then((x) => x.taskDialog({ jid: current.jid, title: m.text.slice(0, 120) })) }] : []),
     ...(['image', 'video', 'audio', 'ptt', 'document', 'sticker'].includes(m.type) && !m.deleted
-      ? [{ icon: '📎', label: 'Anexar ao caso…', onClick: () => attachToCase(anchor, m) }] : []),
+      ? [{ icon: icon('paperclip', 15), label: 'Anexar ao caso…', onClick: () => attachToCase(anchor, m) }] : []),
     ...(m.media_file ? [
-      { icon: '💾', label: 'Salvar arquivo como…', onClick: () => saveMedia(m.media_file, m.media_name) },
+      { icon: icon('save', 15), label: 'Salvar arquivo como…', onClick: () => saveMedia(m.media_file, m.media_name) },
     ] : []),
-    ...(canEdit(m) ? [{ icon: '✏️', label: 'Editar', onClick: () => startEdit(m) }] : []),
-    ...(m.from_me && !m.deleted ? ['-', { icon: '🗑', label: 'Apagar para todos', danger: true, onClick: () => deleteMsg(m) }] : []),
+    ...(canEdit(m) ? [{ icon: icon('edit', 15), label: 'Editar', onClick: () => startEdit(m) }] : []),
+    ...(m.from_me && !m.deleted ? ['-', { icon: icon('trash', 15), label: 'Apagar para todos', danger: true, onClick: () => deleteMsg(m) }] : []),
   ];
   popupMenu(anchor, items);
 }
@@ -590,7 +591,7 @@ function renderComposer() {
     showFix(r);
   };
   const showFix = (r) => {
-    fill(wordBar, h('span', { class: 'word-fixed', title: 'Correção automática. Backspace desfaz.' }, `✓ ${r.from} → ${r.to}`),
+    fill(wordBar, h('span', { class: 'word-fixed', title: 'Correção automática. Backspace desfaz.' }, icon('check', 13, 'inline'), `${r.from} → ${r.to}`),
       h('span', { class: 'word-hint' }, 'Backspace desfaz'));
     wordBar.classList.remove('hidden');
   };
@@ -723,38 +724,38 @@ function renderComposer() {
         onclick: () => { insertAtCursor(ta, em); ta.focus(); },
       }, em)));
     },
-  }, '😊');
+  }, icon('smile', 20));
   const attachBtn = h('button', {
     class: 'icon-btn', title: 'Enviar arquivo, foto ou documento',
     onclick: async () => {
       const files = await pickFiles();
       if (files.length) confirmSendFiles(files);
     },
-  }, '📎');
+  }, icon('paperclip', 20));
   const quickBtn = h('button', {
     class: 'icon-btn', title: 'Respostas rápidas',
     onclick: (e) => {
       if (!state.quickReplies.length) { toast('Cadastre respostas rápidas em Configurações.'); return; }
       popupMenu(e.currentTarget, state.quickReplies.map((r) => ({ label: `/${r.shortcut} — ${r.text.slice(0, 50)}`, onClick: () => applyQuick(r) })));
     },
-  }, '⚡');
-  const micBtn = h('button', { class: 'icon-btn mic', title: 'Gravar áudio', onclick: () => startRecording(micBtn) }, '🎤');
-  const sendBtn = h('button', { class: 'send-btn', title: 'Enviar (Enter)', onclick: send }, '➤');
+  }, icon('zap', 20));
+  const micBtn = h('button', { class: 'icon-btn mic', title: 'Gravar áudio', onclick: () => startRecording(micBtn) }, icon('mic', 20));
+  const sendBtn = h('button', { class: 'send-btn', title: 'Enviar (Enter)', onclick: send }, icon('send', 18));
 
   const bar = h('div', { class: 'composer-bar' }, emojiBtn, attachBtn, quickBtn, h('div', { class: 'composer-input-wrap' }, suggest, wordBar, ta), micBtn, sendBtn);
   const replyBar = replyTo ? h('div', { class: 'reply-bar' },
     h('div', { class: 'quoted' },
       h('div', { class: 'quoted-who' }, replyTo.from_me ? 'Você' : (replyTo.sender_name || chat?.display_name)),
       h('div', { class: 'quoted-text' }, (replyTo.text || replyTo.type).slice(0, 160))),
-    h('button', { class: 'icon-btn', onclick: () => { replyTo = null; renderComposer(); } }, '✕')) : null;
+    h('button', { class: 'icon-btn', onclick: () => { replyTo = null; renderComposer(); } }, icon('x', 16))) : null;
   const editBar = editing ? h('div', { class: 'reply-bar edit-bar' },
     h('div', { class: 'quoted' },
-      h('div', { class: 'quoted-who' }, '✏️ Editando mensagem'),
+      h('div', { class: 'quoted-who' }, icon('edit', 13, 'inline'), 'Editando mensagem'),
       h('div', { class: 'quoted-text' }, editing.text.slice(0, 160))),
-    h('button', { class: 'icon-btn', title: 'Cancelar edição (Esc)', onclick: cancelEdit }, '✕')) : null;
-  if (editing) { sendBtn.textContent = '✓'; sendBtn.title = 'Salvar edição (Enter)'; }
+    h('button', { class: 'icon-btn', title: 'Cancelar edição (Esc)', onclick: cancelEdit }, icon('x', 16))) : null;
+  if (editing) { fill(sendBtn, icon('check', 18)); sendBtn.title = 'Salvar edição (Enter)'; }
   const offline = h('div', { class: `offline-banner ${state.status.state === 'open' ? 'hidden' : ''}` },
-    '⚠ WhatsApp desconectado no momento — as mensagens salvas continuam disponíveis, mas não é possível enviar até reconectar.');
+    icon('alert', 14, 'inline'), 'WhatsApp desconectado no momento — as mensagens salvas continuam disponíveis, mas não é possível enviar até reconectar.');
 
   fill(c.composerEl, offline, replyBar, editBar, bar);
   setTimeout(() => { autosize(); ta.focus(); }, 0);
@@ -796,7 +797,7 @@ function confirmSendFiles(files) {
     const isImg = /\.(png|jpe?g|webp|gif)$/i.test(it.name) || it.file?.type?.startsWith('image/');
     const src = it.file ? URL.createObjectURL(it.file) : null;
     return h('div', { class: 'send-preview' },
-      isImg && src ? h('img', { src }) : h('div', { class: 'media-icon' }, isImg ? '🖼' : '📄'),
+      isImg && src ? h('img', { src }) : h('div', { class: 'media-icon' }, icon(isImg ? 'image' : 'file', 28)),
       h('div', { class: 'small ellipsis' }, it.name));
   }));
   modal({
@@ -840,8 +841,8 @@ async function startRecording(btn) {
   const timer = h('span', { class: 'rec-timer' }, '0:00');
   const bar = h('div', { class: 'recording-bar' },
     h('span', { class: 'rec-dot' }), 'Gravando…', timer,
-    h('button', { class: 'btn btn-sm', onclick: () => stopRecording(true) }, '✕ Cancelar'),
-    h('button', { class: 'btn btn-sm btn-primary', onclick: () => stopRecording(false) }, '➤ Enviar áudio'));
+    h('button', { class: 'btn btn-sm', onclick: () => stopRecording(true) }, [icon('x', 15), 'Cancelar']),
+    h('button', { class: 'btn btn-sm btn-primary', onclick: () => stopRecording(false) }, [icon('send', 15), 'Enviar áudio']));
   recorder = { mr, stream, bar, cancel: false, jid, tick: setInterval(() => { timer.textContent = fmtSeconds((Date.now() - started) / 1000); }, 250) };
   mr.ondataavailable = (e) => { if (e.data.size) chunks.push(e.data); };
   mr.onstop = async () => {
