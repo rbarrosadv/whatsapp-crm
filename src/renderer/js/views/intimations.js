@@ -9,6 +9,7 @@ import { openCase } from './casemodal.js';
 import { icon } from '../icons.js';
 
 let filter = 'nova'; // nova | prazo | lida | todas
+let scope = null; // 'minhas' | 'todas' (padrão: minhas para quem tem OAB)
 const day = (ts) => (ts ? new Date(ts).toLocaleDateString('pt-BR') : '—');
 
 export async function renderIntimations(el, redraw) {
@@ -23,6 +24,11 @@ export async function renderIntimations(el, redraw) {
     ]);
   } catch (e) { errToast(e); return; }
   const canEdit = state.me?.role !== 'estagiario';
+  const myOabs = st.oabs.filter((o) => o.user_id === state.me?.id).map((o) => String(o.id));
+  if (scope == null) scope = myOabs.length && st.oabs.length > 1 ? 'minhas' : 'todas';
+  if (scope === 'minhas') {
+    list = list.filter((i) => String(i.oab_ids || '').split(',').some((id) => myOabs.includes(id)) || i.responsible_id === state.me?.id);
+  }
   const counts = { nova: filter === 'nova' ? list.length : null };
 
   fill(el,
@@ -30,6 +36,11 @@ export async function renderIntimations(el, redraw) {
     st.oabs.some((o) => o.active) ? historyPanel(st.history, redraw) : null,
     unknown.length ? unknownPanel(unknown, redraw) : null,
     h('div', { class: 'row wrap intim-tools' },
+      st.oabs.length > 1 ? h('div', { class: 'segmented' },
+        [['minhas', 'Minhas OABs'], ['todas', 'Todas']].map(([id, label]) => h('button', {
+          class: `seg ${scope === id ? 'active' : ''}`, title: id === 'minhas' ? 'Intimações das suas OABs e dos processos em que você é responsável' : '',
+          onclick: () => { scope = id; redraw(); },
+        }, label))) : null,
       h('div', { class: 'segmented' },
         [['nova', `Para conferir${counts.nova != null ? ` (${counts.nova})` : ''}`], ['prazo', 'Com prazo criado'], ['lida', 'Conferidas'], ['todas', 'Todas']]
           .map(([id, label]) => h('button', { class: `seg ${filter === id ? 'active' : ''}`, onclick: () => { filter = id; redraw(); } }, label))),
@@ -57,14 +68,17 @@ export async function renderIntimations(el, redraw) {
 function oabPanel(st, canEdit, redraw) {
   return h('div', { class: 'panel' },
     h('div', { class: 'panel-head' }, h('h3', null, 'Advogados acompanhados no DJEN'),
-      canEdit ? h('button', { class: 'btn btn-sm', onclick: () => oabDialog({}, redraw) }, [icon('plus', 15), 'Cadastrar OAB']) : null),
+      canEdit ? h('button', { class: 'btn btn-sm', onclick: () => oabDialog({}, redraw) }, [icon('plus', 15), state.can.admin ? 'Cadastrar OAB' : 'Cadastrar a minha OAB']) : null),
     st.oabs.length ? h('div', { class: 'oab-list' }, st.oabs.map((o) => h('div', { class: `oab-row ${o.active ? '' : 'off'}` },
       h('div', { class: 'grow' },
         h('b', null, o.name), h('span', { class: 'mono' }, ` · OAB ${Number(o.number).toLocaleString('pt-BR')}/${o.uf}`),
+        h('div', { class: 'small' }, o.user_name
+          ? [icon('user', 13), ` ${o.user_name}${o.user_id === state.me?.id ? ' (você)' : ''} — recebe os prazos e os avisos dos processos desta OAB`]
+          : h('span', { class: 'warn-text' }, 'Sem dono no sistema: escolha quem recebe os prazos (Editar)')),
         h('div', { class: `small ${o.last_error ? 'bad-text' : 'muted'}` },
           o.last_error ? `Erro na última busca: ${o.last_error}` : o.last_check ? `Buscado em ${fmtDateTime(o.last_check)}` : 'Ainda não buscado',
-          o.user_name ? ` · usuário: ${o.user_name}` : '', o.active ? '' : ' · pausado')),
-      canEdit ? h('button', { class: 'btn btn-sm', onclick: () => oabDialog(o, redraw) }, 'Editar') : null)))
+          o.active ? '' : ' · pausado')),
+      canEdit && (state.can.admin || !o.user_id || o.user_id === state.me?.id) ? h('button', { class: 'btn btn-sm', onclick: () => oabDialog(o, redraw) }, 'Editar') : null)))
       : h('p', { class: 'muted' }, 'Cadastre a OAB de cada advogado(a) do escritório. O sistema busca as intimações publicadas no DJEN em nome de cada um.'),
     h('div', { class: 'row wrap notify-who' },
       h('span', { class: 'small' }, 'Quem recebe o aviso das intimações:'),
@@ -81,7 +95,9 @@ async function oabDialog(o, redraw) {
   const name = h('input', { class: 'input', value: o.name || '', placeholder: 'Nome completo como na OAB' });
   const number = h('input', { class: 'input', value: o.number || '', placeholder: 'Ex.: 14.271', inputmode: 'numeric' });
   const uf = h('input', { class: 'input', value: o.uf || 'MT', maxlength: 2, style: { textTransform: 'uppercase' } });
-  const user = h('select', { class: 'input' }, h('option', { value: '' }, '— nenhum —'), team.map((u) => h('option', { value: String(u.id), selected: u.id === o.user_id }, u.name)));
+  const owner = o.id ? o.user_id : state.me?.id;
+  const user = h('select', { class: 'input', disabled: !state.can.admin, title: state.can.admin ? '' : 'Cada advogado cadastra a própria OAB; só o sócio escolhe outra pessoa' },
+    h('option', { value: '' }, '— nenhum —'), team.map((u) => h('option', { value: String(u.id), selected: u.id === owner }, u.name)));
   const active = h('input', { type: 'checkbox', checked: o.active !== 0 });
   modal({
     title: o.id ? 'Editar OAB' : 'Cadastrar OAB',

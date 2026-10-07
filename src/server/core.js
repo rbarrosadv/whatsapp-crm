@@ -531,6 +531,16 @@ export async function createCore({ dataDir, demo = false, version = '', safeStor
     db.setCaseMeta(caseId, meta);
   }
 
+  /** Dono (usuário) da OAB que recebeu as intimações do processo, se houver um só. */
+  function oabOwnerOf(digits) {
+    const oabs = new Map(db.listOabs().map((o) => [String(o.id), o.user_id]));
+    const owners = new Set();
+    for (const i of db.all('SELECT oab_ids FROM intimations WHERE process_digits = ?', String(digits))) {
+      for (const oid of String(i.oab_ids || '').split(',').filter(Boolean)) if (oabs.get(oid)) owners.add(oabs.get(oid));
+    }
+    return owners.size === 1 ? [...owners][0] : null;
+  }
+
   // ---------------------------------------------------------- importar processos
   const importJob = { running: false, phase: '', total: 0, done: 0, created: 0, batch: null, errors: [], userId: null, finishedAt: null };
   const importStatus = () => ({ ...importJob, errors: importJob.errors.slice(-20), withoutClient: db.casesWithoutClient().length });
@@ -1208,8 +1218,23 @@ export async function createCore({ dataDir, demo = false, version = '', safeStor
     },
     // tribunais: OABs acompanhadas, intimações do DJEN, andamentos do DataJud
     'oabs:list': () => db.listOabs(),
-    'oabs:save': (_c, o) => { const id = db.saveOab(o); send('intimations:changed', null); return id; },
-    'oabs:delete': (_c, id) => { db.deleteOab(id); send('intimations:changed', null); },
+    'oabs:save': (ctx, o) => {
+      // cada advogado cadastra/edita a própria OAB; o sócio, a de qualquer um
+      if (ctx.user.role !== 'socio') {
+        const cur = o.id ? db.listOabs().find((x) => x.id === o.id) : null;
+        if (cur && cur.user_id && cur.user_id !== ctx.user.id) throw new Error('Só o sócio muda a OAB de outra pessoa.');
+        o = { ...o, user_id: ctx.user.id };
+      } else if (!o.id && o.user_id === undefined) o = { ...o, user_id: ctx.user.id };
+      const id = db.saveOab(o);
+      send('intimations:changed', null);
+      return id;
+    },
+    'oabs:delete': (ctx, id) => {
+      const cur = db.listOabs().find((x) => x.id === id);
+      if (ctx.user.role !== 'socio' && cur?.user_id && cur.user_id !== ctx.user.id) throw new Error('Só o sócio exclui a OAB de outra pessoa.');
+      db.deleteOab(id);
+      send('intimations:changed', null);
+    },
     'intimations:list': (_c, opts) => db.listIntimations(opts || {}),
     'intimations:check': async (_c, { days } = {}) => checkIntimations({ days: Math.min(60, Math.max(1, Number(days) || 10)) }),
     'intimations:status': () => ({ lastRun: Number(settings.djenLastRun) || null, running: !!checkingIntimations, oabs: db.listOabs(), history: historyStatus() }),
@@ -1254,7 +1279,9 @@ export async function createCore({ dataDir, demo = false, version = '', safeStor
         cid = db.saveClient({ name: nameCase(client_name), origin: 'Intimação', userName: ctx.user.name });
       }
       const id = db.saveCase({ client_id: cid, title: title || it.classe || 'Processo' });
-      db.saveCase({ id, process_number: formatCnj(it.process_number), tribunal: it.tribunal || tribunalOf(it.process_number), court: it.orgao, client_role: client_role || null, responsible_id: ctx.user.id });
+      // responsável = dono da OAB que recebeu a intimação (não quem clicou)
+      const owner = oabOwnerOf(digits);
+      db.saveCase({ id, process_number: formatCnj(it.process_number), tribunal: it.tribunal || tribunalOf(it.process_number), court: it.orgao, client_role: client_role || null, responsible_id: owner || ctx.user.id });
       const clientName = db.getClient(cid)?.name || '';
       for (const p of it.parties) {
         if (p.name && p.name.toLowerCase() !== clientName.toLowerCase()) db.saveParty({ case_id: id, role: p.polo === 'A' ? 'autor' : p.polo === 'P' ? 'reu' : 'outro', name: nameCase(p.name) });
@@ -1302,7 +1329,7 @@ export async function createCore({ dataDir, demo = false, version = '', safeStor
         const id = db.createCaseWithoutClient({
           title: it.title || `Processo ${it.tribunal || ''}`.trim(),
           process_number: it.number, tribunal: it.tribunal, area: it.area || null, court: it.court || null,
-          responsible_id: userByName(it.responsible)?.id || Number(responsibleId) || ctx.user.id,
+          responsible_id: userByName(it.responsible)?.id || oabOwnerOf(it.digits) || Number(responsibleId) || ctx.user.id,
           import_batch: batch, status: 'aberto',
         });
         if (it.parties.length) db.setCaseMeta(id, { parties_found: it.parties.map((p) => ({ name: p.name, polo: p.polo === 'A' ? 'ativo' : 'passivo', from: 'titulo' })) });

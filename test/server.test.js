@@ -916,3 +916,25 @@ test('importar processos do LinkLei: prévia, cadastro sem cliente, DataJud orga
   srv.core.events.off('event', listen);
   assert.ok(notes.some((n) => n.kind === 'prescription' && /faltam 10 dia/.test(n.title)), 'avisa a prescrição');
 });
+
+test('tribunais por advogado: cada um cadastra a própria OAB; processo da intimação fica com o dono da OAB', async () => {
+  const s = client();
+  await s.req('/auth/login', { body: { login: 'barros', password: 'segredo1' } });
+  const advId = await s.call('users:save', { name: 'Ivan Advogado', login: 'ivan', role: 'advogado', password: 'ivanadv1' });
+  const a = client();
+  await a.req('/auth/login', { body: { login: 'ivan', password: 'ivanadv1' } });
+  const oabId = await a.call('oabs:save', { name: 'Ivan Advogado', number: '22.333', uf: 'MT', user_id: 999 });
+  let oab = (await a.call('oabs:list')).find((o) => o.id === oabId);
+  assert.equal(oab.user_id, advId, 'advogado cadastra a OAB em nome dele');
+  const other = (await a.call('oabs:list')).find((o) => o.user_id && o.user_id !== advId);
+  if (other) await assert.rejects(a.call('oabs:save', { ...other, name: 'Outro nome' }), /Só o sócio/);
+  // intimação recebida pela OAB do Ivan, de processo não cadastrado: quem cadastra é o sócio, o responsável é o Ivan
+  db.addIntimation({ ext_id: 'teste-oab-1', date: Date.now(), tribunal: 'TJMT', kind: 'Intimação', orgao: '1ª Vara', classe: 'PROCEDIMENTO COMUM CÍVEL',
+    process_number: '1009999-11.2026.8.11.0041', text: 'Intime-se.', link: '', parties: [{ name: 'CLIENTE DO IVAN', polo: 'A' }], lawyers: [] }, oabId);
+  const caseId = await s.call('courts:import', '10099991120268110041', { client_name: 'Cliente do Ivan' });
+  const k = (await s.call('cases:full', caseId)).case;
+  assert.equal(k.responsible_id, advId, 'responsável é o dono da OAB, não quem clicou');
+  oab = (await s.call('oabs:list')).find((o) => o.id === oabId);
+  await s.call('oabs:save', { ...oab, user_id: null });
+  assert.equal((await s.call('oabs:list')).find((o) => o.id === oabId).user_id, null, 'sócio troca o dono');
+});
