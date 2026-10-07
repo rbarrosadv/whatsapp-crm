@@ -17,8 +17,10 @@ DADOS=/var/lib/barros
 CONF=/etc/barros
 PORTA=3210
 
-say() { printf '\n\033[1;36m==> %s\033[0m\n' "$*"; }
-die() { printf '\n\033[1;31m[ERRO] %s\033[0m\n' "$*" >&2; exit 1; }
+# cores só quando a saída é um terminal de verdade (pelo PowerShell elas viram "[1;36m")
+if [ -t 1 ]; then C_AZ='\033[1;36m'; C_VD='\033[1;32m'; C_VM='\033[1;31m'; C_B='\033[1m'; C_0='\033[0m'; else C_AZ=''; C_VD=''; C_VM=''; C_B=''; C_0=''; fi
+say() { printf "\n${C_AZ}==> %s${C_0}\n" "$*"; }
+die() { printf "\n${C_VM}[ERRO] %s${C_0}\n" "$*" >&2; exit 1; }
 
 [ "$(id -u)" = 0 ] || die "Rode como administrador: coloque 'sudo' antes do comando."
 mkdir -p "$CONF"
@@ -164,12 +166,12 @@ for _ in $(seq 1 30); do
 done
 curl -fsS "http://127.0.0.1:$PORTA/auth/state" >/dev/null 2>&1 || die "O sistema não ligou. Veja o erro com: sudo journalctl -u barros -n 50"
 
-printf '\n\033[1;32m============================================================\033[0m\n'
-printf '\033[1;32m  Pronto! O sistema está no ar.\033[0m\n'
-printf '\033[1;32m============================================================\033[0m\n\n'
+printf "\n${C_VD}============================================================${C_0}\n"
+printf "${C_VD}  Pronto! O sistema está no ar.${C_0}\n"
+printf "${C_VD}============================================================${C_0}\n\n"
 printf '  Endereço:  https://%s\n\n' "$DOMINIO"
 if [ -f "$DADOS/codigo-primeiro-acesso.txt" ]; then
-  printf '  Código de primeiro acesso:  \033[1m%s\033[0m\n' "$(cat "$DADOS/codigo-primeiro-acesso.txt")"
+  printf "  Código de primeiro acesso:  ${C_B}%s${C_0}\n" "$(cat "$DADOS/codigo-primeiro-acesso.txt")"
   printf '  (use na tela "Primeiro acesso" para criar a conta do sócio)\n\n'
 fi
 printf '  Se o endereço não abrir em 2 minutos, confira se as portas 80 e 443\n'
