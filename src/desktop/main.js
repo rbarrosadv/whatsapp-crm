@@ -106,7 +106,9 @@ function createWindow() {
       spellcheck: true,
     },
   });
-  if (config.windowMaximized) win.maximize();
+  // Maximizar só depois de mostrar: maximizada ainda escondida, o Windows às
+  // vezes deixa a página com o tamanho antigo (faixa vazia do lado direito).
+  win.once('show', () => { if (config.windowMaximized) setTimeout(() => win && !win.isDestroyed() && win.maximize(), 50); });
   setupSpellcheck();
   win.webContents.session.setPermissionRequestHandler((_wc, permission, cb) => {
     cb(['media', 'notifications', 'clipboard-sanitized-write'].includes(permission));
