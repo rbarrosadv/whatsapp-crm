@@ -4,7 +4,7 @@
 // pessoa confere). Processos que aparecem nas intimações e ainda não estão no
 // sistema podem ser cadastrados daqui.
 import { h, fill, modal, toast, errToast, confirmDialog, fmtDateTime, toLocalInput, fromLocalInput, openExternal, normalize } from '../util.js';
-import { state, api, openClient } from '../store.js';
+import { state, api, on, openClient } from '../store.js';
 import { openCase } from './casemodal.js';
 import { icon } from '../icons.js';
 
@@ -27,6 +27,7 @@ export async function renderIntimations(el, redraw) {
 
   fill(el,
     oabPanel(st, canEdit, redraw),
+    st.oabs.some((o) => o.active) ? historyPanel(st.history, redraw) : null,
     unknown.length ? unknownPanel(unknown, redraw) : null,
     h('div', { class: 'row wrap intim-tools' },
       h('div', { class: 'segmented' },
@@ -97,6 +98,36 @@ async function oabDialog(o, redraw) {
       },
     ].filter(Boolean),
   });
+}
+
+// ------------------------------------------------------------ buscar meus processos (histórico do DJEN)
+
+let historyOff = null;
+function historyPanel(hs, redraw) {
+  const months = h('select', { class: 'input select-sm' },
+    [[6, 'últimos 6 meses'], [12, 'último ano'], [24, 'últimos 2 anos']].map(([v, l]) => h('option', { value: v, selected: v === 12 }, l)));
+  const bar = h('div', { class: 'hist-bar' }, h('span'));
+  const info = h('span', { class: 'muted small' });
+  const btn = h('button', { class: 'btn btn-primary btn-sm' }, [icon('search', 15), 'Buscar meus processos']);
+  const show = (x) => {
+    const running = !!x?.running;
+    btn.disabled = running;
+    months.disabled = running;
+    bar.style.display = running ? '' : 'none';
+    if (running) bar.firstChild.style.width = `${Math.round((x.done / Math.max(1, x.total)) * 100)}%`;
+    info.textContent = running ? `Buscando… ${x.done} de ${x.total} meses · ${x.processes} processo(s) até agora`
+      : x?.finished ? `Última busca: ${fmtDateTime(x.finished)} · ${x.processes} processo(s) com publicações${x.errors?.length ? ` · ${x.errors.length} mês(es) com erro` : ''}` : '';
+  };
+  btn.onclick = async () => {
+    try { show(await api('courts:history', { months: Number(months.value) })); toast('Buscando no DJEN, mês a mês. Pode continuar usando o sistema; aviso quando terminar.', 'info', 7000); } catch (e) { errToast(e); }
+  };
+  historyOff?.();
+  historyOff = on('courts-history', (x) => { if (!bar.isConnected) return; show(x); if (!x.running) redraw(); });
+  show(hs);
+  return h('div', { class: 'panel hist-panel' },
+    h('div', { class: 'panel-head' }, h('h3', null, 'Buscar meus processos'), h('div', { class: 'row' }, months, btn)),
+    h('p', { class: 'muted small' }, 'Procura no Diário de Justiça Eletrônico (DJEN) todas as publicações das OABs acima no período e junta os números dos processos. Os que ainda não estão no sistema aparecem logo abaixo para cadastrar. Processos sem nenhuma publicação no período não aparecem (o DataJud não permite buscar por advogado).'),
+    bar, info);
 }
 
 // ------------------------------------------------------------ processos encontrados

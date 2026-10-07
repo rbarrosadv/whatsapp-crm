@@ -617,6 +617,10 @@ try {
   await page.waitForSelector('.intim.intim-nova', { timeout: 15000 });
   check(await page.locator('.intim.intim-nova').count() >= 2, 'intimações do DJEN para conferir');
   await shot(page, '05k-intimacoes');
+  await page.locator('.hist-panel select').selectOption('6');
+  await page.click('.hist-panel button:has-text("Buscar meus processos")');
+  await page.waitForSelector('.hist-panel:has-text("Última busca")', { timeout: 20000 });
+  check(true, 'buscar meus processos no DJEN (6 meses, mês a mês)');
   await page.locator('.intim.intim-nova', { hasText: 'Plano anual' }).locator('button:has-text("Criar prazo")').click();
   await page.waitForSelector('.modal .field:has-text("Vence em") input');
   check((await page.locator('.modal .field:has-text("Vence em") input').inputValue()).length > 0, 'vencimento sugerido em dias úteis');

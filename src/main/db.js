@@ -1611,7 +1611,8 @@ export function caseByProcessNumber(num) {
 }
 
 /** Grava a intimação se ainda não existe; devolve o id novo (ou null se já tinha). */
-export function addIntimation(i, oabId) {
+/** Grava a publicação do DJEN (`status` 'historico' = antiga, achada na busca do histórico: não vai para "conferir"). */
+export function addIntimation(i, oabId, status = 'nova') {
   const have = get('SELECT id, oab_ids FROM intimations WHERE ext_id = ?', i.ext_id);
   if (have) {
     const ids = new Set(String(have.oab_ids || '').split(',').filter(Boolean));
@@ -1619,10 +1620,10 @@ export function addIntimation(i, oabId) {
     return null;
   }
   const caseId = caseByProcessNumber(i.process_number);
-  return Number(run(`INSERT INTO intimations (ext_id, oab_ids, date, tribunal, kind, doc_kind, orgao, classe, process_number, process_digits, text, link, parties, lawyers, case_id, created_at)
-                     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+  return Number(run(`INSERT INTO intimations (ext_id, oab_ids, date, tribunal, kind, doc_kind, orgao, classe, process_number, process_digits, text, link, parties, lawyers, case_id, status, created_at)
+                     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
   i.ext_id, oabId ? String(oabId) : null, i.date, i.tribunal, i.kind, i.doc_kind || null, i.orgao, i.classe, i.process_number, digitsOf(i.process_number),
-  i.text, i.link, JSON.stringify(i.parties || []), JSON.stringify(i.lawyers || []), caseId, now()).lastInsertRowid);
+  i.text, i.link, JSON.stringify(i.parties || []), JSON.stringify(i.lawyers || []), caseId, status === 'historico' ? 'historico' : 'nova', now()).lastInsertRowid);
 }
 
 const intimationRow = (r) => (r ? {

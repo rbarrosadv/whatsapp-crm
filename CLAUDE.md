@@ -137,6 +137,13 @@ Motor (`src/main`, sem Electron apesar do nome da pasta):
   consulta do DataJud (histórico) não avisa; clique abre o processo
   (`action.case`, `notify.js`). DJEN e DataJud rodam a cada 6 h (6h–22h);
   `core.runCourts()` roda na hora (testes).
+  **Buscar meus processos** (`courts:history {months}` → `scanHistory`): DJEN
+  pelas OABs ativas em janelas de 30 dias para trás (até 24 meses, 1,5 s entre
+  janelas, uma nova tentativa após 10 s em erro), em segundo plano com
+  progresso pelo evento `courts:history`; publicações com mais de 10 dias entram
+  como `status='historico'` (não vão para "conferir"), as recentes como `nova`;
+  os processos ainda não cadastrados aparecem em "Processos encontrados"
+  (`unknownProcesses`). Aviso ao terminar para quem pediu.
 - `extenso.js` — valor em reais por extenso (recibo).
 - **Financeiro** (v12): parcelas ganham `method`, `paid_amount`, `paid_by`,
   `receipt_no` (`registerPayment`, `receiptNumber` sequencial na 1ª emissão);

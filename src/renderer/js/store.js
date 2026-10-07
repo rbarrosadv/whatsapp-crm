@@ -76,6 +76,7 @@ export async function bootstrap() {
   window.api.on('cases:changed', (jid) => emit('cases', jid));
   window.api.on('clients:changed', (id) => emit('clients', id));
   window.api.on('intimations:changed', () => emit('intimations'));
+  window.api.on('courts:history', (st) => emit('courts-history', st));
   window.api.on('leads:changed', (id) => emit('leads', id));
   window.api.on('finance:changed', () => emit('finance'));
   window.api.on('ui:open-chat', (jid) => openChat(jid));

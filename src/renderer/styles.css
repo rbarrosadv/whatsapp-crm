@@ -1154,3 +1154,5 @@ h2, h3 { letter-spacing: -0.01em; }
   .panel { padding-left: 14px; padding-right: 14px; }
   .viz-plot { overflow: hidden; }
 }
+.hist-bar { height: 6px; border-radius: 3px; background: var(--panel-3); overflow: hidden; margin: 6px 0; }
+.hist-bar > span { display: block; height: 100%; width: 0; background: var(--accent); transition: width .4s; }

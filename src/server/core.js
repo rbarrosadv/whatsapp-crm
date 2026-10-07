@@ -462,6 +462,62 @@ export async function createCore({ dataDir, demo = false, version = '', safeStor
     } finally { datajudRunning = false; }
   }
 
+  /**
+   * "Buscar meus processos": percorre o DJEN mês a mês (até 24 meses) pelas OABs
+   * e junta os números de processo das publicações. As antigas entram como
+   * 'historico' (não vão para "conferir"); os processos que ainda não estão no
+   * sistema aparecem em "Processos encontrados" para cadastrar. Devagar, sem rajadas.
+   */
+  let history = { running: false };
+  const historyStatus = () => ({ ...history, processes: history.processes?.size || 0 });
+  function scanHistory({ months = 12, userId } = {}) {
+    if (history.running) return historyStatus();
+    const oabs = db.listOabs().filter((o) => o.active);
+    if (!oabs.length) throw new Error('Cadastre a OAB antes de buscar.');
+    const n = Math.min(24, Math.max(1, Number(months) || 12));
+    history = { running: true, months: n, done: 0, total: oabs.length * n, found: 0, processes: new Set(), errors: [], started: Date.now() };
+    const pause = (ms) => new Promise((r) => setTimeout(r, demo ? 5 : ms));
+    (async () => {
+      for (const o of oabs) {
+        for (let w = 0; w < n; w++) {
+          const to = Date.now() - w * 30 * DAY;
+          const from = to - 30 * DAY + DAY;
+          let items = null;
+          for (let attempt = 0; attempt < 2 && !items; attempt++) {
+            try { items = await courts.djenByOab({ number: o.number, uf: o.uf, from, to, maxPages: 30 }); } catch (e) {
+              if (attempt) history.errors.push(`OAB ${o.number}/${o.uf}, ${new Date(from).toLocaleDateString('pt-BR')}: ${e.message}`);
+              else await pause(10000); // o DJEN pediu calma: espera e tenta de novo
+            }
+          }
+          for (const it of items || []) {
+            const recent = it.date && it.date > Date.now() - 10 * DAY;
+            const id = db.addIntimation(it, o.id, recent ? 'nova' : 'historico');
+            if (it.process_number) history.processes.add(String(it.process_number).replace(/\D/g, ''));
+            if (!id) continue;
+            history.found++;
+            const row = db.getIntimation(id);
+            if (row.case_id) db.addMove({ case_id: row.case_id, ts: it.date, text: `${it.kind}${it.doc_kind ? ` (${it.doc_kind})` : ''} — ${it.text.slice(0, 600)}`, source: 'djen', ext_id: `djen:${it.ext_id}` });
+          }
+          history.done++;
+          send('courts:history', historyStatus());
+          await pause(1500);
+        }
+      }
+    })().catch((e) => history.errors.push(e.message)).finally(() => {
+      history.running = false;
+      history.finished = Date.now();
+      const pending = db.unknownProcesses().length;
+      send('courts:history', historyStatus());
+      send('intimations:changed', null);
+      notify({
+        kind: 'courts', title: 'Busca dos seus processos concluída',
+        body: `${history.processes.size} processo(s) com publicações no DJEN; ${pending} ainda não cadastrado(s) no sistema.`,
+        action: { view: 'legal', tab: 'intimacoes' },
+      }, userId ? { user: userId } : undefined);
+    });
+    return historyStatus();
+  }
+
   /** Relógio dos tribunais: DJEN e DataJud a cada 6 h (das 6h às 22h). */
   function courtsTick() {
     const hour = new Date().getHours();
@@ -972,7 +1028,8 @@ export async function createCore({ dataDir, demo = false, version = '', safeStor
     'oabs:delete': (_c, id) => { db.deleteOab(id); send('intimations:changed', null); },
     'intimations:list': (_c, opts) => db.listIntimations(opts || {}),
     'intimations:check': async (_c, { days } = {}) => checkIntimations({ days: Math.min(60, Math.max(1, Number(days) || 10)) }),
-    'intimations:status': () => ({ lastRun: Number(settings.djenLastRun) || null, running: !!checkingIntimations, oabs: db.listOabs() }),
+    'intimations:status': () => ({ lastRun: Number(settings.djenLastRun) || null, running: !!checkingIntimations, oabs: db.listOabs(), history: historyStatus() }),
+    'courts:history': (ctx, { months } = {}) => scanHistory({ months, userId: ctx.user.id }),
     'intimations:set': (ctx, ids, status) => {
       for (const id of ids || []) db.setIntimation(id, { status, handled_by: ctx.user.name, handled_at: Date.now() });
       send('intimations:changed', null);

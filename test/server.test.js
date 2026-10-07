@@ -768,3 +768,25 @@ test('avisos no celular e depois da audiência: inscrição do aparelho, escolha
   devs = await c.call('push:unsubscribe', sub.endpoint);
   assert.equal(devs.length, 0);
 });
+
+test('buscar meus processos: varre o DJEN mês a mês pela OAB, publicações antigas não vão para "conferir"', async () => {
+  const c = client();
+  await c.req('/auth/login', { body: { login: 'barros', password: 'segredo1' } });
+  let st = await c.call('intimations:status');
+  if (!st.oabs.some((o) => o.active)) await c.call('oabs:save', { name: 'Rafael Augusto de Barros Correa', number: '14.271', uf: 'MT' });
+  const novasAntes = (await c.call('intimations:list', { status: 'nova' })).length;
+  const sub = { endpoint: 'https://push.exemplo.com/aparelho-hist', keys: { p256dh: 'BOr' + 'y'.repeat(84), auth: 'abcdefghijklmnopqrstuv' } };
+  await c.call('push:subscribe', sub, 'Celular');
+  const h = await c.call('courts:history', { months: 3 });
+  assert.equal(h.running, true);
+  assert.equal(h.total, 3 * (await c.call('intimations:status')).oabs.filter((o) => o.active).length);
+  for (let i = 0; i < 100 && (st = await c.call('intimations:status')).history.running; i++) await wait(50);
+  assert.equal(st.history.running, false);
+  assert.equal(st.history.done, st.history.total, 'todos os meses buscados');
+  assert.ok(st.history.processes >= 1, 'achou processos nas publicações');
+  assert.deepEqual(st.history.errors, []);
+  assert.ok((await c.call('intimations:list', { status: 'nova' })).length >= novasAntes);
+  const out = await c.call('push:outbox');
+  assert.ok(out.some((x) => x.title === 'Busca dos seus processos concluída'), 'avisa quando termina');
+  await c.call('push:unsubscribe', sub.endpoint);
+});
