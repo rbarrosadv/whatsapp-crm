@@ -2,6 +2,7 @@
 // abertas; cada uma decide se mostra, conforme as preferências da pessoa
 // (avisos ligados, prévia do texto, modo discreto) e o que ela está vendo.
 import { state, on, openChat, setView, emit } from './store.js';
+import { setupPush } from './push.js';
 
 function showNative(title, body, onClick) {
   if (!('Notification' in window) || Notification.permission !== 'granted') return false;
@@ -15,7 +16,7 @@ function showNative(title, body, onClick) {
   return true;
 }
 
-function runAction(a) {
+export function runAction(a) {
   if (!a) return;
   if (a.case) import('./views/casemodal.js').then((m) => m.openCase(a.case, { tab: a.tab || 'dados' }));
   else if (a.chat) openChat(a.chat);
@@ -24,6 +25,7 @@ function runAction(a) {
 }
 
 export function setupNotifications() {
+  setupPush(runAction);
   // o navegador só pergunta depois de um clique da pessoa
   if ('Notification' in window && Notification.permission === 'default') {
     const ask = () => { Notification.requestPermission().catch(() => {}); document.removeEventListener('click', ask); };

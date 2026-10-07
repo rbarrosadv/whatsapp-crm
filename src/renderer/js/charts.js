@@ -68,7 +68,7 @@ function withTable(chartEl, tableEl) {
 export function columnChart({ rows, series, fmt, height = 240 }) {
   const wrap = h('div', { class: 'viz-plot' });
   const draw = () => {
-    const W = Math.max(320, wrap.clientWidth || 640);
+    const W = Math.max(260, wrap.clientWidth || 640);
     const H = height;
     const m = { l: 56, r: 8, t: 10, b: 26 };
     const iw = W - m.l - m.r;

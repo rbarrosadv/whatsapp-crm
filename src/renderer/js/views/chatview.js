@@ -104,6 +104,7 @@ function renderHeader() {
   }, t ? named(t, 14) : [icon('help', 14), 'Classificar'], ' ▾');
   fill(current.classifyEl, classifyBar(chat));
   fill(current.headerEl, 
+    h('button', { class: 'icon-btn mobile-back', title: 'Voltar para as conversas', onclick: () => openChat(null) }, icon('back', 22)),
     avatarEl(chat, 40),
     h('div', { class: 'chat-head-info', onclick: () => root._togglePanel?.(true) },
       h('div', { class: 'chat-head-name' }, chat.display_name),
@@ -536,7 +537,8 @@ function renderComposer() {
   const chat = state.chats.get(c.jid);
   const draftKey = `draft:${c.jid}`;
   const ta = h('textarea', {
-    class: 'composer-input', rows: 1, placeholder: state.settings.signMessages === false || !state.me
+    class: 'composer-input', rows: 1, placeholder: window.matchMedia('(max-width: 760px)').matches ? 'Mensagem'
+      : state.settings.signMessages === false || !state.me
       ? 'Digite uma mensagem  ( / para respostas rápidas )'
       : `Mensagem — sai assinada como “${state.me.signature}”  ( / para respostas rápidas )`,
     value: sessionStorage.getItem(draftKey) || '',
@@ -733,7 +735,7 @@ function renderComposer() {
     },
   }, icon('paperclip', 20));
   const quickBtn = h('button', {
-    class: 'icon-btn', title: 'Respostas rápidas',
+    class: 'icon-btn quick', title: 'Respostas rápidas',
     onclick: (e) => {
       if (!state.quickReplies.length) { toast('Cadastre respostas rápidas em Configurações.'); return; }
       popupMenu(e.currentTarget, state.quickReplies.map((r) => ({ label: `/${r.shortcut} — ${r.text.slice(0, 50)}`, onClick: () => applyQuick(r) })));

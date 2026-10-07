@@ -722,3 +722,49 @@ test('recibo em PDF: imagem da assinatura, certificado A3 assinado no app de des
   await c.call('receipts:clearImage');
   await c.call('settings:set', 'receiptSignMode', 'none');
 });
+
+test('avisos no celular e depois da audiência: inscrição do aparelho, escolha do que receber, aviso da audiência que terminou e lista no Hoje', async () => {
+  const c = client();
+  await c.req('/auth/login', { body: { login: 'barros', password: 'segredo1' } });
+  const me = (await c.call('bootstrap')).me;
+  const info = await c.call('push:info');
+  assert.match(info.key, /^[A-Za-z0-9_-]{80,}$/, 'chave pública VAPID');
+  assert.equal(info.prefs.mensagens, false, 'mensagens do WhatsApp não vão ao celular por padrão');
+  const sub = { endpoint: 'https://push.exemplo.com/aparelho-1', keys: { p256dh: 'BOr' + 'x'.repeat(84), auth: 'abcdefghijklmnopqrstuv' } };
+  let devs = await c.call('push:subscribe', sub, 'Celular de teste');
+  assert.equal(devs.length, 1);
+  await c.call('push:subscribe', sub, 'Celular de teste');
+  assert.equal((await c.call('push:info')).devices.length, 1, 'mesmo aparelho não duplica');
+  await assert.rejects(c.call('push:subscribe', { endpoint: 'x' }), /inválida/);
+  assert.equal(await c.call('push:test'), 1);
+
+  // audiência que terminou há 1 h: aviso para o responsável (celular) e lista no Hoje
+  const cid = await c.call('clients:save', { name: 'Cliente da Audiência' });
+  const k = await c.call('cases:save', { client_id: cid, title: 'Ação de cobrança' });
+  const start = Date.now() - 3 * 3600e3;
+  const t = await c.call('tasks:save', { title: 'Audiência de conciliação', kind: 'audiencia', due_at: start, end_at: start + 2 * 3600e3, case_id: k, assignee_id: me.id });
+  await srv.core.runChecks();
+  const out = await c.call('push:outbox');
+  const hearing = out.find((x) => /Audiência terminou — Cliente da Audiência/.test(x.title));
+  assert.ok(hearing, 'aviso da audiência foi para o celular');
+  assert.deepEqual(hearing.action, { case: k, tab: 'prazos' });
+  await srv.core.runChecks();
+  assert.equal((await c.call('push:outbox')).filter((x) => /Cliente da Audiência/.test(x.title)).length, 1, 'avisa uma vez só');
+  const day = new Date(); day.setHours(0, 0, 0, 0);
+  const range = { dayStart: day.getTime(), dayEnd: day.getTime() + 86400e3, weekStart: day.getTime(), weekEnd: day.getTime() + 7 * 86400e3 };
+  let sum = await c.call('today:summary', { ...range, scope: 'mine' });
+  assert.ok(sum.hearings.some((h) => h.id === t), 'Hoje: audiência para agendar prazos');
+  await c.call('hearings:followUp', t, true);
+  sum = await c.call('today:summary', { ...range, scope: 'mine' });
+  assert.ok(!sum.hearings.some((h) => h.id === t));
+
+  // desligar um tipo de aviso no celular
+  await c.call('settings:set', 'pushKinds', { ...info.prefs, agenda: false });
+  const before = (await c.call('push:outbox')).length;
+  await c.call('tasks:save', { title: 'Lembrete sem celular', due_at: Date.now() - 1000 });
+  await srv.core.runChecks();
+  assert.equal((await c.call('push:outbox')).length, before, 'lembrete não foi ao celular (agenda desligada)');
+  await c.call('settings:set', 'pushKinds', null);
+  devs = await c.call('push:unsubscribe', sub.endpoint);
+  assert.equal(devs.length, 0);
+});

@@ -45,6 +45,7 @@ const P = {
   link: '<path d="M10 13a5 5 0 0 0 7.5.5l3-3a5 5 0 0 0-7-7l-1.7 1.7"/><path d="M14 11a5 5 0 0 0-7.5-.5l-3 3a5 5 0 0 0 7 7l1.7-1.7"/>',
   filter: '<path d="M22 3H2l8 9.5V19l4 2v-8.5Z"/>',
   arrowIn: '<path d="M17 7 7 17M17 17H7V7"/>',
+  back: '<path d="m15 18-6-6 6-6"/>',
   arrowOut: '<path d="M7 17 17 7M7 7h10v10"/>',
   trendUp: '<path d="m22 7-8.5 8.5-5-5L2 17"/><path d="M16 7h6v6"/>',
   open: '<path d="M15 3h6v6M10 14 21 3M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/>',

@@ -84,6 +84,10 @@ async function main() {
     try { localStorage.setItem('crmPanelHidden', hide ? '1' : '0'); } catch { /* ignore */ }
   };
   try { if (localStorage.getItem('crmPanelHidden') === '1') crmCol.classList.add('hidden'); } catch { /* ignore */ }
+  // celular: a ficha do contato abre por cima da conversa, então começa fechada
+  const phone = window.matchMedia('(max-width: 760px)');
+  if (phone.matches) crmCol.classList.add('hidden');
+  on('active', () => { if (phone.matches) crmCol.classList.add('hidden'); });
 
   const banner = h('div', { class: 'banner-wrap hidden' });
   const overlay = h('div', { class: 'connect-overlay hidden' });
@@ -113,6 +117,8 @@ async function main() {
     document.body.dataset.view = v;
   };
   on('view', showView);
+  // celular: com uma conversa aberta, ela ocupa a tela (a lista volta pelo botão ←)
+  on('active', (jid) => document.body.classList.toggle('chat-open', !!jid));
 
   const updateStatus = () => {
     const s = state.status.state;

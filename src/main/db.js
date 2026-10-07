@@ -8,7 +8,7 @@ import fs from 'node:fs';
 
 let db;
 
-const SCHEMA_VERSION = 17;
+const SCHEMA_VERSION = 18;
 
 // Tipos de contato (editáveis). `personal` = não conta como trabalho
 // (fica fora de "Aguardando resposta" e dos avisos de conversa esquecida).
@@ -407,6 +407,17 @@ function migrate() {
     CREATE INDEX IF NOT EXISTS lead_contacts_lead ON lead_contacts(lead_id);
     CREATE INDEX IF NOT EXISTS lead_contacts_client ON lead_contacts(client_id);
   `);
+  // versão 18: avisos no celular (uma inscrição por aparelho) e acompanhamento depois da audiência
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS push_subs (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      endpoint TEXT NOT NULL UNIQUE, p256dh TEXT NOT NULL, auth TEXT NOT NULL,
+      agent TEXT, created_at INTEGER NOT NULL, last_ok INTEGER, fails INTEGER NOT NULL DEFAULT 0
+    );
+  `);
+  addColumn('tasks', 'followup_notified', 'INTEGER NOT NULL DEFAULT 0');
+  addColumn('tasks', 'followup_done_at', 'INTEGER');
   // versão 17: data de encerramento do caso (relatórios)
   addColumn('cases', 'closed_at', 'INTEGER');
   addColumn('cases', 'datajud_checked_at', 'INTEGER');
@@ -455,6 +466,7 @@ function migrate() {
   if (version < 9) migrateV9();
   if (version < 14) migrateV14();
   if (version < 16) migrateV16();
+  if (version < 18) run("UPDATE tasks SET followup_notified = 1, followup_done_at = COALESCE(followup_done_at, ?) WHERE kind = 'audiencia' AND COALESCE(end_at, due_at) < ?", now(), now());
   if (version < 17) run("UPDATE cases SET closed_at = updated_at WHERE status <> 'aberto' AND closed_at IS NULL");
   run('INSERT OR REPLACE INTO meta (key, value) VALUES (?, ?)', 'schema', String(SCHEMA_VERSION));
 }
@@ -1901,6 +1913,26 @@ export function tasksInRange(from, to) {
   return all(`SELECT k.*, c.title AS case_title, c.process_number FROM tasks k LEFT JOIN cases c ON c.id = k.case_id
               WHERE k.due_at IS NOT NULL AND k.due_at >= ? AND k.due_at < ?`, from, to);
 }
+/**
+ * Audiências que já terminaram (fim marcado, ou 2 h depois do início) e ainda
+ * não tiveram o acompanhamento marcado como feito: agendar os prazos que saíram
+ * e ficar de olho nas intimações (ata, sentença).
+ */
+const HEARING_END = 'COALESCE(k.end_at, k.due_at + 7200000)';
+export function hearingsToFollowUp({ assignee } = {}) {
+  return all(`${TASK_SELECT} WHERE k.kind = 'audiencia' AND k.due_at IS NOT NULL AND ${HEARING_END} <= ?
+              AND k.followup_done_at IS NULL AND ${HEARING_END} > ?${assignee ? ' AND (k.assignee_id = ? OR k.assignee_id IS NULL)' : ''}
+              ORDER BY k.due_at`, now(), now() - 30 * 864e5, ...(assignee ? [assignee] : []));
+}
+export function hearingsToNotify() {
+  return all(`SELECT k.*, c.title AS case_title, c.responsible_id, (SELECT name FROM clients WHERE id = c.client_id) AS client_name
+              FROM tasks k LEFT JOIN cases c ON c.id = k.case_id
+              WHERE k.kind = 'audiencia' AND k.due_at IS NOT NULL AND k.followup_notified = 0 AND k.followup_done_at IS NULL
+                AND ${HEARING_END} <= ?`, now());
+}
+export function markHearingNotified(id) { run('UPDATE tasks SET followup_notified = 1 WHERE id = ?', id); }
+export function setHearingFollowUp(id, done = true) { run("UPDATE tasks SET followup_done_at = ? WHERE id = ? AND kind = 'audiencia'", done ? now() : null, id); }
+
 export function dueTasksToNotify() {
   return all('SELECT * FROM tasks WHERE done = 0 AND notified = 0 AND due_at IS NOT NULL AND due_at <= ?', now());
 }

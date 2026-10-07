@@ -179,6 +179,18 @@ function dayView(sum, events, awaiting) {
       action: 'Conferir', onAction: () => openLegal('intimacoes'),
     })), sum.intimations.length > 6 ? `e mais ${sum.intimations.length - 6}` : null));
   }
+  if (sum.hearings?.length) {
+    groups.unshift(group('Audiências realizadas: agendar prazos', 'Registre o resultado, agende os prazos que saíram e confira as intimações (ata, sentença)',
+      sum.hearings.slice(0, 6).map((t) => actionRow({
+        who: t.client_name || t.case_title || 'Audiência', clientId: t.client_id,
+        text: `${t.title}${t.case_title && t.client_name ? ` · ${t.case_title}` : ''}`,
+        meta: `foi em ${new Date(t.due_at).toLocaleDateString('pt-BR')} às ${fmtTime(t.due_at)}`,
+        late: Date.now() - t.due_at > 2 * DAY,
+        action: 'Agendar prazo',
+        onAction: () => taskDialog({ kind: 'prazo', case_id: t.case_id, jid: t.jid, title: 'Prazo — ' }),
+        secondary: { label: 'Feito', onClick: () => api('hearings:followUp', t.id, true).then(render).catch(errToast) },
+      })), sum.hearings.length > 6 ? `e mais ${sum.hearings.length - 6}` : null));
+  }
   if (sum.docRequests?.length) {
     groups.push(group('Documentos pedidos e não recebidos', 'Pedidos há mais de 3 dias', sum.docRequests.slice(0, 6).map((r) => actionRow({
       who: r.client_name || 'Cliente', clientId: r.client_id,

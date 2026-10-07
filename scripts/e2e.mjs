@@ -488,13 +488,22 @@ try {
   await page.waitForSelector('.view.active .table tbody tr:has-text("Mariana Souza")');
   check(true, 'parcela recebida aparece em Pagas');
 
-  // 7) painel Hoje com o que foi criado até aqui
+  // 7) painel Hoje com o que foi criado até aqui (e uma audiência que já aconteceu)
+  await page.evaluate(() => window.api.call('tasks:save', { title: 'Audiência de instrução (ontem)', kind: 'audiencia', due_at: Date.now() - 26 * 3600e3 }));
   await page.click('.rail-btn[title="Hoje"]');
   await page.waitForSelector('.today-grid');
   check(await page.locator('.view-today .stat').count() >= 5, 'painel Hoje com os números do dia (sócio vê o a receber)');
   await page.waitForSelector('.today-group .action-row:has-text("Responder"), .today-group .task', { timeout: 5000 });
   check(true, 'painel Hoje lista as próximas ações');
   await shot(page, '05b-hoje');
+  const hearingRow = page.locator('.today-group:has-text("Audiências realizadas") .action-row:has-text("Audiência de instrução (ontem)")');
+  await hearingRow.waitFor();
+  await hearingRow.locator('button:has-text("Agendar prazo")').click();
+  check((await page.locator('.modal select').first().inputValue()) === 'prazo', 'depois da audiência: agendar prazo já abre como prazo');
+  await page.click('.modal button:has-text("Cancelar")');
+  await hearingRow.locator('button:has-text("Feito")').click();
+  await hearingRow.waitFor({ state: 'detached' });
+  check(true, 'audiência realizada sai da lista ao marcar Feito');
   await page.click('.view-today .seg:has-text("Minha semana")');
   await page.waitForSelector('.week-cols .week-col.today');
   await shot(page, '05c-semana');
@@ -708,6 +717,11 @@ try {
   await page.click('.rail-btn[title="Configurações"]');
   await page.waitForSelector('.settings-grid');
   await shot(page, '09-settings');
+  await page.waitForSelector('.push-cfg label.check', { timeout: 10000 });
+  const pushUi = await page.evaluate(() => ({ sw: 'serviceWorker' in navigator, pm: 'PushManager' in window, text: document.querySelector('.push-cfg').innerText }));
+  check(await page.locator('.push-cfg label.check').count() >= 4
+    && (pushUi.pm ? /Ativar avisos neste aparelho/.test(pushUi.text) : /não recebe avisos/.test(pushUi.text)), 'avisos no celular: ativar e escolher o que receber');
+
   await page.click('.settings-grid button:has-text("Testar conexão")');
   await page.waitForSelector('.modal .diag-step', { timeout: 40000 });
   await shot(page, '09b-diagnostico');

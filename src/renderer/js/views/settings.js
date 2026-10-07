@@ -3,6 +3,7 @@
 import { h, fill, modal, toast, errToast, confirmDialog, formatPhone, phoneOf, PALETTE, downloadUrl, fmtDateTime, pickFiles, uploadFiles } from '../util.js';
 import { state, on, api, setSetting } from '../store.js';
 import { icon, named, iconName, PICK_ICONS } from '../icons.js';
+import { pushSupported, needsInstall, currentSubscription, enablePush, disablePush } from '../push.js';
 
 let root;
 
@@ -214,6 +215,8 @@ function render() {
               api('wa:logout').catch(errToast);
             },
           }, 'Desconectar WhatsApp'))),
+
+      section('Avisos no celular', pushSection()),
 
       section('Notificações e comportamento',
         toggle('notifications', 'Avisos de novas mensagens', 'Mostra um aviso no computador ou no celular quando chega mensagem (vale só para você).'),
@@ -466,6 +469,38 @@ export function pipelineEditor(p) {
       },
     ],
   });
+}
+
+/** Avisos no celular: ativar neste aparelho, aparelhos ativados, o que receber. */
+function pushSection() {
+  const el = h('div', { class: 'stack push-cfg' }, h('p', { class: 'muted small' }, 'Carregando…'));
+  const draw = async () => {
+    let info;
+    let sub = null;
+    try { [info, sub] = await Promise.all([api('push:info'), currentSubscription().catch(() => null)]); } catch (e) { fill(el, h('p', { class: 'muted small' }, e.message)); return; }
+    const here = sub && info.devices.some((d) => d.endpoint === sub.endpoint);
+    const act = (fn, ok) => async () => { try { await fn(); if (ok) toast(ok, 'success'); draw(); } catch (e) { errToast(e); } };
+    fill(el,
+      h('p', { class: 'muted small' }, 'Prazos, audiências, intimações e cobranças chegam no seu celular mesmo com o sistema fechado. Quando você está usando o sistema no computador, o celular não toca à toa.'),
+      window.desktop?.isDesktop ? h('p', { class: 'small' }, 'Este é o app do computador: aqui os avisos aparecem no Windows. Para receber no celular, abra o sistema no navegador do celular e ative por lá.')
+        : !pushSupported() ? h('p', { class: 'small' }, window.isSecureContext ? 'Este navegador não recebe avisos. No Android use o Chrome; no iPhone, instale o app na tela de início (Safari → Compartilhar → Adicionar à Tela de Início).' : 'Os avisos no celular precisam do endereço seguro do servidor (https://…).')
+          : needsInstall() ? h('p', { class: 'small' }, 'No iPhone: toque em Compartilhar → “Adicionar à Tela de Início”, abra o sistema pelo ícone Barros e ative os avisos por lá.')
+            : h('div', { class: 'row wrap' },
+              here ? h('span', { class: 'status-pill ok' }, 'Avisos ativados neste aparelho') : null,
+              here ? h('button', { class: 'btn btn-sm', onclick: act(disablePush, 'Avisos desativados neste aparelho') }, 'Desativar aqui')
+                : h('button', { class: 'btn btn-primary btn-sm', onclick: act(enablePush, 'Avisos ativados neste aparelho') }, [icon('bell', 15), 'Ativar avisos neste aparelho'])),
+      info.devices.length ? h('div', { class: 'field' }, h('span', null, 'Seus aparelhos com avisos'),
+        info.devices.map((d) => h('div', { class: 'list-row' },
+          h('span', { class: 'grow' }, d.agent || 'Aparelho', sub?.endpoint === d.endpoint ? h('span', { class: 'muted small' }, ' (este)') : null),
+          h('span', { class: 'muted small' }, d.last_ok ? `último aviso ${fmtDateTime(d.last_ok)}` : `desde ${new Date(d.created_at).toLocaleDateString('pt-BR')}`),
+          h('button', { class: 'btn btn-sm', onclick: act(() => api('push:unsubscribe', d.id), 'Aparelho removido') }, 'Remover'))),
+        h('div', null, h('button', { class: 'btn btn-sm', onclick: act(() => api('push:test'), 'Aviso de teste enviado') }, 'Mandar aviso de teste'))) : null,
+      h('div', { class: 'field' }, h('span', null, 'O que chega no celular'),
+        Object.entries(info.kinds).filter(([k]) => k !== 'financeiro' || state.can.finance).map(([k, label]) => h('label', { class: 'check' },
+          h('input', { type: 'checkbox', checked: !!info.prefs[k], onchange: (e) => setSetting('pushKinds', { ...info.prefs, [k]: e.target.checked }).then(draw).catch(errToast) }), ` ${label}`))));
+  };
+  draw();
+  return el;
 }
 
 /** Imagem da assinatura e assinatura digital com o certificado A3 (token neste computador). */

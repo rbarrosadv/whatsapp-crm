@@ -23,6 +23,7 @@ import { reais } from '../main/extenso.js';
 import * as leads from '../main/leads.js';
 import * as reports from '../main/reports.js';
 import { receiptPdf, externalSign } from '../main/pdf.js';
+import { PushService, PUSH_KINDS, PUSH_DEFAULTS, pushKindOf } from '../main/push.js';
 import { CourtsService, DATAJUD_PUBLIC_KEY, deadlineFromAvailability, formatCnj, tribunalOf, nameCase } from '../main/courts.js';
 import { computeSteps, suggestedChecklist, docsRequestText, addBusinessDays, STEPS, PARTY_ROLES, DEFAULT_DOCS_TEMPLATE } from '../main/workflow.js';
 
@@ -33,7 +34,7 @@ const dateBR = (ts) => (ts ? new Date(ts).toLocaleDateString('pt-BR') : 'sem dat
 
 // Preferências de cada pessoa (ficam no usuário) × configurações do escritório (valem para todos).
 export const USER_KEYS = ['notifications', 'notificationPreview', 'theme', 'lastView', 'lastPipeline', 'enterToSend',
-  'lastFilter', 'agendaHidden', 'agendaView', 'agendaHours', 'discreet', 'discreetMessages', 'spellcheck', 'wordSuggest', 'autocorrect', 'notifyCourts'];
+  'lastFilter', 'agendaHidden', 'agendaView', 'agendaHours', 'discreet', 'discreetMessages', 'spellcheck', 'wordSuggest', 'autocorrect', 'notifyCourts', 'pushKinds'];
 export const OFFICE_KEYS = ['sendReadReceipts', 'forgottenHours', 'chargeTemplate', 'pixKey', 'paymentNoticeDays',
   'staleCaseDays', 'googleSync', 'googleCalendarId', 'signMessages', 'docsRoot', 'docsRequestTemplate', 'datajudKey',
   'officeName', 'officeDoc', 'officeAddress', 'officeCity', 'proposalTemplate', 'proposalValidDays',
@@ -95,8 +96,42 @@ export async function createCore({ dataDir, demo = false, version = '', safeStor
   /** Evento para as janelas abertas. `to`: {conn} | {user} | undefined (todas). */
   const send = (channel, payload, to) => events.emit('event', channel, payload, to);
 
-  /** Aviso (notificação). Cada janela decide se mostra, conforme as preferências da pessoa. */
-  const notify = (n, to) => send('notify', n, to);
+  /**
+   * Aviso (notificação). Vai para as janelas abertas (cada uma decide se mostra,
+   * conforme as preferências da pessoa) e para os celulares de quem não está
+   * com o sistema aberto e em uso agora (`pushOut`).
+   */
+  const notify = (n, to) => {
+    send('notify', n, to);
+    pushOut(n, to).catch((e) => console.error('aviso no celular:', e.message));
+  };
+
+  // ---------------------------------------------------- avisos no celular (Web Push)
+  const pushOutbox = []; // modo demonstração: o que "teria ido" para os celulares
+  const push = new PushService({
+    dir: path.join(dataDir, 'push'),
+    sender: demo ? async (sub, body) => { pushOutbox.push({ endpoint: sub.endpoint, ...JSON.parse(body) }); if (pushOutbox.length > 50) pushOutbox.shift(); } : undefined,
+  });
+  /** A pessoa está com uma janela do sistema em foco e mexendo nela nos últimos 10 min. */
+  const isActiveAtDesk = (userId) => [...viewers.values()].some((v) => v.userId === userId && v.focused && Date.now() - (v.seen || 0) < 10 * 60e3);
+  async function pushOut(n, to) {
+    if (to?.conn) return; // aviso só para uma janela (ex.: teste daquela tela)
+    const group = pushKindOf(n.kind);
+    const users = to?.user ? [auth.getUser(to.user)].filter(Boolean) : db.all('SELECT * FROM users WHERE active = 1');
+    await Promise.all(users.map(async (u) => {
+      if (!u.active) return;
+      if (n.audience === 'finance' && !auth.can(u.role, 'finance:list')) return;
+      const prefs = auth.userPrefs(u.id);
+      if (!n.force && prefs.notifications === false) return;
+      const kinds = { ...PUSH_DEFAULTS, ...(prefs.pushKinds || {}) };
+      if (group && !kinds[group]) return;
+      if (!n.force && isActiveAtDesk(u.id)) return;
+      let { title, body } = n;
+      if (n.kind === 'message' && prefs.notificationPreview === false) body = 'Nova mensagem';
+      if (prefs.discreet && n.discreet) { title = n.discreet; body = 'Abra o sistema para ver.'; }
+      await push.sendTo(u.id, { title, body, tag: `${n.kind}${n.chatJid ? `:${n.chatJid}` : ''}`, action: n.action || null, urgent: group === 'agenda' || group === 'tribunais' });
+    }));
+  }
 
   // documentos: pasta do escritório no OneDrive (no demo, uma pasta de exemplo)
   const demoDocs = path.join(dataDir, 'OneDrive (demonstração)', 'BARROS ADVOGADOS');
@@ -122,7 +157,7 @@ export async function createCore({ dataDir, demo = false, version = '', safeStor
 
   function viewerOf(ctx) {
     if (!ctx.conn) return null;
-    if (!viewers.has(ctx.conn)) viewers.set(ctx.conn, { userId: ctx.user.id, name: ctx.user.name, jid: null, focused: true });
+    if (!viewers.has(ctx.conn)) viewers.set(ctx.conn, { userId: ctx.user.id, name: ctx.user.name, jid: null, focused: true, seen: Date.now() });
     return viewers.get(ctx.conn);
   }
 
@@ -210,6 +245,21 @@ export async function createCore({ dataDir, demo = false, version = '', safeStor
     }
   }
 
+  /** Audiência terminou: lembrar de agendar os prazos que saíram e de conferir as intimações (ata, sentença). */
+  function checkHearings() {
+    for (const t of db.hearingsToNotify()) {
+      db.markHearingNotified(t.id);
+      const who = t.client_name || (t.jid ? db.getChat(t.jid)?.display_name : '') || t.case_title || '';
+      const n = {
+        kind: 'hearing', title: `Audiência terminou${who ? ` — ${who}` : ''}`,
+        body: `${t.title}: registre o resultado, agende os prazos que saíram e fique de olho nas intimações.`,
+        discreet: 'Audiência: agendar prazos', action: t.case_id ? { case: t.case_id, tab: 'prazos' } : { view: 'today' },
+      };
+      const to = t.assignee_id || t.responsible_id;
+      notify(n, to ? { user: to } : undefined);
+    }
+  }
+
   function chargeText(paymentId) {
     const p = db.getPayment(paymentId);
     if (!p) throw new Error('Parcela não encontrada');
@@ -271,6 +321,7 @@ export async function createCore({ dataDir, demo = false, version = '', safeStor
       }
       checkForgotten();
       checkFinanceAndCases();
+      checkHearings();
       // a cada ~10 min traz mudanças de horário feitas no Google
       if (++googleTick % 20 === 1 && google?.status().connected) {
         calSync.agenda(Date.now() - 7 * DAY, Date.now() + 120 * DAY).catch(() => {});
@@ -1231,6 +1282,18 @@ export async function createCore({ dataDir, demo = false, version = '', safeStor
       db.logActivity(r.jid, 'finance', `Recibo nº ${String(r.no).padStart(4, '0')} enviado pelo WhatsApp`, ctx.user.name);
     },
     /** O que está configurado para assinar os recibos. */
+    // avisos no celular: chave pública, inscrição deste aparelho, aparelhos da pessoa, teste
+    /** Acompanhamento depois da audiência feito (prazos agendados, intimações conferidas) ou desfeito. */
+    'hearings:followUp': (_c, taskId, done = true) => { db.setHearingFollowUp(taskId, done); send('tasks:changed', null); },
+    'push:info': (ctx) => ({ key: push.publicKey, kinds: PUSH_KINDS, prefs: { ...PUSH_DEFAULTS, ...(auth.userPrefs(ctx.user.id).pushKinds || {}) }, devices: push.list(ctx.user.id) }),
+    'push:subscribe': (ctx, sub, agent) => { push.subscribe(ctx.user.id, sub, agent); return push.list(ctx.user.id); },
+    'push:unsubscribe': (ctx, endpointOrId) => { push.unsubscribe(ctx.user.id, endpointOrId); return push.list(ctx.user.id); },
+    'push:test': async (ctx) => {
+      const n = await push.sendTo(ctx.user.id, { title: 'Barros Associados — teste', body: 'Os avisos estão chegando neste aparelho.', tag: 'test', action: { view: 'today' } });
+      if (!n) throw new Error('Nenhum aparelho com avisos ativados.');
+      return n;
+    },
+    ...(demo ? { 'push:outbox': () => pushOutbox } : {}),
     'receipts:status': () => {
       const img = signatureImage();
       return {
@@ -1365,6 +1428,7 @@ export async function createCore({ dataDir, demo = false, version = '', safeStor
         // interessados do comercial em negociação sem nenhum próximo passo marcado
         leadsIdle: leads.listLeads({ open: true, responsible: scope === 'all' ? null : ctx.user.id }).filter((l) => !l.next_task)
           .map((l) => ({ id: l.id, name: l.name, subject: l.subject || l.area, stage_label: l.stage_label, jid: l.jid, since: l.last_contact_at || l.created_at })),
+        hearings: db.hearingsToFollowUp({ assignee }),
         intimations: db.listIntimations({ status: 'nova', limit: 50 }).filter((i) => scope === 'all' || !i.responsible_id || i.responsible_id === ctx.user.id),
       };
       if (auth.can(ctx.user.role, 'finance:list')) {
@@ -1472,6 +1536,7 @@ export async function createCore({ dataDir, demo = false, version = '', safeStor
     const fn = api[method];
     if (!fn) throw new Error(`Método desconhecido: ${method}`);
     if (!auth.can(ctx.user.role, method)) throw new Error('Seu perfil não tem permissão para isso.');
+    if (ctx.conn && viewers.has(ctx.conn)) viewers.get(ctx.conn).seen = Date.now();
     return fn(ctx, ...(args || []));
   }
 
@@ -1498,6 +1563,8 @@ export async function createCore({ dataDir, demo = false, version = '', safeStor
     events, api, call, dropConn, backupFile, resolveMedia, wa, google, docs, dataDir, demo,
     /** Roda agora a busca dos tribunais (DJEN + DataJud), como o relógio faria. */
     runCourts: () => Promise.all([checkIntimations(), datajudDaily()]),
+    /** Roda agora os avisos periódicos (lembretes, audiências, financeiro…), como o relógio faria. */
+    runChecks: () => check(),
     /** O computador voltou da suspensão (modo local): a conexão antiga morreu. */
     onResume() {
       if (!wa.hasSession()) return;

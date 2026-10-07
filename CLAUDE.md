@@ -83,7 +83,7 @@ Motor (`src/main`, sem Electron apesar do nome da pasta):
   `meta`, `contact_types`, `chat_filters`, `cases`,
   `payments`, `case_docs`, `users`, `sessions`, `doc_index`, `clients`,
   `case_parties`, `case_moves`, `case_steps`, `case_checklist`, `oabs`,
-  `intimations`, `expenses`, `incomes`, `leads`, `lead_contacts` (migrações por versão em
+  `intimations`, `expenses`, `incomes`, `leads`, `lead_contacts`, `push_subs` (migrações por versão em
   `migrate()`; `meta.schema` guarda a versão atual).
 - `docs.js` — `DocsService`: pasta "BARROS ADVOGADOS" do OneDrive lida
   direto do disco (`settings.docsRoot`, ou `guessRoot()` em
@@ -201,6 +201,21 @@ Motor (`src/main`, sem Electron apesar do nome da pasta):
   resultado, % recebido do que venceu, atraso, maiores clientes, por área, por
   responsável, despesas por categoria, por mês). Processo novo sem responsável
   fica com quem criou.
+- `push.js` — **avisos no celular** (Web Push, `web-push`): chaves VAPID em
+  `<dados>/push/vapid.json`; `push_subs` (v18) = um aparelho por linha (404/410
+  apaga). `core.notify` manda para as janelas **e** chama `pushOut`: para cada
+  pessoa (ou só `{user}`), respeita `notifications`, `audience: 'finance'`, o
+  grupo do aviso (`pushKindOf` → `agenda` | `tribunais` | `financeiro` |
+  `mensagens` | `outros`; preferência `pushKinds`, padrão `PUSH_DEFAULTS` com
+  mensagens desligadas), modo discreto e prévia; **não manda** se a pessoa tem
+  uma janela em foco usada nos últimos 10 min (`viewers[].seen`, atualizado em
+  `call`). APIs `push:info/subscribe/unsubscribe/test` (demo: `push:outbox`
+  guarda o que "teria ido"). `core.runChecks()` roda os avisos periódicos na hora.
+- **Depois da audiência** (v18, `tasks.followup_notified`/`followup_done_at`):
+  audiência terminada (`end_at`, ou 2 h após o início) avisa o responsável
+  (`checkHearings`, kind `hearing`, abre o processo na aba Prazos) e fica no Hoje
+  em "Audiências realizadas: agendar prazos" (Agendar prazo → tarefa `prazo` do
+  processo; Feito → `hearings:followUp`) até marcar feito.
 - `ogg.js` — remux WebM/Opus (MediaRecorder) → OGG/Opus (mensagem de voz).
 - `google.js` — `GoogleService`: Google Agenda pela API oficial com a chave
   (client_secret JSON, tipo "App para computador") do próprio usuário;
@@ -308,7 +323,17 @@ Interface (`src/renderer`, JS puro em módulos ES, sem build):
   `db.emojiToIcon`). Emojis só no conteúdo das mensagens (seletor e reações).
 - Estilos em `styles.css` com variáveis e `[data-theme=light|dark]`; cor da
   marca em `--accent` (azul-ardósia da logo). Cores por item via `--c`.
-- `manifest.webmanifest` — instalar no celular como app.
+- `manifest.webmanifest` + `sw.js` — instalar no celular como app (ícones
+  192/512/maskable e `apple-touch-icon` em `assets/`); o service worker só
+  recebe os avisos (`push`) e, no toque, foca a janela aberta (`postMessage`
+  `aviso`) ou abre `/?acao=<json>`; não guarda cache. `js/push.js` = ativar /
+  desativar neste aparelho (iPhone só com o app na tela de início; o app de
+  desktop não usa — `window.desktop.isDesktop`), Ajustes → "Avisos no celular".
+- **Celular** (`@media (max-width: 760px)` no fim do `styles.css`): menu
+  embaixo só com ícones, números em 2 colunas, abas/segmentos rolam de lado,
+  tabelas rolam, janelas sobem de baixo; Atendimento mostra a lista **ou** a
+  conversa (`body.chat-open`, botão ← `mobile-back`), ficha do contato começa
+  fechada e abre por cima.
 
 ## Decisões importantes
 
