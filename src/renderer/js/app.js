@@ -88,6 +88,20 @@ async function main() {
   const phone = window.matchMedia('(max-width: 760px)');
   if (phone.matches) crmCol.classList.add('hidden');
   on('active', () => { if (phone.matches) crmCol.classList.add('hidden'); });
+  // celular: barra "← Voltar à conversa" por cima da ficha do contato
+  const crmClose = h('button', { class: 'crm-close', onclick: () => crmCol.classList.add('hidden') }, icon('back', 20), 'Voltar à conversa');
+  views.inbox.append(crmClose);
+  // botão "voltar" do Android/gesto do iPhone: fecha a ficha, depois a conversa (não sai do app)
+  let stacked = 0;
+  const pushStep = () => { if (phone.matches) { history.pushState({ crm: ++stacked }, ''); } };
+  on('active', (jid) => { if (jid) pushStep(); });
+  new MutationObserver(() => { if (phone.matches && !crmCol.classList.contains('hidden')) pushStep(); })
+    .observe(crmCol, { attributes: true, attributeFilter: ['class'] });
+  window.addEventListener('popstate', () => {
+    if (!phone.matches) return;
+    if (!crmCol.classList.contains('hidden')) crmCol.classList.add('hidden');
+    else if (document.body.classList.contains('chat-open')) openChat(null);
+  });
 
   const banner = h('div', { class: 'banner-wrap hidden' });
   const overlay = h('div', { class: 'connect-overlay hidden' });

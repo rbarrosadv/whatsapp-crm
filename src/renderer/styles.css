@@ -1276,3 +1276,29 @@ h2, h3 { letter-spacing: -0.01em; }
   .agenda-main { min-height: 0; }
 }
 @media (max-width: 900px) { .fin-grid { grid-template-columns: minmax(0, 1fr); } .fin-grid > * { min-width: 0; } }
+/* Atendimento no celular */
+.crm-close { display: none; }
+@media (max-width: 760px) {
+  .crm-panel:not(.hidden) { padding-top: 48px; }
+  .crm-panel:not(.hidden) ~ .crm-close {
+    display: flex; align-items: center; gap: 8px; position: fixed; top: 0; left: 0; right: 0; height: 48px; z-index: 56;
+    padding: 0 12px; border: 0; border-bottom: 1px solid var(--border); background: var(--panel); color: var(--text); font-size: 15px; font-weight: 600;
+  }
+  #toasts { top: calc(8px + env(safe-area-inset-top)); bottom: auto; }
+  /* filtros da lista numa linha que rola de lado */
+  .chatlist .chips { flex-wrap: nowrap; overflow-x: auto; scrollbar-width: none; padding-bottom: 2px; }
+  .chatlist .chips::-webkit-scrollbar { display: none; }
+  .chatlist .chip { flex: none; }
+  .classify-bar { flex-wrap: wrap; }
+}
+/* iPhone: campo com letra menor que 16px faz a tela dar zoom ao tocar */
+@media (max-width: 760px) {
+  input, textarea, select, .composer textarea { font-size: 16px; }
+}
+@media (max-width: 760px) {
+  /* conversa aberta: tela toda para as mensagens (como no WhatsApp); a seta ← volta para a lista */
+  body.chat-open[data-view="inbox"] .rail { display: none; }
+  body.chat-open[data-view="inbox"] .main { padding-bottom: 0; }
+  body.chat-open[data-view="inbox"] .crm-panel:not(.hidden) { bottom: 0; }
+  .chatview .composer { padding-bottom: max(8px, env(safe-area-inset-bottom)); }
+}

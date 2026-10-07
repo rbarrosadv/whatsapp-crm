@@ -412,8 +412,14 @@ Interface (`src/renderer`, JS puro em módulos ES, sem build):
 - **Celular** (`@media (max-width: 760px)` no fim do `styles.css`): menu
   embaixo só com ícones, números em 2 colunas, abas/segmentos rolam de lado,
   tabelas rolam, janelas sobem de baixo; Atendimento mostra a lista **ou** a
-  conversa (`body.chat-open`, botão ← `mobile-back`), ficha do contato começa
-  fechada e abre por cima.
+  conversa (`body.chat-open`, botão ← `mobile-back`; com a conversa aberta o
+  menu de baixo some), ficha do contato começa fechada e abre por cima com a
+  barra "← Voltar à conversa" (`.crm-close`); o botão voltar do Android/gesto do
+  iPhone fecha a ficha e depois a conversa (`history.pushState` + `popstate`
+  em `app.js`). Hoje/Ajustes/Financeiro em uma coluna; Agenda abre no Dia
+  (semana não cabe), às 7 h, com agendas/Google recolhidos (botão de calendário);
+  avisos (toasts) no topo; filtros da lista em uma linha que rola; campos com
+  16 px (o iPhone dá zoom em letra menor); `:hover` desligado em toque.
 
 ## Decisões importantes
 
