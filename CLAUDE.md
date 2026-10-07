@@ -157,18 +157,16 @@ Motor (`src/main`, sem Electron apesar do nome da pasta):
   (estagiário não vê); excluir despesa/receita só sócio.
 - `pdf.js` — **recibo em PDF** no servidor (pdfkit: logo, valor por extenso,
   imagem da assinatura de `<dados>/assinatura/`, nome `receiptSigner`) e
-  **assinatura digital ICP-Brasil** (CMS destacado `adbe.pkcs7.detached`, via
-  `@signpdf`), conforme `settings.receiptSignMode`: `a1` = .pfx em
-  `<dados>/certificado/a1.pfx` + senha cifrada em `senha.bin` (nunca nas
-  configurações que vão às janelas), assinado no servidor (`signPdfA1`);
-  `a3` = token/cartão no computador de quem emite: `finance:receiptPdf(id,
-  {a3})` devolve `{pending, data}` (`externalSign`, que segura a assinatura
-  aberta por até 5 min), o app de desktop assina `data` no Windows e
+  **assinatura digital ICP-Brasil** com o certificado **A3** (token/cartão) de
+  quem emite, quando `settings.receiptSignMode = 'a3'` (o escritório não usa A1):
+  `finance:receiptPdf(id, {a3})` devolve `{pending, data}` (`externalSign`, que
+  segura a assinatura aberta por até 5 min, CMS destacado `adbe.pkcs7.detached`
+  via `@signpdf`), o app de desktop assina `data` no Windows e
   `finance:receiptSign(pending, cms)` encaixa e devolve o PDF. Sem o app de
   desktop (navegador/celular) o PDF sai só com a imagem. PDF pronto fica 10 min
   num token → `finance:sendReceipt(token, texto)` manda ao WhatsApp do cliente
-  como documento. `receipts:*` (status/imagem/A1) — mexer só sócio; estagiário
-  não vê.
+  como documento. `receipts:status/setImage/clearImage` — mexer só sócio;
+  estagiário não vê.
 - `leads.js` — **Comercial** (v15): `leads` = interessados que ainda não são
   clientes (origem, indicação, área, assunto, responsável, consulta,
   honorários da proposta `fee_kind` fixo|parcelado|exito|fixo_exito), funil fixo

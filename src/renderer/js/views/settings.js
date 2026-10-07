@@ -468,7 +468,7 @@ export function pipelineEditor(p) {
   });
 }
 
-/** Imagem da assinatura e assinatura digital (A3 do token neste computador ou A1 no servidor). */
+/** Imagem da assinatura e assinatura digital com o certificado A3 (token neste computador). */
 function receiptsSection() {
   const el = h('div', { class: 'stack receipts-cfg' }, h('p', { class: 'muted small' }, 'Carregando…'));
   const admin = state.can.admin;
@@ -494,7 +494,7 @@ function receiptsSection() {
       h('label', { class: 'toggle-row' }, h('div', null, h('div', null, 'Assinatura digital (certificado ICP-Brasil)'),
         h('div', { class: 'muted small' }, 'O PDF do recibo sai assinado digitalmente, com validade jurídica.')),
       h('select', { class: 'input select-sm', disabled: !admin, onchange: (e) => setSetting('receiptSignMode', e.target.value).then(draw).catch(errToast) },
-        [['none', 'Não usar'], ['a3', 'A3: token ou cartão'], ['a1', 'A1: arquivo no servidor']].map(([v, l]) => h('option', { value: v, selected: st.mode === v }, l)))),
+        [['none', 'Não usar'], ['a3', 'Certificado A3 (token ou cartão)']].map(([v, l]) => h('option', { value: v, selected: st.mode === v }, l)))),
       st.mode === 'a3' ? h('div', { class: 'cert-box' },
         !window.desktop?.certs
           ? h('p', { class: 'small' }, 'O certificado A3 assina no app de desktop do Windows, com o token ou cartão conectado (o PIN é pedido a cada recibo). Neste navegador o PDF sai só com a imagem da assinatura.')
@@ -502,12 +502,7 @@ function receiptsSection() {
             a3 ? h('div', null, h('b', null, a3.name), h('div', { class: `small ${soon(a3.validTo) ? 'bad-text' : 'muted'}` }, `${a3.issuer || ''}${a3.validTo ? ` · vale até ${date(a3.validTo)}` : ''}`))
               : h('p', { class: 'small' }, 'Conecte o token ou cartão e escolha o certificado. A escolha vale para este computador.'),
             h('button', { class: 'btn btn-sm', onclick: () => chooseA3(draw) }, a3 ? 'Trocar certificado' : 'Escolher certificado deste computador'),
-          ]) : null,
-      st.mode === 'a1' ? h('div', { class: 'cert-box' },
-        st.a1 ? h('div', null, h('b', null, st.a1.name || st.a1.error), st.a1.validTo ? h('div', { class: `small ${soon(st.a1.validTo) ? 'bad-text' : 'muted'}` }, `${st.a1.issuer} · vale até ${date(st.a1.validTo)}`) : null)
-          : h('p', { class: 'small' }, 'Envie o arquivo do certificado A1 (.pfx ou .p12) e a senha. Ele fica guardado no servidor, com a senha cifrada.'),
-        admin ? h('button', { class: 'btn btn-sm', onclick: () => a1Dialog(draw) }, st.a1 ? 'Trocar certificado' : 'Enviar certificado A1') : null,
-        admin && st.a1 ? h('button', { class: 'btn btn-sm', onclick: () => api('receipts:clearA1').then(draw).catch(errToast) }, 'Remover') : null) : null);
+          ]) : null);
   };
   draw();
   return el;
@@ -527,28 +522,6 @@ async function chooseA3(done) {
     }, h('div', null, h('b', null, c.name), c.icp ? h('span', { class: 'stage-pill small', style: { '--c': '#22c55e', marginLeft: '6px' } }, 'ICP-Brasil') : null),
     h('div', { class: 'muted small' }, `${c.issuer} · vale até ${c.validTo ? new Date(c.validTo).toLocaleDateString('pt-BR') : '?'}`)))),
     actions: [{ label: 'Cancelar' }],
-  });
-}
-
-function a1Dialog(done) {
-  let file = null;
-  const info = h('span', { class: 'muted small' }, 'Nenhum arquivo escolhido.');
-  const pass = h('input', { class: 'input', type: 'password', autocomplete: 'off' });
-  modal({
-    title: 'Certificado A1',
-    body: h('div', { class: 'form' },
-      h('div', { class: 'row' }, h('button', { class: 'btn btn-sm', onclick: async () => { [file] = await pickFiles({ multiple: false, accept: '.pfx,.p12' }); info.textContent = file?.name || 'Nenhum arquivo escolhido.'; } }, 'Escolher arquivo .pfx'), info),
-      h('label', { class: 'field' }, h('span', null, 'Senha do certificado'), pass)),
-    actions: [{ label: 'Cancelar' }, {
-      label: 'Salvar', primary: true,
-      onClick: async () => {
-        if (!file) { toast('Escolha o arquivo do certificado', 'error'); return false; }
-        await api('receipts:setA1', (await uploadFiles([file]))[0], pass.value);
-        toast('Certificado salvo', 'success');
-        done();
-        return true;
-      },
-    }],
   });
 }
 

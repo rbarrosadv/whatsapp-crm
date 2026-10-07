@@ -647,7 +647,7 @@ test('relatórios: processos abertos/encerrados, prazos no prazo x atrasados, eq
   await assert.rejects(est.call('reports:get', 'overview', range), /permissão/);
 });
 
-/** Certificado de teste (.pfx) e um "token" que assina como o Windows (CMS destacado). */
+/** Certificado de teste e um "token" que assina como o Windows (CMS destacado). */
 function testCert() {
   const keys = forge.pki.rsa.generateKeyPair(1024);
   const cert = forge.pki.createCertificate();
@@ -658,7 +658,6 @@ function testCert() {
   cert.setSubject([{ name: 'commonName', value: 'RAFAEL TESTE:12345678900' }]);
   cert.setIssuer([{ name: 'commonName', value: 'AC Teste' }]);
   cert.sign(keys.privateKey, forge.md.sha256.create());
-  const pfx = Buffer.from(forge.asn1.toDer(forge.pkcs12.toPkcs12Asn1(keys.privateKey, [cert], 'senha123', { algorithm: '3des' })).getBytes(), 'binary');
   const signCms = (data) => {
     const p7 = forge.pkcs7.createSignedData();
     p7.content = forge.util.createBuffer(data.toString('binary'));
@@ -668,10 +667,10 @@ function testCert() {
     p7.sign({ detached: true });
     return Buffer.from(forge.asn1.toDer(p7.toAsn1()).getBytes(), 'binary');
   };
-  return { pfx, signCms };
+  return { signCms };
 }
 
-test('recibo em PDF: imagem da assinatura, certificado A1 no servidor, A3 assinado fora (app de desktop) e envio pelo WhatsApp', async () => {
+test('recibo em PDF: imagem da assinatura, certificado A3 assinado no app de desktop e envio pelo WhatsApp', async () => {
   const c = client();
   await c.req('/auth/login', { body: { login: 'barros', password: 'segredo1' } });
   await connected(c);
@@ -697,20 +696,8 @@ test('recibo em PDF: imagem da assinatura, certificado A1 no servidor, A3 assina
   await c.call('settings:set', 'receiptSigner', 'Rafael Barros');
   assert.match((await c.call('finance:receipt', p)).html, /data:image\/png;base64/, 'imagem também no recibo da tela');
 
-  // A1 no servidor
-  const { pfx, signCms } = testCert();
-  const upc = await c.req('/upload', { raw: pfx, headers: { 'X-File-Name': 'certificado.pfx' } });
-  await assert.rejects(c.call('receipts:setA1', upc.json.token, 'errada'), /Senha do certificado incorreta/);
-  const upc2 = await c.req('/upload', { raw: pfx, headers: { 'X-File-Name': 'certificado.pfx' } });
-  st = await c.call('receipts:setA1', upc2.json.token, 'senha123');
-  assert.equal(st.a1.name, 'RAFAEL TESTE');
-  assert.ok(!JSON.stringify(await c.call('settings:get')).includes('senha123'), 'senha não vai para as janelas');
-  await c.call('settings:set', 'receiptSignMode', 'a1');
-  r = await c.call('finance:receiptPdf', p, {});
-  assert.equal(r.signed, true);
-  assert.match(pdfOf(r).toString('latin1'), /\/ByteRange \[0 \d+ \d+ \d+\]/);
-  assert.match(pdfOf(r).toString('latin1'), /adbe\.pkcs7\.detached/);
-
+  const { signCms } = testCert();
+  assert.ok(!(await c.call('settings:get')).receiptSignMode, 'sem assinatura digital por padrão');
   // A3: o servidor devolve o que assinar; o "token" assina; o servidor monta o PDF
   await c.call('settings:set', 'receiptSignMode', 'a3');
   const ph = await c.call('finance:receiptPdf', p, { a3: { name: 'RAFAEL TESTE:12345678900', issuer: 'AC Teste' } });
@@ -732,7 +719,6 @@ test('recibo em PDF: imagem da assinatura, certificado A1 no servidor, A3 assina
   await est.req('/auth/login', { body: { login: 'bia', password: 'estagio1' } });
   await assert.rejects(est.call('receipts:status'), /permissão/);
   await assert.rejects(est.call('finance:receiptPdf', p, {}), /permissão/);
-  await c.call('receipts:clearA1');
   await c.call('receipts:clearImage');
   await c.call('settings:set', 'receiptSignMode', 'none');
 });

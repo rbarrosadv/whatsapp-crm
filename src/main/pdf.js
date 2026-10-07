@@ -1,43 +1,16 @@
 // Recibo em PDF gerado no servidor (pdfkit), com a imagem da assinatura e,
-// opcionalmente, assinatura digital ICP-Brasil (CMS destacado, adbe.pkcs7.detached):
-// - A1 (.pfx/.p12 guardado no servidor): `signPdfA1`, tudo aqui;
-// - A3 (token/cartão no computador de quem emite): `externalSign` prepara o
-//   PDF e devolve os bytes a assinar; o app de desktop assina no Windows (pede
-//   o PIN do token) e devolve o CMS, que `finish` encaixa no PDF.
+// opcionalmente, assinatura digital ICP-Brasil (CMS destacado, adbe.pkcs7.detached)
+// com o certificado A3 (token/cartão) de quem emite: `externalSign` prepara o
+// PDF e devolve os bytes a assinar; o app de desktop assina no Windows (pede o
+// PIN do token) e devolve o CMS, que `finish` encaixa no PDF.
 import fs from 'node:fs';
 import PDFDocument from 'pdfkit';
-import forge from 'node-forge';
 import { SignPdf } from '@signpdf/signpdf';
-import { P12Signer } from '@signpdf/signer-p12';
 import { plainAddPlaceholder } from '@signpdf/placeholder-plain';
 import { Signer } from '@signpdf/utils';
 
 const money = (v) => Number(v).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' });
 const METHODS = { pix: 'Pix', dinheiro: 'dinheiro', transferencia: 'transferência bancária', boleto: 'boleto', cartao: 'cartão', cheque: 'cheque' };
-
-/** Lê o certificado A1 (confere a senha) e devolve quem é, emissor e validade. */
-export function certInfo(p12Buffer, password) {
-  let p12;
-  try {
-    const asn1 = forge.asn1.fromDer(forge.util.createBuffer(p12Buffer.toString('binary')));
-    p12 = forge.pkcs12.pkcs12FromAsn1(asn1, false, password);
-  } catch (e) {
-    throw new Error(/password|MAC|Invalid/i.test(e.message) ? 'Senha do certificado incorreta.' : 'Arquivo de certificado inválido (use o .pfx ou .p12 do certificado A1).');
-  }
-  const bags = p12.getBags({ bagType: forge.pki.oids.certBag })[forge.pki.oids.certBag] || [];
-  const keys = p12.getBags({ bagType: forge.pki.oids.pkcs8ShroudedKeyBag })[forge.pki.oids.pkcs8ShroudedKeyBag] || [];
-  if (!keys.length) throw new Error('O arquivo não tem a chave do certificado (exporte com a chave privada).');
-  // o certificado da pessoa/empresa é o que não é de autoridade (sem basicConstraints cA)
-  const cert = bags.map((b) => b.cert).find((c) => !c.getExtension('basicConstraints')?.cA) || bags[0]?.cert;
-  if (!cert) throw new Error('Certificado não encontrado no arquivo.');
-  const field = (attrs, sn) => attrs.getField(sn)?.value || '';
-  return {
-    name: field(cert.subject, 'CN').split(':')[0].trim(),
-    issuer: field(cert.issuer, 'CN') || field(cert.issuer, 'O'),
-    validFrom: cert.validity.notBefore.getTime(),
-    validTo: cert.validity.notAfter.getTime(),
-  };
-}
 
 function render(doc) {
   return new Promise((resolve, reject) => {
@@ -119,12 +92,6 @@ export async function receiptPdf(r) {
 
 const placeholder = (pdf, { reason = '', location = '', name = '' } = {}) =>
   plainAddPlaceholder({ pdfBuffer: pdf, reason, location, name, contactInfo: '', signatureLength: 16384 });
-
-/** Assina o PDF com o certificado A1 (arquivo + senha), no servidor. */
-export async function signPdfA1(pdf, { p12, password }, meta = {}) {
-  const signer = new P12Signer(p12, { passphrase: password });
-  return Buffer.from(await new SignPdf().sign(placeholder(pdf, meta), signer));
-}
 
 /** Assinatura feita fora (certificado A3 no computador de quem emite). */
 class ExternalSigner extends Signer {

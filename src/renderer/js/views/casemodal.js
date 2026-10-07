@@ -550,8 +550,7 @@ export async function showReceipt(id, { income = false } = {}) {
     title: `Recibo nº ${no}`,
     wide: true,
     body: h('div', { class: 'stack' }, frame,
-      h('p', { class: 'muted small' }, r.signMode === 'a3' ? 'O PDF sai assinado com o seu certificado A3 (o token pede o PIN). '
-        : r.signMode === 'a1' ? 'O PDF sai assinado digitalmente com o certificado do escritório. ' : '',
+      h('p', { class: 'muted small' }, r.signMode === 'a3' ? 'O PDF sai assinado com o seu certificado A3 (o token pede o PIN). ' : '',
       'Baixe o PDF ou envie direto ao cliente pelo WhatsApp.')),
     actions: [
       { label: 'Fechar' },

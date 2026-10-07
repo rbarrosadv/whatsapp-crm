@@ -22,7 +22,7 @@ import { seedDemoDocs, demoCourtsFetch } from '../main/demo.js';
 import { reais } from '../main/extenso.js';
 import * as leads from '../main/leads.js';
 import * as reports from '../main/reports.js';
-import { receiptPdf, signPdfA1, externalSign, certInfo } from '../main/pdf.js';
+import { receiptPdf, externalSign } from '../main/pdf.js';
 import { CourtsService, DATAJUD_PUBLIC_KEY, deadlineFromAvailability, formatCnj, tribunalOf, nameCase } from '../main/courts.js';
 import { computeSteps, suggestedChecklist, docsRequestText, addBusinessDays, STEPS, PARTY_ROLES, DEFAULT_DOCS_TEMPLATE } from '../main/workflow.js';
 
@@ -451,23 +451,11 @@ export async function createCore({ dataDir, demo = false, version = '', safeStor
   const incomeReceiptHtml = (id) => withWho(receiptArgs(id, true));
 
   // ---------------------------------------------------- recibo em PDF e assinatura
-  // Imagem da assinatura em <dados>/assinatura/; certificado A1 em <dados>/certificado/
-  // (a senha cifrada num arquivo à parte, fora das configurações que vão para as janelas).
+  // Imagem da assinatura em <dados>/assinatura/. A assinatura digital é com o
+  // certificado A3 (token) de quem emite, pelo app de desktop.
   const SIGN_DIR = path.join(dataDir, 'assinatura');
-  const CERT_DIR = path.join(dataDir, 'certificado');
-  const vault = safeStorage || fileSafeStorage(path.join(dataDir, 'google'));
   const signatureImage = () => ['assinatura.png', 'assinatura.jpg'].map((f) => path.join(SIGN_DIR, f)).find((f) => fs.existsSync(f)) || null;
-  function a1Cert() {
-    const file = path.join(CERT_DIR, 'a1.pfx');
-    const pass = path.join(CERT_DIR, 'senha.bin');
-    if (!fs.existsSync(file) || !fs.existsSync(pass)) return null;
-    try {
-      const p12 = fs.readFileSync(file);
-      const password = vault.decryptString(fs.readFileSync(pass));
-      return { p12, password, info: certInfo(p12, password) };
-    } catch (e) { console.error('certificado A1:', e.message); return null; }
-  }
-  const signMode = () => (['a1', 'a3'].includes(settings.receiptSignMode) ? settings.receiptSignMode : 'none');
+  const signMode = () => (settings.receiptSignMode === 'a3' ? 'a3' : 'none');
   const fileNameOf = (a) => `Recibo ${String(a.no).padStart(4, '0')} - ${String(a.who).replace(/[\\/:*?"<>|]+/g, ' ').trim()}.pdf`;
   const pdfArgs = (a, signedBy) => ({
     ...a, words: reais(a.value), signedBy,
@@ -1205,7 +1193,7 @@ export async function createCore({ dataDir, demo = false, version = '', safeStor
     },
     'finance:receipt': (_c, id) => receiptHtml(id),
     /**
-     * Recibo em PDF (`income` = receita avulsa). Sem certificado ou com A1: devolve
+     * Recibo em PDF (`income` = receita avulsa). Sem certificado: devolve
      * o PDF pronto {token, name, pdf (base64), canSend}. Com `a3` ({name, issuer} do
      * certificado escolhido no app de desktop): devolve {pending, data (base64)} para
      * o app assinar; depois `finance:receiptSign(pending, cms)` devolve o PDF.
@@ -1219,10 +1207,7 @@ export async function createCore({ dataDir, demo = false, version = '', safeStor
         const pending = keep(pendingA3, { ...ext, a }, 5 * 60e3);
         return { pending, data: ext.data.toString('base64') };
       }
-      const cert = mode === 'a1' ? a1Cert() : null;
-      const pdf = await receiptPdf(pdfArgs(a, cert ? cert.info : null));
-      if (!cert) return readyResult(pdf, a, false);
-      return readyResult(await signPdfA1(pdf, cert, { reason: `Recibo nº ${a.no}`, location: settings.officeCity || '', name: cert.info.name }), a, true);
+      return readyResult(await receiptPdf(pdfArgs(a, null)), a, false);
     },
     'finance:receiptSign': async (_c, pending, cmsBase64) => {
       const p = pendingA3.get(pending);
@@ -1248,11 +1233,9 @@ export async function createCore({ dataDir, demo = false, version = '', safeStor
     /** O que está configurado para assinar os recibos. */
     'receipts:status': () => {
       const img = signatureImage();
-      const a1 = fs.existsSync(path.join(CERT_DIR, 'a1.pfx')) ? (a1Cert()?.info || { error: 'Não foi possível abrir o certificado. Cadastre de novo.' }) : null;
       return {
         mode: signMode(), signer: settings.receiptSigner || '',
         image: img ? `data:image/${img.endsWith('.png') ? 'png' : 'jpeg'};base64,${fs.readFileSync(img).toString('base64')}` : null,
-        a1,
       };
     },
     'receipts:setImage': (_c, token) => {
@@ -1268,19 +1251,6 @@ export async function createCore({ dataDir, demo = false, version = '', safeStor
       return api['receipts:status']();
     },
     'receipts:clearImage': () => { fs.rmSync(SIGN_DIR, { recursive: true, force: true }); return api['receipts:status'](); },
-    'receipts:setA1': (_c, token, password) => {
-      const [f] = uploads([token]);
-      try {
-        const p12 = fs.readFileSync(f.path);
-        const info = certInfo(p12, String(password || ''));
-        if (info.validTo < Date.now()) throw new Error(`Este certificado venceu em ${new Date(info.validTo).toLocaleDateString('pt-BR')}.`);
-        fs.mkdirSync(CERT_DIR, { recursive: true });
-        fs.writeFileSync(path.join(CERT_DIR, 'a1.pfx'), p12, { mode: 0o600 });
-        fs.writeFileSync(path.join(CERT_DIR, 'senha.bin'), vault.encryptString(String(password)), { mode: 0o600 });
-      } finally { fs.rmSync(path.dirname(f.path), { recursive: true, force: true }); }
-      return api['receipts:status']();
-    },
-    'receipts:clearA1': () => { fs.rmSync(CERT_DIR, { recursive: true, force: true }); return api['receipts:status'](); },
     // receitas avulsas (sem processo)
     'finance:incomes': (_c, opts) => db.listIncomes(opts || {}),
     'finance:saveIncome': (ctx, i) => { const id = db.saveIncome({ ...i, created_by: ctx.user.name }); if (i.client_id) clientChanged(i.client_id); send('finance:changed'); return id; },
