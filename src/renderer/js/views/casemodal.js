@@ -2,7 +2,7 @@
 // prazos/audiências, documentos e notas — tudo numa janela com abas.
 import {
   h, fill, modal, toast, errToast, confirmDialog, promptDialog, popupMenu, fmtMoney, fmtDateTime, fmtDuration,
-  fmtSize, toLocalInput, fromLocalInput, normalize, openMedia, saveMedia, pickFiles, uploadFiles,
+  fmtSize, toLocalInput, fromLocalInput, normalize, openMedia, saveMedia, pickFiles, uploadFiles, downloadBlob,
 } from '../util.js';
 import { state, on, api, stageById, openChat, openClient } from '../store.js';
 import { avatarEl, caseStageMenu, stagePicker } from '../components.js';
@@ -545,15 +545,63 @@ export async function showReceipt(id, { income = false } = {}) {
   try { r = await api(income ? 'finance:incomeReceipt' : 'finance:receipt', id); } catch (e) { errToast(e); return; }
   const frame = h('iframe', { class: 'receipt-frame', title: `Recibo nº ${r.number}` });
   frame.srcdoc = r.html;
+  const no = String(r.number).padStart(4, '0');
   modal({
-    title: `Recibo nº ${String(r.number).padStart(4, '0')}`,
+    title: `Recibo nº ${no}`,
     wide: true,
     body: h('div', { class: 'stack' }, frame,
-      h('p', { class: 'muted small' }, 'Para salvar em PDF: Imprimir → escolha “Salvar como PDF” (ou “Microsoft Print to PDF”).')),
+      h('p', { class: 'muted small' }, r.signMode === 'a3' ? 'O PDF sai assinado com o seu certificado A3 (o token pede o PIN). '
+        : r.signMode === 'a1' ? 'O PDF sai assinado digitalmente com o certificado do escritório. ' : '',
+      'Baixe o PDF ou envie direto ao cliente pelo WhatsApp.')),
     actions: [
       { label: 'Fechar' },
-      { label: 'Imprimir / salvar PDF', primary: true, onClick: () => { frame.contentWindow.focus(); frame.contentWindow.print(); return false; } },
-    ],
+      { label: 'Imprimir', onClick: () => { frame.contentWindow.focus(); frame.contentWindow.print(); return false; } },
+      { label: 'Baixar PDF', onClick: async () => {
+        const pdf = await makeReceiptPdf(id, income);
+        downloadBlob(new Blob([Uint8Array.from(atob(pdf.pdf), (ch) => ch.charCodeAt(0))], { type: 'application/pdf' }), pdf.name);
+        return false;
+      } },
+      r.canSend ? { label: 'Enviar pelo WhatsApp', primary: true, onClick: async () => { sendReceiptDialog(id, income, r); return false; } } : null,
+    ].filter(Boolean),
+  });
+}
+
+/** Gera o PDF do recibo; com o modo A3, o app de desktop assina com o token (pede o PIN). */
+export async function makeReceiptPdf(id, income) {
+  if (state.settings.receiptSignMode === 'a3') {
+    const cert = await window.desktop?.certs?.get?.().catch(() => null);
+    if (cert) {
+      const ph = await api('finance:receiptPdf', id, { income, a3: { name: cert.name, issuer: cert.issuer } });
+      toast('Digite o PIN do certificado na janela do token…', 'info', 8000);
+      try {
+        const cms = await window.desktop.certs.sign(ph.data);
+        return await api('finance:receiptSign', ph.pending, cms);
+      } catch (e) {
+        api('finance:receiptCancel', ph.pending).catch(() => {});
+        throw e;
+      }
+    }
+    toast(window.desktop?.certs ? 'Escolha o certificado A3 em Ajustes → Recibos. Por enquanto o PDF sai só com a imagem da assinatura.'
+      : 'O certificado A3 assina só no app de desktop do Windows, com o token conectado. Aqui o PDF sai só com a imagem da assinatura.', 'info', 8000);
+  }
+  return api('finance:receiptPdf', id, { income });
+}
+
+function sendReceiptDialog(id, income, r) {
+  const first = String(r.who || '').split(/\s+/)[0];
+  const ta = h('textarea', { class: 'input', rows: 4 }, `Olá${first ? `, ${first}` : ''}! Segue o recibo nº ${String(r.number).padStart(4, '0')}. Obrigado!`);
+  modal({
+    title: `Enviar recibo a ${r.who}`,
+    body: h('div', { class: 'stack' }, h('p', { class: 'muted small' }, 'O PDF vai como documento, com esta mensagem:'), ta),
+    actions: [{ label: 'Cancelar' }, {
+      label: 'Enviar', primary: true,
+      onClick: async () => {
+        const pdf = await makeReceiptPdf(id, income);
+        await api('finance:sendReceipt', pdf.token, ta.value);
+        toast(`Recibo enviado a ${r.who} pelo WhatsApp${pdf.signed ? ' (assinado digitalmente)' : ''}.`, 'success', 6000);
+        return true;
+      },
+    }],
   });
 }
 

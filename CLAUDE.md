@@ -155,6 +155,20 @@ Motor (`src/main`, sem Electron apesar do nome da pasta):
   no "recebido por área" como `Avulsa: <categoria>`; recibo pela mesma
   numeração (`lastReceiptNo` olha parcelas e avulsas). Tudo `finance:*`
   (estagiário não vê); excluir despesa/receita só sócio.
+- `pdf.js` — **recibo em PDF** no servidor (pdfkit: logo, valor por extenso,
+  imagem da assinatura de `<dados>/assinatura/`, nome `receiptSigner`) e
+  **assinatura digital ICP-Brasil** (CMS destacado `adbe.pkcs7.detached`, via
+  `@signpdf`), conforme `settings.receiptSignMode`: `a1` = .pfx em
+  `<dados>/certificado/a1.pfx` + senha cifrada em `senha.bin` (nunca nas
+  configurações que vão às janelas), assinado no servidor (`signPdfA1`);
+  `a3` = token/cartão no computador de quem emite: `finance:receiptPdf(id,
+  {a3})` devolve `{pending, data}` (`externalSign`, que segura a assinatura
+  aberta por até 5 min), o app de desktop assina `data` no Windows e
+  `finance:receiptSign(pending, cms)` encaixa e devolve o PDF. Sem o app de
+  desktop (navegador/celular) o PDF sai só com a imagem. PDF pronto fica 10 min
+  num token → `finance:sendReceipt(token, texto)` manda ao WhatsApp do cliente
+  como documento. `receipts:*` (status/imagem/A1) — mexer só sócio; estagiário
+  não vê.
 - `leads.js` — **Comercial** (v15): `leads` = interessados que ainda não são
   clientes (origem, indicação, área, assunto, responsável, consulta,
   honorários da proposta `fee_kind` fixo|parcelado|exito|fixo_exito), funil fixo
@@ -213,7 +227,12 @@ Windows, janela). `setup.html`/`offline.html` = telas de escolher servidor e
 AppUserModelID `com.barrosassociados.sistema` + atalho no Menu Iniciar
 (`ensureStartMenuShortcut`). `preload.cjs` expõe só `window.desktop`
 (openUrl, saveUrl, openExternal, focus, flash, setBadge, get/setSetting,
-setup.*); a página funciona igual sem ele.
+setup.*, certs.*); a página funciona igual sem ele. **Certificado A3**:
+`certificados.js` + `certificados.ps1` (PowerShell, `Cert:\CurrentUser\My`,
+`SignedCms` destacado SHA-256 com a cadeia; o driver do token pede o PIN);
+`certs.list/get/choose/sign`, escolha guardada em `desktop.json` (`a3`), por
+computador. Não dá para testar aqui (Linux): o e2e simula o `window.desktop.certs`
+assinando com node-forge.
 
 Interface (`src/renderer`, JS puro em módulos ES, sem build):
 

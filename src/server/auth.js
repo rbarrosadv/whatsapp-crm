@@ -168,14 +168,14 @@ export function endSession(token) {
 // Métodos da API que cada perfil NÃO pode chamar. O sócio pode tudo.
 const ADMIN_ONLY = [
   /^users:(save|list)$/, 'backup:export', /^wa:(logout|reset)$/,
-  /^google:(importClient|disconnect)$/, 'cases:delete', 'finance:delete', 'finance:deleteExpense', 'finance:deleteIncome', 'leads:delete',
+  /^google:(importClient|disconnect)$/, 'cases:delete', 'finance:delete', 'finance:deleteExpense', 'finance:deleteIncome', 'leads:delete', /^receipts:(set|clear)/,
 ];
 const DENY = {
   socio: [],
   advogado: ADMIN_ONLY,
   estagiario: [
     ...ADMIN_ONLY,
-    /^finance:/, /^reports:/,
+    /^finance:/, /^reports:/, /^receipts:/,
     /^(pipelines|types|filters|tags):(save|delete|reorder)$/,
     'cases:setStatus', 'messages:delete', /^oabs:(save|delete)$/, /^leads:proposal/,
   ],

@@ -11,6 +11,7 @@ import {
 import path from 'node:path';
 import fs from 'node:fs';
 import { fileURLToPath } from 'node:url';
+import { listCerts, signCms } from './certificados.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const ROOT = path.join(__dirname, '..', '..');
@@ -260,6 +261,21 @@ ipcMain.handle('desktop', async (_e, action, ...args) => {
       saveConfig();
       applyLoginItem();
       return null;
+    }
+    // certificado A3 deste computador (recibos assinados digitalmente)
+    case 'certs:list': return listCerts();
+    case 'certs:get': return config.a3 || null;
+    case 'certs:choose': {
+      const c = args[0];
+      config.a3 = c ? { thumb: String(c.thumb), name: String(c.name || ''), issuer: String(c.issuer || ''), validTo: Number(c.validTo) || null } : null;
+      saveConfig();
+      return config.a3;
+    }
+    case 'certs:sign': {
+      if (!config.a3) throw new Error('Escolha o certificado em Ajustes → Recibos.');
+      showWindow();
+      const cms = await signCms(Buffer.from(String(args[0] || ''), 'base64'), config.a3.thumb);
+      return cms.toString('base64');
     }
     case 'openNotificationSettings': if (process.platform === 'win32') shell.openExternal('ms-settings:notifications'); return null;
     // tela de primeira vez / sem conexão

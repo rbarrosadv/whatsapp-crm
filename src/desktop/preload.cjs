@@ -18,6 +18,13 @@ contextBridge.exposeInMainWorld('desktop', {
   getSetting: (key) => call('getSetting', key),
   setSetting: (key, value) => call('setSetting', key, value),
   openNotificationSettings: () => call('openNotificationSettings'),
+  // certificado digital A3 (token/cartão) deste computador
+  certs: {
+    list: () => call('certs:list'),
+    get: () => call('certs:get'),
+    choose: (c) => call('certs:choose', c),
+    sign: (base64) => call('certs:sign', base64),
+  },
   setup: {
     get: () => call('setup:get'),
     choose: (mode, url) => call('setup:choose', mode, url),

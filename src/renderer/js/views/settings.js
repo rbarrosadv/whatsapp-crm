@@ -1,6 +1,6 @@
 // Configurações: conexão, notificações, funis, etiquetas, respostas
-// rápidas, backup e importação do Kanban antigo.
-import { h, fill, modal, toast, errToast, confirmDialog, formatPhone, phoneOf, PALETTE, downloadUrl, fmtDateTime, pickFiles } from '../util.js';
+// rápidas, recibos (assinatura), backup.
+import { h, fill, modal, toast, errToast, confirmDialog, formatPhone, phoneOf, PALETTE, downloadUrl, fmtDateTime, pickFiles, uploadFiles } from '../util.js';
 import { state, on, api, setSetting } from '../store.js';
 import { icon, named, iconName, PICK_ICONS } from '../icons.js';
 
@@ -286,6 +286,8 @@ function render() {
           h('select', { class: 'input select-sm', disabled: !state.can.admin, onchange: (e) => setSetting('proposalValidDays', Number(e.target.value)).catch(errToast) },
             [[7, '7 dias'], [15, '15 dias'], [30, '30 dias']].map(([v, l]) => h('option', { value: v, selected: Number(state.settings.proposalValidDays ?? 15) === v }, l))))),
 
+      state.can.finance && section('Recibos: assinatura', receiptsSection()),
+
       state.can.finance && section('Dados do escritório (recibos)',
         ...[['officeName', 'Nome', 'Barros Associados'], ['officeDoc', 'CNPJ ou OAB da sociedade', 'Ex.: CNPJ 00.000.000/0001-00'],
           ['officeAddress', 'Endereço', 'Rua, nº, sala, bairro, cidade-UF, CEP'], ['officeCity', 'Cidade (data do recibo)', 'Cuiabá-MT']]
@@ -463,6 +465,90 @@ export function pipelineEditor(p) {
         },
       },
     ],
+  });
+}
+
+/** Imagem da assinatura e assinatura digital (A3 do token neste computador ou A1 no servidor). */
+function receiptsSection() {
+  const el = h('div', { class: 'stack receipts-cfg' }, h('p', { class: 'muted small' }, 'Carregando…'));
+  const admin = state.can.admin;
+  const draw = async () => {
+    let st;
+    try { st = await api('receipts:status'); } catch (e) { fill(el, h('p', { class: 'muted small' }, e.message)); return; }
+    const a3 = st.mode === 'a3' && window.desktop?.certs ? await window.desktop.certs.get().catch(() => null) : null;
+    const date = (ts) => (ts ? new Date(ts).toLocaleDateString('pt-BR') : '');
+    const soon = (ts) => ts && ts < Date.now() + 30 * 864e5;
+    fill(el,
+      h('label', { class: 'field' }, h('span', null, 'Nome de quem assina (abaixo da linha)'),
+        h('input', { class: 'input', value: st.signer, placeholder: state.settings.officeName || 'Barros Associados', disabled: !admin,
+          onchange: (e) => setSetting('receiptSigner', e.target.value.trim() || null).then(draw).catch(errToast) })),
+      h('div', { class: 'field' }, h('span', null, 'Imagem da assinatura'),
+        h('div', { class: 'row wrap' },
+          st.image ? h('img', { class: 'sig-preview', src: st.image, alt: 'Assinatura' }) : h('span', { class: 'muted small' }, 'Nenhuma. Use uma foto ou digitalização da assinatura, de preferência PNG com fundo transparente.'),
+          admin ? h('button', { class: 'btn btn-sm', onclick: async () => {
+            const files = await pickFiles({ multiple: false, accept: 'image/png,image/jpeg' });
+            if (!files.length) return;
+            try { await api('receipts:setImage', (await uploadFiles(files))[0]); toast('Assinatura salva', 'success'); draw(); } catch (e) { errToast(e); }
+          } }, [icon('upload', 14), st.image ? 'Trocar imagem' : 'Escolher imagem']) : null,
+          admin && st.image ? h('button', { class: 'btn btn-sm', onclick: () => api('receipts:clearImage').then(draw).catch(errToast) }, 'Tirar') : null)),
+      h('label', { class: 'toggle-row' }, h('div', null, h('div', null, 'Assinatura digital (certificado ICP-Brasil)'),
+        h('div', { class: 'muted small' }, 'O PDF do recibo sai assinado digitalmente, com validade jurídica.')),
+      h('select', { class: 'input select-sm', disabled: !admin, onchange: (e) => setSetting('receiptSignMode', e.target.value).then(draw).catch(errToast) },
+        [['none', 'Não usar'], ['a3', 'A3: token ou cartão'], ['a1', 'A1: arquivo no servidor']].map(([v, l]) => h('option', { value: v, selected: st.mode === v }, l)))),
+      st.mode === 'a3' ? h('div', { class: 'cert-box' },
+        !window.desktop?.certs
+          ? h('p', { class: 'small' }, 'O certificado A3 assina no app de desktop do Windows, com o token ou cartão conectado (o PIN é pedido a cada recibo). Neste navegador o PDF sai só com a imagem da assinatura.')
+          : [
+            a3 ? h('div', null, h('b', null, a3.name), h('div', { class: `small ${soon(a3.validTo) ? 'bad-text' : 'muted'}` }, `${a3.issuer || ''}${a3.validTo ? ` · vale até ${date(a3.validTo)}` : ''}`))
+              : h('p', { class: 'small' }, 'Conecte o token ou cartão e escolha o certificado. A escolha vale para este computador.'),
+            h('button', { class: 'btn btn-sm', onclick: () => chooseA3(draw) }, a3 ? 'Trocar certificado' : 'Escolher certificado deste computador'),
+          ]) : null,
+      st.mode === 'a1' ? h('div', { class: 'cert-box' },
+        st.a1 ? h('div', null, h('b', null, st.a1.name || st.a1.error), st.a1.validTo ? h('div', { class: `small ${soon(st.a1.validTo) ? 'bad-text' : 'muted'}` }, `${st.a1.issuer} · vale até ${date(st.a1.validTo)}`) : null)
+          : h('p', { class: 'small' }, 'Envie o arquivo do certificado A1 (.pfx ou .p12) e a senha. Ele fica guardado no servidor, com a senha cifrada.'),
+        admin ? h('button', { class: 'btn btn-sm', onclick: () => a1Dialog(draw) }, st.a1 ? 'Trocar certificado' : 'Enviar certificado A1') : null,
+        admin && st.a1 ? h('button', { class: 'btn btn-sm', onclick: () => api('receipts:clearA1').then(draw).catch(errToast) }, 'Remover') : null) : null);
+  };
+  draw();
+  return el;
+}
+
+async function chooseA3(done) {
+  let list;
+  toast('Procurando certificados (deixe o token conectado)…', 'info', 3000);
+  try { list = await window.desktop.certs.list(); } catch (e) { errToast(e); return; }
+  if (!list.length) { toast('Nenhum certificado encontrado. Conecte o token/cartão e confira se o programa dele está instalado.', 'error', 8000); return; }
+  list.sort((a, b) => Number(b.icp) - Number(a.icp));
+  const m = modal({
+    title: 'Certificado para assinar os recibos',
+    body: h('div', { class: 'picker-list' }, list.map((c) => h('div', {
+      class: 'picker-item',
+      onclick: async () => { await window.desktop.certs.choose(c); m.close(); toast('Certificado escolhido', 'success'); done(); },
+    }, h('div', null, h('b', null, c.name), c.icp ? h('span', { class: 'stage-pill small', style: { '--c': '#22c55e', marginLeft: '6px' } }, 'ICP-Brasil') : null),
+    h('div', { class: 'muted small' }, `${c.issuer} · vale até ${c.validTo ? new Date(c.validTo).toLocaleDateString('pt-BR') : '?'}`)))),
+    actions: [{ label: 'Cancelar' }],
+  });
+}
+
+function a1Dialog(done) {
+  let file = null;
+  const info = h('span', { class: 'muted small' }, 'Nenhum arquivo escolhido.');
+  const pass = h('input', { class: 'input', type: 'password', autocomplete: 'off' });
+  modal({
+    title: 'Certificado A1',
+    body: h('div', { class: 'form' },
+      h('div', { class: 'row' }, h('button', { class: 'btn btn-sm', onclick: async () => { [file] = await pickFiles({ multiple: false, accept: '.pfx,.p12' }); info.textContent = file?.name || 'Nenhum arquivo escolhido.'; } }, 'Escolher arquivo .pfx'), info),
+      h('label', { class: 'field' }, h('span', null, 'Senha do certificado'), pass)),
+    actions: [{ label: 'Cancelar' }, {
+      label: 'Salvar', primary: true,
+      onClick: async () => {
+        if (!file) { toast('Escolha o arquivo do certificado', 'error'); return false; }
+        await api('receipts:setA1', (await uploadFiles([file]))[0], pass.value);
+        toast('Certificado salvo', 'success');
+        done();
+        return true;
+      },
+    }],
   });
 }
 

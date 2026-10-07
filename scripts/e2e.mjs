@@ -31,6 +31,31 @@ const browser = await chromium.launch(fs.existsSync('/opt/pw-browsers/chromium')
   ? { executablePath: fs.readdirSync('/opt/pw-browsers').filter((d) => d.startsWith('chromium-')).map((d) => path.join('/opt/pw-browsers', d, 'chrome-linux', 'chrome')).find((f) => fs.existsSync(f)) }
   : {});
 
+/** Certificado de teste e assinatura CMS destacada (o que o Windows faz com o token A3). */
+function makeTestCert() {
+  const forge = createRequire(import.meta.url)('node-forge');
+  const keys = forge.pki.rsa.generateKeyPair(1024);
+  const cert = forge.pki.createCertificate();
+  cert.publicKey = keys.publicKey;
+  cert.serialNumber = '01';
+  cert.validity.notBefore = new Date(Date.now() - 864e5);
+  cert.validity.notAfter = new Date(Date.now() + 365 * 864e5);
+  cert.setSubject([{ name: 'commonName', value: 'RAFAEL TESTE' }]);
+  cert.setIssuer([{ name: 'commonName', value: 'AC Teste' }]);
+  cert.sign(keys.privateKey, forge.md.sha256.create());
+  return {
+    sign(data) {
+      const p7 = forge.pkcs7.createSignedData();
+      p7.content = forge.util.createBuffer(data.toString('binary'));
+      p7.addCertificate(cert);
+      p7.addSigner({ key: keys.privateKey, certificate: cert, digestAlgorithm: forge.pki.oids.sha256,
+        authenticatedAttributes: [{ type: forge.pki.oids.contentType, value: forge.pki.oids.data }, { type: forge.pki.oids.messageDigest }, { type: forge.pki.oids.signingTime, value: new Date() }] });
+      p7.sign({ detached: true });
+      return Buffer.from(forge.asn1.toDer(p7.toAsn1()).getBytes(), 'binary');
+    },
+  };
+}
+
 const SOCIO = { name: 'Rafael Barros', login: 'barros', password: 'segredo1' };
 
 async function startServer(extraEnv, dir) {
@@ -257,6 +282,13 @@ try {
   const receipt = await page.locator('.modal iframe.receipt-frame').evaluate((f) => f.contentDocument.body.innerText);
   check(/RECIBO/.test(receipt) && /mil cento e noventa e quatro reais/.test(receipt) && /Pix/.test(receipt), 'recibo com valor por extenso e forma de pagamento');
   await shot(page, '04c-recibo');
+  const [pdfDl] = await Promise.all([page.waitForEvent('download'), page.click('.modal:has(iframe.receipt-frame) button:has-text("Baixar PDF")')]);
+  check(/^Recibo \d{4} - Mariana Souza\.pdf$/.test(pdfDl.suggestedFilename())
+    && fs.readFileSync(await pdfDl.path()).subarray(0, 5).toString() === '%PDF-', 'recibo baixado em PDF');
+  await page.click('.modal:has(iframe.receipt-frame) button:has-text("Enviar pelo WhatsApp")');
+  await page.click('.modal:has-text("Enviar recibo a") button:has-text("Enviar")');
+  await page.waitForSelector('.toast:has-text("Recibo enviado a Mariana Souza")');
+  check(true, 'recibo em PDF enviado pelo WhatsApp');
   await page.click('.modal:has(iframe.receipt-frame) button:has-text("Fechar")');
   await page.waitForSelector('.modal-case .status-pill.ok:has-text("Paga")');
   check((await page.locator('.modal-case .fee-summary').innerText()).includes('1.194,00'), 'parcela recebida entra no resumo');
@@ -414,6 +446,36 @@ try {
   await page.waitForSelector('.view.active .table tbody tr:has-text("Consulta sobre inventário")');
   check(true, 'receita avulsa entra no fluxo de caixa');
   await shot(page, '05m-fluxo-caixa');
+
+  // recibo assinado com certificado A3 (o app de desktop é simulado; o "token" assina com node-forge)
+  const testCert = makeTestCert();
+  await page.exposeFunction('__signCms', (b64) => testCert.sign(Buffer.from(b64, 'base64')).toString('base64'));
+  await page.addInitScript(() => {
+    let chosen = null;
+    window.desktop = { certs: {
+      list: async () => [{ thumb: 'A'.repeat(40), name: 'RAFAEL TESTE', issuer: 'AC Teste', icp: true, validTo: Date.now() + 300 * 864e5 }],
+      get: async () => chosen || JSON.parse(localStorage.getItem('__a3') || 'null'),
+      choose: async (c) => { chosen = c; localStorage.setItem('__a3', JSON.stringify(c)); return c; },
+      sign: (b64) => window.__signCms(b64),
+    } };
+  });
+  await page.reload();
+  await page.click('.rail-btn[title="Configurações"]');
+  await page.locator('.receipts-cfg select').selectOption('a3');
+  await page.click('.receipts-cfg button:has-text("Escolher certificado deste computador")');
+  await page.click('.modal .picker-item:has-text("RAFAEL TESTE")');
+  await page.waitForSelector('.receipts-cfg .cert-box:has-text("RAFAEL TESTE")');
+  await shot(page, '05n-recibo-a3');
+  await page.click('.rail-btn[title="Financeiro"]');
+  await page.click('.view.active .seg:has-text("Fluxo de caixa")');
+  await page.locator('.view.active .table tbody tr:has-text("Consulta sobre inventário")').locator('button[title="Recibo"]').click();
+  const [signedDl] = await Promise.all([page.waitForEvent('download'), page.click('.modal:has(iframe.receipt-frame) button:has-text("Baixar PDF")')]);
+  const signedPdf = fs.readFileSync(await signedDl.path()).toString('latin1');
+  check(/\/ByteRange \[0 \d+ \d+ \d+\]/.test(signedPdf) && /adbe\.pkcs7\.detached/.test(signedPdf) && /RAFAEL TESTE/.test(signedPdf), 'recibo assinado com o certificado A3 do computador');
+  await page.click('.modal:has(iframe.receipt-frame) button:has-text("Fechar")');
+  await page.click('.rail-btn[title="Configurações"]');
+  await page.locator('.receipts-cfg select').selectOption('none');
+  await page.click('.rail-btn[title="Financeiro"]');
   await page.click('.view.active .seg:has-text("Inadimplência")');
   await page.waitForSelector('.view.active .table tbody tr:has-text("Carlos Pereira")');
   check(true, 'inadimplência por cliente');

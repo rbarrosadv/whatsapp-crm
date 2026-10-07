@@ -7,6 +7,7 @@ import os from 'node:os';
 import path from 'node:path';
 import * as auth from '../src/server/auth.js';
 import * as db from '../src/main/db.js';
+import forge from 'node-forge';
 
 process.env.CRM_DEMO_QR_MS = '200';
 const { startServer } = await import('../src/server/server.js');
@@ -644,4 +645,94 @@ test('relatórios: processos abertos/encerrados, prazos no prazo x atrasados, eq
   const est = client();
   await est.req('/auth/login', { body: { login: 'bia', password: 'estagio1' } });
   await assert.rejects(est.call('reports:get', 'overview', range), /permissão/);
+});
+
+/** Certificado de teste (.pfx) e um "token" que assina como o Windows (CMS destacado). */
+function testCert() {
+  const keys = forge.pki.rsa.generateKeyPair(1024);
+  const cert = forge.pki.createCertificate();
+  cert.publicKey = keys.publicKey;
+  cert.serialNumber = '01';
+  cert.validity.notBefore = new Date(Date.now() - 864e5);
+  cert.validity.notAfter = new Date(Date.now() + 365 * 864e5);
+  cert.setSubject([{ name: 'commonName', value: 'RAFAEL TESTE:12345678900' }]);
+  cert.setIssuer([{ name: 'commonName', value: 'AC Teste' }]);
+  cert.sign(keys.privateKey, forge.md.sha256.create());
+  const pfx = Buffer.from(forge.asn1.toDer(forge.pkcs12.toPkcs12Asn1(keys.privateKey, [cert], 'senha123', { algorithm: '3des' })).getBytes(), 'binary');
+  const signCms = (data) => {
+    const p7 = forge.pkcs7.createSignedData();
+    p7.content = forge.util.createBuffer(data.toString('binary'));
+    p7.addCertificate(cert);
+    p7.addSigner({ key: keys.privateKey, certificate: cert, digestAlgorithm: forge.pki.oids.sha256,
+      authenticatedAttributes: [{ type: forge.pki.oids.contentType, value: forge.pki.oids.data }, { type: forge.pki.oids.messageDigest }, { type: forge.pki.oids.signingTime, value: new Date() }] });
+    p7.sign({ detached: true });
+    return Buffer.from(forge.asn1.toDer(p7.toAsn1()).getBytes(), 'binary');
+  };
+  return { pfx, signCms };
+}
+
+test('recibo em PDF: imagem da assinatura, certificado A1 no servidor, A3 assinado fora (app de desktop) e envio pelo WhatsApp', async () => {
+  const c = client();
+  await c.req('/auth/login', { body: { login: 'barros', password: 'segredo1' } });
+  await connected(c);
+  const chat = (await c.call('chats:list')).find((x) => !x.is_group && !x.client_id);
+  const cid = await c.call('clients:save', { name: 'Cliente do Recibo', cpf: '999.888.777-66' });
+  await c.call('clients:linkChat', cid, chat.jid);
+  const k = await c.call('cases:save', { client_id: cid, title: 'Inventário' });
+  const [p] = await c.call('finance:generate', k, { total: 1500, count: 1, firstDue: Date.now(), description: 'Honorários' });
+  await c.call('finance:register', p, { method: 'pix' });
+  const pdfOf = (r) => Buffer.from(r.pdf, 'base64');
+
+  // sem nada configurado: PDF simples
+  let r = await c.call('finance:receiptPdf', p, {});
+  assert.equal(pdfOf(r).subarray(0, 5).toString(), '%PDF-');
+  assert.equal(r.signed, false);
+  assert.equal(r.canSend, true);
+  assert.match(r.name, /^Recibo \d{4} - Cliente do Recibo\.pdf$/);
+
+  // imagem da assinatura
+  const up = await c.req('/upload', { raw: fs.readFileSync('assets/icon.png'), headers: { 'X-File-Name': 'assinatura.png' } });
+  let st = await c.call('receipts:setImage', up.json.token);
+  assert.match(st.image, /^data:image\/png;base64,/);
+  await c.call('settings:set', 'receiptSigner', 'Rafael Barros');
+  assert.match((await c.call('finance:receipt', p)).html, /data:image\/png;base64/, 'imagem também no recibo da tela');
+
+  // A1 no servidor
+  const { pfx, signCms } = testCert();
+  const upc = await c.req('/upload', { raw: pfx, headers: { 'X-File-Name': 'certificado.pfx' } });
+  await assert.rejects(c.call('receipts:setA1', upc.json.token, 'errada'), /Senha do certificado incorreta/);
+  const upc2 = await c.req('/upload', { raw: pfx, headers: { 'X-File-Name': 'certificado.pfx' } });
+  st = await c.call('receipts:setA1', upc2.json.token, 'senha123');
+  assert.equal(st.a1.name, 'RAFAEL TESTE');
+  assert.ok(!JSON.stringify(await c.call('settings:get')).includes('senha123'), 'senha não vai para as janelas');
+  await c.call('settings:set', 'receiptSignMode', 'a1');
+  r = await c.call('finance:receiptPdf', p, {});
+  assert.equal(r.signed, true);
+  assert.match(pdfOf(r).toString('latin1'), /\/ByteRange \[0 \d+ \d+ \d+\]/);
+  assert.match(pdfOf(r).toString('latin1'), /adbe\.pkcs7\.detached/);
+
+  // A3: o servidor devolve o que assinar; o "token" assina; o servidor monta o PDF
+  await c.call('settings:set', 'receiptSignMode', 'a3');
+  const ph = await c.call('finance:receiptPdf', p, { a3: { name: 'RAFAEL TESTE:12345678900', issuer: 'AC Teste' } });
+  assert.ok(ph.pending && ph.data);
+  await assert.rejects(c.call('finance:receiptSign', ph.pending, Buffer.from('lixo').toString('base64')), /inválida/);
+  const ph2 = await c.call('finance:receiptPdf', p, { a3: { name: 'RAFAEL TESTE', issuer: 'AC Teste' } });
+  r = await c.call('finance:receiptSign', ph2.pending, signCms(Buffer.from(ph2.data, 'base64')).toString('base64'));
+  assert.equal(r.signed, true);
+  assert.match(pdfOf(r).toString('latin1'), /\/ByteRange \[0 \d+ \d+ \d+\]/);
+  await assert.rejects(c.call('finance:receiptSign', ph2.pending, 'x'), /demorou demais/, 'cada assinatura vale uma vez');
+
+  // envio pelo WhatsApp
+  await c.call('finance:sendReceipt', r.token, 'Segue o seu recibo.');
+  const msgs = await c.call('messages:list', chat.jid);
+  assert.ok((msgs.messages || msgs).some((m) => m.from_me && m.type === 'document' && /Recibo \d{4}/.test(m.media_name || '')), 'PDF saiu como documento');
+
+  // estagiária não mexe em recibos
+  const est = client();
+  await est.req('/auth/login', { body: { login: 'bia', password: 'estagio1' } });
+  await assert.rejects(est.call('receipts:status'), /permissão/);
+  await assert.rejects(est.call('finance:receiptPdf', p, {}), /permissão/);
+  await c.call('receipts:clearA1');
+  await c.call('receipts:clearImage');
+  await c.call('settings:set', 'receiptSignMode', 'none');
 });

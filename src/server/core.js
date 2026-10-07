@@ -8,6 +8,7 @@ import crypto from 'node:crypto';
 import path from 'node:path';
 import fs from 'node:fs';
 import os from 'node:os';
+import { fileURLToPath } from 'node:url';
 import * as db from '../main/db.js';
 import * as auth from './auth.js';
 import { WhatsAppService } from '../main/whatsapp.js';
@@ -21,10 +22,12 @@ import { seedDemoDocs, demoCourtsFetch } from '../main/demo.js';
 import { reais } from '../main/extenso.js';
 import * as leads from '../main/leads.js';
 import * as reports from '../main/reports.js';
+import { receiptPdf, signPdfA1, externalSign, certInfo } from '../main/pdf.js';
 import { CourtsService, DATAJUD_PUBLIC_KEY, deadlineFromAvailability, formatCnj, tribunalOf, nameCase } from '../main/courts.js';
 import { computeSteps, suggestedChecklist, docsRequestText, addBusinessDays, STEPS, PARTY_ROLES, DEFAULT_DOCS_TEMPLATE } from '../main/workflow.js';
 
 const DAY = 24 * 3600 * 1000;
+const ASSETS_DIR = fileURLToPath(new URL('../../assets/', import.meta.url));
 const money = (v) => Number(v || 0).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' });
 const dateBR = (ts) => (ts ? new Date(ts).toLocaleDateString('pt-BR') : 'sem data');
 
@@ -33,7 +36,8 @@ export const USER_KEYS = ['notifications', 'notificationPreview', 'theme', 'last
   'lastFilter', 'agendaHidden', 'agendaView', 'agendaHours', 'discreet', 'discreetMessages', 'spellcheck', 'wordSuggest', 'autocorrect', 'notifyCourts'];
 export const OFFICE_KEYS = ['sendReadReceipts', 'forgottenHours', 'chargeTemplate', 'pixKey', 'paymentNoticeDays',
   'staleCaseDays', 'googleSync', 'googleCalendarId', 'signMessages', 'docsRoot', 'docsRequestTemplate', 'datajudKey',
-  'officeName', 'officeDoc', 'officeAddress', 'officeCity', 'proposalTemplate', 'proposalValidDays'];
+  'officeName', 'officeDoc', 'officeAddress', 'officeCity', 'proposalTemplate', 'proposalValidDays',
+  'receiptSigner', 'receiptSignMode'];
 
 export const DEFAULT_CHARGE_TEMPLATE = 'Olá, {nome}! Tudo bem? Passando para lembrar da {parcela} dos honorários referentes a {caso}, '
   + 'no valor de {valor}, com vencimento em {vencimento}.{pix_linha}\nQualquer dúvida, estou à disposição.';
@@ -415,8 +419,19 @@ export async function createCore({ dataDir, demo = false, version = '', safeStor
     datajudDaily().catch((e) => console.error('datajud:', e.message));
   }
 
-  /** Recibo de uma parcela recebida (HTML para imprimir ou salvar em PDF). */
-  function receiptHtml(id) {
+  /** Dados do recibo de uma parcela recebida ou de uma receita avulsa (`income`). */
+  function receiptArgs(id, income = false) {
+    if (income) {
+      const i = db.getIncome(id);
+      if (!i) throw new Error('Receita não encontrada');
+      const cl = i.client_id ? db.getClient(i.client_id) : null;
+      return {
+        no: db.incomeReceiptNumber(id), value: i.amount, at: i.received_at, method: i.method,
+        who: i.who || 'cliente', doc: i.cpf ? `${i.client_kind === 'pj' ? 'CNPJ' : 'CPF'} ${i.cpf}` : '',
+        ref: [i.description, i.category && !i.description.toLowerCase().includes(i.category.toLowerCase()) ? i.category.toLowerCase() : null].filter(Boolean).join(' — '),
+        jid: cl?.jid || null,
+      };
+    }
     const p = db.getPayment(id);
     if (!p) throw new Error('Parcela não encontrada');
     if (!p.paid_at) throw new Error('Registre o recebimento antes de emitir o recibo.');
@@ -425,22 +440,50 @@ export async function createCore({ dataDir, demo = false, version = '', safeStor
     const desc = p.description || 'honorários advocatícios';
     const ref = [desc, p.of_total > 1 && !/parcela/i.test(desc) ? `parcela ${p.seq}/${p.of_total}` : null, k?.title ? `caso “${k.title}”` : null,
       k?.process_number ? `processo nº ${k.process_number}` : null].filter(Boolean).join(', ');
-    return receiptDoc({
+    return {
       no: db.receiptNumber(id), value: p.paid_amount ?? p.amount, at: p.paid_at, method: p.method,
       who: cl?.name || k?.client_name || 'cliente', doc: cl?.cpf ? `${cl.kind === 'pj' ? 'CNPJ' : 'CPF'} ${cl.cpf}` : '', ref,
-    });
+      jid: cl?.jid || null,
+    };
   }
+  const withWho = (a) => ({ ...receiptDoc(a), who: a.who, canSend: !!a.jid, signMode: signMode() });
+  const receiptHtml = (id) => withWho(receiptArgs(id));
+  const incomeReceiptHtml = (id) => withWho(receiptArgs(id, true));
 
-  /** Recibo de receita avulsa (consulta, parecer…). */
-  function incomeReceiptHtml(id) {
-    const i = db.getIncome(id);
-    if (!i) throw new Error('Receita não encontrada');
-    return receiptDoc({
-      no: db.incomeReceiptNumber(id), value: i.amount, at: i.received_at, method: i.method,
-      who: i.who || 'cliente', doc: i.cpf ? `${i.client_kind === 'pj' ? 'CNPJ' : 'CPF'} ${i.cpf}` : '',
-      ref: [i.description, i.category && !i.description.toLowerCase().includes(i.category.toLowerCase()) ? i.category.toLowerCase() : null].filter(Boolean).join(' — '),
-    });
+  // ---------------------------------------------------- recibo em PDF e assinatura
+  // Imagem da assinatura em <dados>/assinatura/; certificado A1 em <dados>/certificado/
+  // (a senha cifrada num arquivo à parte, fora das configurações que vão para as janelas).
+  const SIGN_DIR = path.join(dataDir, 'assinatura');
+  const CERT_DIR = path.join(dataDir, 'certificado');
+  const vault = safeStorage || fileSafeStorage(path.join(dataDir, 'google'));
+  const signatureImage = () => ['assinatura.png', 'assinatura.jpg'].map((f) => path.join(SIGN_DIR, f)).find((f) => fs.existsSync(f)) || null;
+  function a1Cert() {
+    const file = path.join(CERT_DIR, 'a1.pfx');
+    const pass = path.join(CERT_DIR, 'senha.bin');
+    if (!fs.existsSync(file) || !fs.existsSync(pass)) return null;
+    try {
+      const p12 = fs.readFileSync(file);
+      const password = vault.decryptString(fs.readFileSync(pass));
+      return { p12, password, info: certInfo(p12, password) };
+    } catch (e) { console.error('certificado A1:', e.message); return null; }
   }
+  const signMode = () => (['a1', 'a3'].includes(settings.receiptSignMode) ? settings.receiptSignMode : 'none');
+  const fileNameOf = (a) => `Recibo ${String(a.no).padStart(4, '0')} - ${String(a.who).replace(/[\\/:*?"<>|]+/g, ' ').trim()}.pdf`;
+  const pdfArgs = (a, signedBy) => ({
+    ...a, words: reais(a.value), signedBy,
+    office: { name: settings.officeName || 'Barros Associados', doc: settings.officeDoc, address: settings.officeAddress, city: settings.officeCity },
+    logo: path.join(ASSETS_DIR, 'logo-barros.jpg'), signatureImage: signatureImage(), signerName: settings.receiptSigner || null,
+  });
+  // PDFs prontos (para baixar/enviar) e assinaturas A3 em andamento, por alguns minutos
+  const readyPdfs = new Map();
+  const pendingA3 = new Map();
+  const keep = (map, value, ms = 10 * 60e3) => {
+    const token = crypto.randomBytes(12).toString('hex');
+    map.set(token, value);
+    setTimeout(() => { const v = map.get(token); map.delete(token); v?.cancel?.(); }, ms).unref?.();
+    return token;
+  };
+  const readyResult = (buf, a, signed) => ({ token: keep(readyPdfs, { buf, name: fileNameOf(a), jid: a.jid, no: a.no, who: a.who }), name: fileNameOf(a), pdf: buf.toString('base64'), signed, canSend: !!a.jid });
 
   function receiptDoc({ no, value, at, method, who, doc, ref }) {
     const esc = (t) => String(t ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
@@ -448,6 +491,8 @@ export async function createCore({ dataDir, demo = false, version = '', safeStor
     const date = new Date(at).toLocaleDateString('pt-BR', { day: 'numeric', month: 'long', year: 'numeric' });
     const office = settings.officeName || 'Barros Associados';
     const methods = { pix: 'Pix', dinheiro: 'dinheiro', transferencia: 'transferência bancária', boleto: 'boleto', cartao: 'cartão', cheque: 'cheque' };
+    const sigFile = signatureImage();
+    const sigImg = sigFile ? `data:image/${sigFile.endsWith('.png') ? 'png' : 'jpeg'};base64,${fs.readFileSync(sigFile).toString('base64')}` : null;
     const html = `<!doctype html><html lang="pt-BR"><head><meta charset="utf-8"><title>Recibo nº ${no}</title><style>
       @page { size: A4; margin: 22mm; }
       body { font-family: Georgia, 'Times New Roman', serif; color: #111; font-size: 13.5pt; line-height: 1.6; margin: 0; padding: 24px; background: #fff; }
@@ -469,7 +514,7 @@ export async function createCore({ dataDir, demo = false, version = '', safeStor
       <b>${money(value)}</b> (${esc(reais(value))}), referente a ${esc(ref)}${method ? `, paga em ${esc(methods[method] || method)}` : ''}.</p>
       <p>Para clareza, firmamos o presente recibo, dando plena quitação do valor acima.</p>
       <p style="text-align:right">${esc(settings.officeCity || 'Cuiabá-MT')}, ${esc(date)}.</p>
-      <div class="sign"><div class="line"></div>${esc(office)}${settings.officeDoc ? `<div class="small">${esc(settings.officeDoc)}</div>` : ''}</div>
+      <div class="sign">${sigImg ? `<img src="${sigImg}" alt="" style="max-height:70px;max-width:220px;display:block;margin:0 auto 2px">` : ''}<div class="line"></div>${esc(settings.receiptSigner || office)}${settings.receiptSigner && settings.receiptSigner !== office ? `<div class="small">${esc(office)}</div>` : ''}${settings.officeDoc ? `<div class="small">${esc(settings.officeDoc)}</div>` : ''}</div>
     </body></html>`;
     return { number: no, html };
   }
@@ -1159,6 +1204,83 @@ export async function createCore({ dataDir, demo = false, version = '', safeStor
       send('finance:changed');
     },
     'finance:receipt': (_c, id) => receiptHtml(id),
+    /**
+     * Recibo em PDF (`income` = receita avulsa). Sem certificado ou com A1: devolve
+     * o PDF pronto {token, name, pdf (base64), canSend}. Com `a3` ({name, issuer} do
+     * certificado escolhido no app de desktop): devolve {pending, data (base64)} para
+     * o app assinar; depois `finance:receiptSign(pending, cms)` devolve o PDF.
+     */
+    'finance:receiptPdf': async (_c, id, { income = false, a3 = null } = {}) => {
+      const a = receiptArgs(id, income);
+      const mode = signMode();
+      if (a3 && mode === 'a3') {
+        const pdf = await receiptPdf(pdfArgs(a, { name: String(a3.name || '').split(':')[0], issuer: a3.issuer }));
+        const ext = await externalSign(pdf, { reason: `Recibo nº ${a.no}`, location: settings.officeCity || '', name: a3.name || '' });
+        const pending = keep(pendingA3, { ...ext, a }, 5 * 60e3);
+        return { pending, data: ext.data.toString('base64') };
+      }
+      const cert = mode === 'a1' ? a1Cert() : null;
+      const pdf = await receiptPdf(pdfArgs(a, cert ? cert.info : null));
+      if (!cert) return readyResult(pdf, a, false);
+      return readyResult(await signPdfA1(pdf, cert, { reason: `Recibo nº ${a.no}`, location: settings.officeCity || '', name: cert.info.name }), a, true);
+    },
+    'finance:receiptSign': async (_c, pending, cmsBase64) => {
+      const p = pendingA3.get(pending);
+      if (!p) throw new Error('A assinatura demorou demais. Gere o recibo de novo.');
+      pendingA3.delete(pending);
+      const buf = await p.finish(Buffer.from(String(cmsBase64 || ''), 'base64'));
+      return readyResult(buf, p.a, true);
+    },
+    'finance:receiptCancel': (_c, pending) => { pendingA3.get(pending)?.cancel(); pendingA3.delete(pending); },
+    /** Envia ao cliente, pelo WhatsApp, o PDF gerado agora há pouco. */
+    'finance:sendReceipt': async (ctx, token, text) => {
+      const r = readyPdfs.get(token);
+      if (!r) throw new Error('O recibo expirou. Gere de novo.');
+      if (!r.jid) throw new Error('Este cliente não tem WhatsApp ligado.');
+      const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'recibo-'));
+      const file = path.join(dir, r.name);
+      try {
+        fs.writeFileSync(file, r.buf);
+        await wa.sendFile(r.jid, file, { caption: String(text || '').trim() ? sign(ctx, String(text).trim()) : undefined, asDocument: true });
+      } finally { fs.rmSync(dir, { recursive: true, force: true }); }
+      db.logActivity(r.jid, 'finance', `Recibo nº ${String(r.no).padStart(4, '0')} enviado pelo WhatsApp`, ctx.user.name);
+    },
+    /** O que está configurado para assinar os recibos. */
+    'receipts:status': () => {
+      const img = signatureImage();
+      const a1 = fs.existsSync(path.join(CERT_DIR, 'a1.pfx')) ? (a1Cert()?.info || { error: 'Não foi possível abrir o certificado. Cadastre de novo.' }) : null;
+      return {
+        mode: signMode(), signer: settings.receiptSigner || '',
+        image: img ? `data:image/${img.endsWith('.png') ? 'png' : 'jpeg'};base64,${fs.readFileSync(img).toString('base64')}` : null,
+        a1,
+      };
+    },
+    'receipts:setImage': (_c, token) => {
+      const [f] = uploads([token]);
+      try {
+        const ext = path.extname(f.name).toLowerCase();
+        if (!['.png', '.jpg', '.jpeg'].includes(ext)) throw new Error('Use uma imagem PNG ou JPG da assinatura (de preferência com fundo transparente).');
+        if (fs.statSync(f.path).size > 3e6) throw new Error('Imagem grande demais (até 3 MB).');
+        fs.mkdirSync(SIGN_DIR, { recursive: true });
+        for (const old of ['assinatura.png', 'assinatura.jpg']) fs.rmSync(path.join(SIGN_DIR, old), { force: true });
+        fs.copyFileSync(f.path, path.join(SIGN_DIR, ext === '.png' ? 'assinatura.png' : 'assinatura.jpg'));
+      } finally { fs.rmSync(path.dirname(f.path), { recursive: true, force: true }); }
+      return api['receipts:status']();
+    },
+    'receipts:clearImage': () => { fs.rmSync(SIGN_DIR, { recursive: true, force: true }); return api['receipts:status'](); },
+    'receipts:setA1': (_c, token, password) => {
+      const [f] = uploads([token]);
+      try {
+        const p12 = fs.readFileSync(f.path);
+        const info = certInfo(p12, String(password || ''));
+        if (info.validTo < Date.now()) throw new Error(`Este certificado venceu em ${new Date(info.validTo).toLocaleDateString('pt-BR')}.`);
+        fs.mkdirSync(CERT_DIR, { recursive: true });
+        fs.writeFileSync(path.join(CERT_DIR, 'a1.pfx'), p12, { mode: 0o600 });
+        fs.writeFileSync(path.join(CERT_DIR, 'senha.bin'), vault.encryptString(String(password)), { mode: 0o600 });
+      } finally { fs.rmSync(path.dirname(f.path), { recursive: true, force: true }); }
+      return api['receipts:status']();
+    },
+    'receipts:clearA1': () => { fs.rmSync(CERT_DIR, { recursive: true, force: true }); return api['receipts:status'](); },
     // receitas avulsas (sem processo)
     'finance:incomes': (_c, opts) => db.listIncomes(opts || {}),
     'finance:saveIncome': (ctx, i) => { const id = db.saveIncome({ ...i, created_by: ctx.user.name }); if (i.client_id) clientChanged(i.client_id); send('finance:changed'); return id; },
