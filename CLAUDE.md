@@ -83,26 +83,42 @@ Motor (`src/main`, sem Electron apesar do nome da pasta):
   `meta`, `contact_types`, `chat_filters`, `cases`,
   `payments`, `case_docs`, `users`, `sessions`, `doc_index`, `clients`,
   `case_parties`, `case_moves`, `case_steps`, `case_checklist`, `oabs`,
-  `intimations`, `expenses`, `incomes`, `leads`, `lead_contacts`, `push_subs` (migrações por versão em
-  `migrate()`; `meta.schema` guarda a versão atual).
-- `docs.js` — `DocsService`: pasta "BARROS ADVOGADOS" do OneDrive lida
-  direto do disco (`settings.docsRoot`, ou `guessRoot()` em
-  `%OneDrive%\BARROS ADVOGADOS`; demo cria uma de exemplo em
-  `<dados>/OneDrive (demonstração)` via `seedDemoDocs`). Tudo guardado como
-  caminho relativo (`crm.folder`, `cases.folder`), sempre conferido por
-  `abs()` para não sair da pasta. Estrutura `FOLDERS` (00 ENTRADA … 07
-  EQUIPE); `allowed()`: 05/06 só sócio, 07 EQUIPE só a pasta da própria
-  pessoa. Pasta do cliente `02 CLIENTES/NOME`(+`_CADASTRO`), do caso
-  `ASSUNTO x PARTE - nº` (`caseFolderName`); arquivos novos `AAAA-MM-DD - …`.
-  Modelos em `04 MODELOS/<área>`; `fillDocx` troca `{marcador}` mesmo
-  quebrado em vários pedaços pelo Word (`{NOME}` → maiúsculas);
-  `templateValues` = ficha do cliente (`CLIENT_FIELDS`: cpf, rg…) + caso.
-  Busca: `doc_index` (texto de .docx/.pdf simples/.txt, `fold` sem acento,
-  incremental por data; PDFs > 8 MB e outros > 15 MB só pelo nome, porque ler
-  arquivo "sob demanda" faz o OneDrive baixá-lo). `zip.js` = zip mínimo.
-  Rota `GET /docs/file/<rel>`; no app de desktop em modo local
-  `desktop.openDoc/showDoc` abre o arquivo original (Word/Explorador). Num
-  servidor remoto vai precisar do Microsoft Graph (ainda não feito).
+  `intimations`, `expenses`, `incomes`, `leads`, `lead_contacts`, `push_subs`, `case_hints` (migrações por versão em
+  `migrate()`; `meta.schema` guarda a versão atual — v19).
+- `docs.js` — `DocsService`: pasta "BARROS ADVOGADOS" do escritório, sempre
+  por caminho relativo (`clients.folder`, `cases.folder`, conferido por
+  `safeRel` — sem `..`), sobre um **armazenamento** (`storage.js`):
+  `LocalStore` (disco: `settings.docsRoot`, ou `guessRoot()` em
+  `%OneDrive%\BARROS ADVOGADOS`; demo cria uma em `<dados>/OneDrive
+  (demonstração)` via `seedDemoDocs`) ou `GraphStore` (**OneDrive pela API da
+  Microsoft**, `settings.docsMode = 'onedrive'`, para o servidor). Métodos
+  assíncronos (`list`, `mkdir`, `saveFiles`, `copyAsBase`, `templates`,
+  `move`, `reindex`…); `localPath(rel)` só no modo local (abrir no
+  Word/Explorador). Estrutura `FOLDERS` (00 ENTRADA … 07 EQUIPE); `allowed()`:
+  05/06 só sócio, 07 EQUIPE só a pasta da própria pessoa. Pasta do cliente
+  `02 CLIENTES/NOME`(+`_CADASTRO`), do caso `ASSUNTO x PARTE - nº`
+  (`caseFolderName`); arquivos novos `AAAA-MM-DD - …`. Modelos em
+  `04 MODELOS/<área>`; `fillDocx` troca `{marcador}` mesmo quebrado em vários
+  pedaços pelo Word (`{NOME}` → maiúsculas); `templateValues` = ficha do
+  cliente + caso, com `{qualificacao}` (parágrafo pronto, `qualify.js`),
+  endereço em campos (`{rua}` `{numero}` `{bairro}` `{cidade}` `{uf}` `{cep}`),
+  `{representante}`. Busca: `doc_index` (texto de .docx/.pdf simples/.txt,
+  `fold` sem acento, incremental por data; PDFs > 8 MB e outros > 15 MB só
+  pelo nome — ler = baixar). `zip.js` = zip mínimo. Rota `GET /docs/file/<rel>`
+  (local: o arquivo; OneDrive: 302 para o link temporário da Microsoft).
+  **Arquivo morto**: ao encerrar, `docs:archivePlan/archiveFolder` oferece mover
+  a pasta do cliente (sem outro processo aberto) ou só a do processo para
+  `03 ARQUIVO MORTO` (e de volta ao reabrir); `renameFolderPrefix` acerta os
+  caminhos.
+- `onedrive.js` — `OneDriveAuth`: conta Microsoft **pessoal** do escritório
+  (autoridade `consumers`), app cadastrado pelo sócio no portal (Entra →
+  Registros de aplicativo, "Web", redirect `<endereço>/onedrive/callback`,
+  ID + segredo), login OAuth com PKCE (rota `/onedrive/callback`, só sócio),
+  tokens cifrados em `<dados>/onedrive/onedrive.bin`; a pasta é escolhida pelo
+  link de compartilhamento (`/shares/u!…`) ou pela lista `sharedWithMe`.
+  `GraphStore` (em `storage.js`) usa caminhos `items/{pasta}:/{rel}:`,
+  `children`, `content` (PUT até 200 MB), PATCH para mover, espera em 429.
+  Testado com uma "Microsoft" de mentira (`test/onedrive.test.js`).
 - `workflow.js` — as **10 etapas do caso** (`STEPS`, do documento do projeto)
   e `computeSteps(caso, {manual, checklist, payments})`: etapas que se
   concluem sozinhas pelos dados (triagem = tem cliente; proposta = honorários;
@@ -225,6 +241,57 @@ Motor (`src/main`, sem Electron apesar do nome da pasta):
   (`checkHearings`, kind `hearing`, abre o processo na aba Prazos) e fica no Hoje
   em "Audiências realizadas: agendar prazos" (Agendar prazo → tarefa `prazo` do
   processo; Feito → `hearings:followUp`) até marcar feito.
+- **Cadastro de clientes** (v19): endereço em campos (`cep`, `street`,
+  `number`, `complement`, `district`, `city`, `uf`; `address` = a linha
+  montada, `fullAddress`) com **busca do CEP** e empresa com **busca do CNPJ**
+  (`lookup.js`: ViaCEP/BrasilAPI e BrasilAPI/publica.cnpj.ws, `clients:lookupCep/
+  lookupCnpj`, cache 24 h; demo `demoLookupFetch`; a Receita vem sem acento →
+  a cidade/rua é corrigida pelo CEP), `gender` (concordância), `rg_issuer`,
+  `trade_name`, `ie`, `im`, `rep` (representante legal em JSON). `qualify.js`
+  (em `src/renderer/js`, usado também pelo servidor): `qualification()` monta o
+  parágrafo (PF ou PJ com representante), `MARITAL`, `missingFields`,
+  `sameName` (aviso de cliente repetido, `clients:similar`). Tela em
+  `views/clientform.js` (Pessoa física | Empresa, "Qualificação pronta" ao vivo).
+  Ficha do cliente sem WhatsApp sugere a conversa (`clients:suggestChats`, por
+  telefone ou nome); opção do escritório `waSaveContacts` salva o contato no
+  WhatsApp (`wa.saveContact` → `addOrEditContact`, em fila com 5 s, nunca em
+  lote). Cliente novo pode já criar a pasta no OneDrive.
+- `importer.js` + `sheet.js` — **Importar processos** (LinkLei e afins; `.xlsx`
+  lido sem dependência, ou `.csv`): `detectColumns` (nº pelo conteúdo),
+  `parseImport` (repetidos uma vez, problemas à parte, partes do título "A x B"),
+  modo `inss` (protocolos). `cases:importPreview/importRun/importStatus`:
+  processos entram **sem cliente** (`jid = processo:<id>`, `no_client`) e, em
+  segundo plano (1,5 s entre consultas, evento `cases:import`), o DataJud traz
+  andamentos e o `organizeCase` define área (`classifyArea` pela classe/assunto),
+  título (classe no lugar do genérico), `last_move_at` e o **arquivamento**
+  (`archiveState`: provisório/sobrestado/"arquivado" sem dizer qual → `archive_state =
+  'provisorio'` = vigiar, com `prescription_at` sugerida por `prescriptionYears`
+  {trabalhista 2, outros 1}; baixa definitiva → `'definitivo'` = só sugere
+  encerrar; desarquivamento limpa). DJEN pelo nº (`djenByProcess`) →
+  `partiesFromDjen` (sugere o cliente pela comunicação dirigida à OAB do
+  escritório) em `cases.parties_found`; `cases:assignClient` liga/cria o
+  cliente (sem duplicar) e grava a parte contrária (`setCaseClient` leva
+  tarefas/notas). Telas em `views/importcases.js` (importar, "Processos sem
+  cliente", faixas da ficha do processo). Avisos de prescrição 90/30/0 dias
+  (`checkPrescriptions`, agrupados se muitos).
+- **Sugestões dos andamentos** (`case_hints`): andamento novo do DataJud (após a
+  1ª consulta) ou intimação nova → `hintsFor`: audiência marcada
+  (`hearingFromText`) vira "Pôr na agenda" (`hints:hearing`) e andamento
+  importante (`CLIENT_WORTHY`: sentença, acordo, alvará…) vira "Avisar o
+  cliente" (`hints:clientText` explica em linguagem simples, modelo
+  `clientUpdateTemplate`; `hints:sendClient` envia pelo WhatsApp ou marca como
+  avisado por outro meio). Ficam no Hoje e na ficha até alguém conferir.
+  Hoje também mostra **processos parados** (`idleCaseDays`, padrão 90) e
+  **arquivados com prescrição** nos próximos 90 dias.
+- **Tribunais por advogado**: cada advogado cadastra a própria OAB (o sócio, de
+  qualquer um); processo cadastrado a partir de intimação/importação fica com o
+  **dono da OAB** (`oabOwnerOf`); Intimações tem "Minhas OABs | Todas";
+  Processos filtra por responsável.
+- **INSS** (`cases.kind = 'inss'`): benefício, `inss_status` (análise,
+  exigência → prazo de 30 dias, indeferido → prazo de recurso 30 dias e
+  "avisar o cliente", concedido → "avisar o cliente"), conferência no Meu INSS
+  a cada N dias (`inss_check_days`, `cases:inssChecked`, lista no Hoje). Sem
+  consulta automática (o INSS não tem consulta pública); DataJud não consulta.
 - `ogg.js` — remux WebM/Opus (MediaRecorder) → OGG/Opus (mensagem de voz).
 - `google.js` — `GoogleService`: Google Agenda pela API oficial com a chave
   (client_secret JSON, tipo "App para computador") do próprio usuário;
@@ -243,7 +310,11 @@ própria com o sistema. Modo **remote** (endereço do servidor) ou **local**
 (liga `startServer` no próprio processo com os dados de
 `%APPDATA%\BarrosAssociados\dados`, porta 3210). Config em
 `%APPDATA%\BarrosAssociados\desktop.json` (modo, url, bandeja, abrir com o
-Windows, janela). `setup.html`/`offline.html` = telas de escolher servidor e
+Windows, janela, `zoomByDisplay` = zoom guardado por monitor). No modo local o
+título avisa "— só neste computador"; "Trocar o servidor do escritório…" no
+menu (Alt) e no ícone do relógio; a janela só é maximizada depois de aparecer
+(maximizar escondida deixava a página com o tamanho antigo). Instalação em
+`C:\BarrosAssociados` (zip com essa pasta). `setup.html`/`offline.html` = telas de escolher servidor e
 "sem conexão". Abrir/salvar arquivos do servidor: `session.downloadURL` +
 `will-download` (abrir = baixa no temp e `shell.openPath`). Bandeja,
 AppUserModelID `com.barrosassociados.sistema` + atalho no Menu Iniciar
