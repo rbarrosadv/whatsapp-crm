@@ -109,6 +109,12 @@ function createWindow() {
   // Maximizar só depois de mostrar: maximizada ainda escondida, o Windows às
   // vezes deixa a página com o tamanho antigo (faixa vazia do lado direito).
   win.once('show', () => { if (config.windowMaximized) setTimeout(() => win && !win.isDestroyed() && win.maximize(), 50); });
+  // no modo "neste computador" o título avisa: os dados ficam só nesta máquina
+  win.on('page-title-updated', (e, title) => {
+    if (config.mode !== 'local' || DEMO) return;
+    e.preventDefault();
+    win.setTitle(`${title} — só neste computador`);
+  });
   setupSpellcheck();
   win.webContents.session.setPermissionRequestHandler((_wc, permission, cb) => {
     cb(['media', 'notifications', 'clipboard-sanitized-write'].includes(permission));
@@ -311,6 +317,7 @@ function createTray() {
   tray.setToolTip(NAME);
   tray.setContextMenu(Menu.buildFromTemplate([
     { label: `Abrir ${NAME}`, click: showWindow },
+    { label: 'Trocar o servidor do escritório…', click: () => { showWindow(); showSetup(); } },
     { type: 'separator' },
     { label: 'Sair', click: () => { quitting = true; app.quit(); } },
   ]));
