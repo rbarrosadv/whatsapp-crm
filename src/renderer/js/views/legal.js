@@ -5,13 +5,15 @@
 import {
   h, fill, modal, toast, errToast, confirmDialog, fmtMoney, fmtDateTime, fmtDue, formatPhone, normalize, debounce,
 } from '../util.js';
-import { state, on, api, openChat, setView, stageById } from '../store.js';
+import { state, on, api, openChat, setView, stageById, openClient } from '../store.js';
 import { avatarEl } from '../components.js';
 import { openCase, newCaseDialog, feeLabel, paymentRow } from './casemodal.js';
 import { folderBrowser, clientFolderDialog } from './docs.js';
 import { renderIntimations } from './intimations.js';
 import { icon } from '../icons.js';
 import { contactList, contactDialog } from './commercial.js';
+import { clientForm } from './clientform.js';
+import { looksLikeCompany, fmtCnpj, fmtCpf } from '../qualify.js';
 
 let root;
 let tab = 'clientes'; // clientes | processos | intimacoes
@@ -112,15 +114,40 @@ export function clientDialog(pre = {}) {
   const cpf = h('input', { class: 'input', placeholder: 'CPF ou CNPJ' });
   const phone = h('input', { class: 'input', placeholder: '(65) 99999-0000' });
   const email = h('input', { class: 'input', type: 'email' });
-  modal({
+  const dup = h('div', { class: 'dup-box', hidden: true });
+  const hint = h('div', { class: 'muted small' });
+  if (looksLikeCompany(name.value)) kind.value = 'pj';
+  const checkDup = debounce(async () => {
+    const list = await api('clients:similar', { name: name.value, cpf: cpf.value }).catch(() => []);
+    dup.hidden = !list.length;
+    fill(dup, icon('alert', 16), h('span', null, `Já existe: ${list.map((x) => x.name).join(', ')}. `),
+      list.length ? h('a', { href: '#', onclick: (e) => { e.preventDefault(); dlg?.close(); openClient(list[0].id); } }, 'Abrir a ficha') : null);
+  }, 400);
+  name.addEventListener('input', () => { if (looksLikeCompany(name.value)) kind.value = 'pj'; checkDup(); });
+  cpf.addEventListener('input', async () => {
+    checkDup();
+    const d = cpf.value.replace(/\D/g, '');
+    if (d.length !== 14) return;
+    kind.value = 'pj';
+    hint.textContent = 'Buscando o CNPJ na Receita…';
+    try {
+      const r = await api('clients:lookupCnpj', d);
+      if (r?.name) { name.value = r.name; hint.textContent = `Encontrado: ${r.name}${r.city ? ` — ${r.city}/${r.uf}` : ''}. O endereço entra junto.`; cpf.dataset.lookup = JSON.stringify(r); checkDup(); }
+      else hint.textContent = 'CNPJ não encontrado na Receita.';
+    } catch (e) { hint.textContent = e.message; }
+  });
+  let dlg = null;
+  dlg = modal({
     title: 'Novo cliente',
     body: h('div', { class: 'form' },
       h('label', { class: 'field' }, h('span', null, 'Nome'), name),
+      dup,
       h('div', { class: 'grid2' },
         h('label', { class: 'field' }, h('span', null, 'Tipo'), kind),
         h('label', { class: 'field' }, h('span', null, 'CPF / CNPJ'), cpf),
         h('label', { class: 'field' }, h('span', null, 'Telefone'), phone),
         h('label', { class: 'field' }, h('span', null, 'E-mail'), email)),
+      hint,
       h('p', { class: 'muted small' }, 'O WhatsApp é opcional: dá para ligar depois, na ficha do cliente.')),
     actions: [
       { label: 'Cancelar' },
@@ -128,7 +155,16 @@ export function clientDialog(pre = {}) {
         label: 'Cadastrar', primary: true,
         onClick: async () => {
           if (!name.value.trim()) { toast('Informe o nome', 'error'); return false; }
-          const id = await api('clients:save', { name: name.value, kind: kind.value, cpf: cpf.value, phone: phone.value, email: email.value, origin: 'Cadastro' });
+          let found = {};
+          try { found = JSON.parse(cpf.dataset.lookup || '{}'); } catch { /* sem busca */ }
+          const addr = found.cnpj === cpf.value.replace(/\D/g, '')
+            ? { trade_name: found.trade_name, cep: found.cep, street: found.street, number: found.number, complement: found.complement, district: found.district, city: found.city, uf: found.uf }
+            : {};
+          const id = await api('clients:save', {
+            name: name.value, kind: kind.value, cpf: kind.value === 'pj' ? fmtCnpj(cpf.value) : fmtCpf(cpf.value),
+            phone: phone.value, email: email.value || found.email || '', origin: 'Cadastro', ...addr,
+            rep: found.partners?.length === 1 ? { name: found.partners[0].name, role: found.partners[0].role, same_address: true } : undefined,
+          });
           clientId = id; clientTab = 'dados';
           setView('legal');
           render();
@@ -210,51 +246,15 @@ function caseCardBig(k) {
 }
 
 function clientData(el, c) {
-  const fields = [
-    ['name', 'Nome completo / razão social', { wide: true }],
-    ['kind', 'Tipo', { options: [['pf', 'Pessoa física'], ['pj', 'Pessoa jurídica']] }],
-    ['cpf', c.kind === 'pj' ? 'CNPJ' : 'CPF'],
-    ['rg', 'RG'],
-    ['birth', 'Nascimento', { placeholder: 'dd/mm/aaaa' }],
-    ['nationality', 'Nacionalidade', { placeholder: 'brasileiro(a)' }],
-    ['marital', 'Estado civil'],
-    ['profession', 'Profissão'],
-    ['address', 'Endereço completo', { wide: true, placeholder: 'Rua, nº, bairro, cidade-UF, CEP' }],
-    ['phone', 'Telefone'],
-    ['phone2', 'Outro telefone'],
-    ['email', 'E-mail'],
-    ['origin', 'Como chegou (indicação, Instagram…)'],
-    ['notes', 'Observações', { wide: true, multiline: true }],
-  ];
-  const inputs = {};
-  fill(el, h('div', { class: 'panel' },
-    h('div', { class: 'client-form' }, fields.map(([key, label, o = {}]) => {
-      const input = o.options
-        ? h('select', { class: 'input' }, o.options.map(([v, l]) => h('option', { value: v, selected: (c[key] || 'pf') === v }, l)))
-        : o.multiline ? h('textarea', { class: 'input', rows: 3 }, c[key] || '')
-          : h('input', { class: 'input', value: c[key] || '', placeholder: o.placeholder || '' });
-      inputs[key] = input;
-      return h('label', { class: `field ${o.wide ? 'wide' : ''}` }, h('span', null, label), input);
-    })),
-    h('p', { class: 'muted small' }, 'Estes dados preenchem procurações, contratos e petições dos modelos ({nome}, {cpf}, {endereco}…).'),
-    h('div', { class: 'row' },
-      h('button', {
-        class: 'btn btn-primary',
-        onclick: async () => {
-          const data = { id: c.id };
-          for (const [k, i] of Object.entries(inputs)) data[k] = i.value;
-          try { await api('clients:save', data); toast('Dados salvos', 'success'); } catch (e) { errToast(e); }
-        },
-      }, 'Salvar'),
-      h('div', { class: 'grow' }),
-      h('button', {
-        class: 'btn',
-        onclick: async () => {
-          const arch = c.status !== 'arquivado';
-          if (arch && !await confirmDialog(`Arquivar ${c.name}? Some da lista de clientes ativos (nada é apagado).`, { okLabel: 'Arquivar' })) return;
-          await api('clients:save', { id: c.id, status: arch ? 'arquivado' : 'ativo' }).catch(errToast);
-        },
-      }, c.status === 'arquivado' ? 'Reativar cliente' : 'Arquivar cliente'))));
+  const archive = h('button', {
+    class: 'btn', type: 'button',
+    onclick: async () => {
+      const arch = c.status !== 'arquivado';
+      if (arch && !await confirmDialog(`Arquivar ${c.name}? Some da lista de clientes ativos (nada é apagado).`, { okLabel: 'Arquivar' })) return;
+      await api('clients:save', { id: c.id, status: arch ? 'arquivado' : 'ativo' }).catch(errToast);
+    },
+  }, c.status === 'arquivado' ? 'Reativar cliente' : 'Arquivar cliente');
+  fill(el, h('div', { class: 'panel' }, clientForm(c, { footer: archive })));
 }
 
 function clientDocs(el, c) {

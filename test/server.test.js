@@ -251,7 +251,7 @@ test('documentos: busca, permissões por pasta, pasta do caso e "usar como base"
   const cf = await socio.call('docs:clientFolder', carlosId);
   assert.equal(cf.suggestion?.rel, '02 CLIENTES/CARLOS PEREIRA');
   await socio.call('docs:linkClient', carlosId, cf.suggestion.rel);
-  await socio.call('clients:save', { id: carlosId, cpf: '123.456.789-00', nationality: 'brasileiro', marital: 'casado', profession: 'motorista', address: 'Rua A, 10, Cuiabá-MT' });
+  await socio.call('clients:save', { id: carlosId, cpf: '123.456.789-00', nationality: 'brasileiro', marital: 'casado', gender: 'm', profession: 'motorista', address: 'Rua A, 10, Cuiabá-MT' });
   const caseId = await socio.call('cases:save', { client_id: carlosId, title: 'Horas extras', opposing_party: 'Transportes Rápido Ltda' });
   const info = await socio.call('docs:caseFolder', caseId);
   assert.equal(info.clientFolder, '02 CLIENTES/CARLOS PEREIRA');
@@ -800,4 +800,30 @@ test('buscar meus processos: varre o DJEN mês a mês pela OAB, publicações an
   const out = await c.call('push:outbox');
   assert.ok(out.some((x) => x.title === 'Busca dos seus processos concluída'), 'avisa quando termina');
   await c.call('push:unsubscribe', sub.endpoint);
+});
+
+test('cadastro do cliente: CEP e CNPJ pelo servidor, endereço montado, {qualificacao} e aviso de repetido', async () => {
+  const c = client();
+  await c.req('/auth/login', { body: { login: 'barros', password: 'segredo1' } });
+  const saved = srv.core.lookup.fetch;
+  srv.core.lookup.fetch = async (url) => ({ ok: true, status: 200, json: async () => (url.includes('viacep')
+    ? { cep: '78043-306', logradouro: 'Rua Presidente Marques', complemento: '', bairro: 'Quilombo', localidade: 'Cuiabá', uf: 'MT' }
+    : {}) });
+  try {
+    const cep = await c.call('clients:lookupCep', '78043-306');
+    assert.equal(cep.street, 'Rua Presidente Marques');
+    const id = await c.call('clients:save', { name: 'Joana Teste Qualificação', kind: 'pf', gender: 'f', marital: 'divorciado', profession: 'Contadora', cpf: '987.654.321-00', ...cep, number: '77' });
+    const cl = await c.call('clients:get', id);
+    assert.equal(cl.address, 'Rua Presidente Marques, nº 77, Bairro Quilombo, Cuiabá/MT, CEP 78043-306', 'endereço em uma linha acompanha os campos');
+    const vals = await c.call('docs:values', { clientId: id });
+    assert.match(vals.qualificacao, /^JOANA TESTE QUALIFICAÇÃO, brasileira, divorciada, contadora, inscrita no CPF sob o nº 987\.654\.321-00, residente e domiciliada na Rua Presidente Marques/);
+    assert.equal(vals.bairro, 'Quilombo');
+    const sim = await c.call('clients:similar', { name: 'JOANA TESTE QUALIFICACAO' });
+    assert.ok(sim.some((x) => x.id === id), 'acha pelo nome sem acento');
+    assert.ok((await c.call('clients:similar', { cpf: '98765432100', excludeId: id })).every((x) => x.id !== id));
+    const pj = await c.call('clients:save', { name: 'Empresa Teste Ltda', kind: 'pj', cpf: '12.345.678/0001-90', rep: { name: 'Fulano Sócio', role: 'sócio-administrador', gender: 'm', same_address: true } });
+    const pjv = await c.call('docs:values', { clientId: pj });
+    assert.match(pjv.qualificacao, /^EMPRESA TESTE LTDA, pessoa jurídica de direito privado, inscrita no CNPJ sob o nº 12\.345\.678\/0001-90, neste ato representada por seu sócio-administrador, FULANO SÓCIO, brasileiro/);
+    assert.equal(pjv.representante, 'Fulano Sócio');
+  } finally { srv.core.lookup.fetch = saved; }
 });

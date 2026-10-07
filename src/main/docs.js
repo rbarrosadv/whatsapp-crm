@@ -12,6 +12,7 @@ import path from 'node:path';
 import zlib from 'node:zlib';
 import { readZip, writeZip } from './zip.js';
 import * as db from './db.js';
+import { qualification, fullAddress, fmtDoc, fmtCep, nationalityText, maritalText, parseRep } from '../renderer/js/qualify.js';
 
 export const FOLDERS = {
   entrada: '00 ENTRADA',
@@ -171,12 +172,24 @@ export function templateValues(chat, kase) {
   const phone = chat?.phone || ((chat?.jid || '').endsWith('@s.whatsapp.net') ? chat.jid.split('@')[0] : '');
   const v = {
     nome: chat?.name || chat?.display_name || kase?.client_name || '',
-    cpf: chat?.cpf || '',
-    rg: chat?.rg || '',
-    nacionalidade: chat?.nationality || '',
-    estado_civil: chat?.marital || '',
+    cpf: chat?.cpf ? fmtDoc(chat.cpf) : '',
+    cnpj: chat?.kind === 'pj' && chat?.cpf ? fmtDoc(chat.cpf) : '',
+    rg: chat?.rg ? `${chat.rg}${chat.rg_issuer ? ` ${chat.rg_issuer}` : ''}` : '',
+    nacionalidade: chat?.kind === 'pj' ? '' : nationalityText(chat?.nationality, chat?.gender),
+    estado_civil: maritalText(chat?.marital, chat?.gender),
     profissao: chat?.profession || '',
-    endereco: chat?.address || '',
+    endereco: fullAddress(chat || {}) || chat?.address || '',
+    cep: chat?.cep ? fmtCep(chat.cep) : '',
+    rua: chat?.street || '',
+    numero: chat?.number || '',
+    complemento: chat?.complement || '',
+    bairro: chat?.district || '',
+    cidade: chat?.city || '',
+    uf: chat?.uf || '',
+    qualificacao: chat?.name ? qualification(chat) : '',
+    nome_fantasia: chat?.trade_name || '',
+    representante: parseRep(chat).name || '',
+    representante_cargo: parseRep(chat).role || '',
     nascimento: chat?.birth || '',
     email: chat?.email || '',
     telefone: phone,
@@ -199,8 +212,11 @@ export function templateValues(chat, kase) {
 
 /** Lista dos marcadores, para mostrar na tela de ajuda. */
 export const PLACEHOLDERS = [
-  ['nome', 'nome do cliente'], ['cpf', 'CPF'], ['rg', 'RG'], ['nacionalidade', 'nacionalidade'],
+  ['qualificacao', 'qualificação completa (nome, nacionalidade, estado civil, profissão, RG, CPF, endereço — ou empresa com representante)'],
+  ['nome', 'nome do cliente'], ['cpf', 'CPF (ou CNPJ)'], ['cnpj', 'CNPJ'], ['rg', 'RG com órgão emissor'], ['nacionalidade', 'nacionalidade'],
   ['estado_civil', 'estado civil'], ['profissao', 'profissão'], ['endereco', 'endereço completo'],
+  ['cep', 'CEP'], ['rua', 'rua'], ['numero', 'número'], ['complemento', 'complemento'], ['bairro', 'bairro'], ['cidade', 'cidade'], ['uf', 'UF'],
+  ['nome_fantasia', 'nome fantasia'], ['representante', 'representante legal'], ['representante_cargo', 'cargo do representante'],
   ['nascimento', 'data de nascimento'], ['email', 'e-mail'], ['telefone', 'telefone (WhatsApp)'],
   ['data', 'data de hoje (05/10/2026)'], ['data_extenso', 'data por extenso (5 de outubro de 2026)'],
   ['caso', 'nome do caso'], ['processo', 'nº do processo'], ['parte_contraria', 'parte contrária'],

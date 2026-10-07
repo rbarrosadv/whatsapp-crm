@@ -530,8 +530,21 @@ try {
   check(true, 'conversa do WhatsApp leva à ficha do cliente');
   await page.click('.view-legal .tab:has-text("Dados")');
   await page.locator('.client-form label:has-text("CPF") input').fill('123.456.789-00');
+  // endereço pelo CEP e qualificação pronta
+  await page.locator('.client-sec label:has-text("CEP") input').fill('78043-306');
+  await page.waitForFunction(() => [...document.querySelectorAll('.client-sec input')].some((i) => i.value.includes('Rubens de Mendonça')));
+  check(true, 'CEP preenche rua, bairro e cidade');
+  await page.locator('.client-sec input[placeholder="nº ou s/n"]').fill('1500');
+  await page.locator('.client-sec label:has-text("Sexo") select').selectOption('m');
+  await page.locator('.client-sec label:has-text("Estado civil") select').selectOption('casado');
+  await page.locator('.client-sec label:has-text("Profissão") input').fill('Motorista');
+  await page.waitForSelector('.qualif-text:has-text("CARLOS PEREIRA, brasileiro, casado, motorista")');
+  check(await page.locator('.qualif-text:has-text("residente e domiciliado na Avenida Historiador Rubens de Mendonça, nº 1500, Bairro Bosque da Saúde, Cuiabá/MT")').count() === 1, 'qualificação pronta com o endereço completo');
+  await shot(page, '05i-ficha-dados');
   await page.click('.view-legal .panel button:has-text("Salvar")');
   await page.waitForSelector('.toast:has-text("Dados salvos")');
+  const qv = await page.evaluate(() => window.api.call('clients:list', { q: 'Carlos Pereira' }));
+  check(/^Avenida Historiador Rubens de Mendonça, nº 1500/.test(qv[0]?.address || ''), 'endereço salvo em campos e em uma linha');
   await page.click('.view-legal .tab:has-text("Processos")');
   await shot(page, '05h-ficha-cliente');
   await page.locator('.view-legal .case-card').first().click();
@@ -560,6 +573,28 @@ try {
   await page.click('.modal button:has-text("Cadastrar")');
   await page.waitForSelector('.view-legal .client-head:has-text("Joana Lima")');
   check(await page.locator('.view-legal .client-head button:has-text("Ligar WhatsApp")').count() === 1, 'cliente existe sem WhatsApp (ligar é opcional)');
+  // empresa pelo CNPJ (Receita) e aviso de cliente repetido
+  await page.click('.view-legal .back-btn');
+  await page.click('.view-legal .page-head button:text-is("Cliente")');
+  await page.fill('.modal label:has-text("Nome") input', 'joana lima');
+  await page.waitForSelector('.modal .dup-box:has-text("Joana Lima")');
+  check(true, 'avisa que o cliente pode já existir');
+  await page.fill('.modal label:has-text("Nome") input', '');
+  await page.fill('.modal label:has-text("CPF") input', '12.345.678/0001-90');
+  await page.waitForFunction(() => document.querySelector('.modal label input')?.value === 'PAPELARIA NOBRE COMERCIO LTDA');
+  check(true, 'CNPJ traz a razão social da Receita');
+  await page.click('.modal button:has-text("Cadastrar")');
+  await page.waitForSelector('.view-legal .client-head:has-text("PAPELARIA NOBRE")');
+  await page.waitForSelector('.qualif-text:has-text("PAPELARIA NOBRE COMERCIO LTDA, nome fantasia Papel Nobre, pessoa jurídica de direito privado")');
+  check(await page.locator('.qualif-text:has-text("neste ato representada por seu(sua) sócio-administrador, MARIA DAS GRACAS NOBRE")').count() === 1
+    || await page.locator('.qualif-text:has-text("MARIA DAS GRACAS NOBRE")').count() === 1, 'empresa com sede e representante da Receita');
+  await shot(page, '05j-ficha-empresa');
+  await page.click('.view-legal .back-btn');
+  await page.locator('.view-legal .clients-table tr', { hasText: 'Joana Lima' }).first().click().catch(async () => {
+    await page.fill('.view-legal .page-head input', 'Joana Lima');
+    await page.locator('.view-legal tr', { hasText: 'Joana Lima' }).first().click();
+  });
+  await page.waitForSelector('.view-legal .client-head:has-text("Joana Lima")');
   await page.click('.view-legal .client-head button:has-text("Processo")');
   await page.fill('.modal label:has-text("Assunto") input', 'Revisional de aluguel');
   await page.fill('.modal label:has-text("Parte contrária") input', 'Imobiliária Centro');

@@ -5,10 +5,11 @@
 import { DatabaseSync } from 'node:sqlite';
 import path from 'node:path';
 import fs from 'node:fs';
+import { fullAddress, sameName } from '../renderer/js/qualify.js';
 
 let db;
 
-const SCHEMA_VERSION = 18;
+const SCHEMA_VERSION = 19;
 
 // Tipos de contato (editáveis). `personal` = não conta como trabalho
 // (fica fora de "Aguardando resposta" e dos avisos de conversa esquecida).
@@ -458,6 +459,10 @@ function migrate() {
     );
   `);
 
+  // versão 19: endereço em campos (busca pelo CEP), qualificação completa
+  // (sexo, órgão do RG) e empresa (nome fantasia, inscrições, representante em JSON)
+  for (const c of ['gender', 'rg_issuer', 'cep', 'street', 'number', 'complement', 'district', 'city', 'uf', 'trade_name', 'ie', 'im', 'rep']) addColumn('clients', c, 'TEXT');
+
   const version = Number(get('SELECT value FROM meta WHERE key = ?', 'schema')?.value || 0);
   if (version < 1) seedDefaults();
   if (version < 2) seedV2();
@@ -467,6 +472,8 @@ function migrate() {
   if (version < 14) migrateV14();
   if (version < 16) migrateV16();
   if (version < 18) run("UPDATE tasks SET followup_notified = 1, followup_done_at = COALESCE(followup_done_at, ?) WHERE kind = 'audiencia' AND COALESCE(end_at, due_at) < ?", now(), now());
+  // endereço antigo (uma linha) vai para o campo da rua, para conferir
+  if (version < 19) run("UPDATE clients SET street = address WHERE COALESCE(street, '') = '' AND COALESCE(address, '') <> ''");
   if (version < 17) run("UPDATE cases SET closed_at = updated_at WHERE status <> 'aberto' AND closed_at IS NULL");
   run('INSERT OR REPLACE INTO meta (key, value) VALUES (?, ?)', 'schema', String(SCHEMA_VERSION));
 }
@@ -1004,7 +1011,9 @@ function caseRow(c) {
 // cliente na coluna jid: o jid do WhatsApp, ou "cliente:<id>" sem WhatsApp.
 
 const CLIENT_COLS = ['name', 'kind', 'cpf', 'rg', 'nationality', 'marital', 'profession', 'address', 'birth',
-  'email', 'phone', 'phone2', 'folder', 'notes', 'origin', 'status'];
+  'email', 'phone', 'phone2', 'folder', 'notes', 'origin', 'status',
+  'gender', 'rg_issuer', 'cep', 'street', 'number', 'complement', 'district', 'city', 'uf', 'trade_name', 'ie', 'im', 'rep'];
+const ADDRESS_COLS = ['cep', 'street', 'number', 'complement', 'district', 'city', 'uf'];
 export const clientKey = (c) => (c ? c.jid || `cliente:${c.id}` : null);
 
 /** Converte os contatos que já tinham casos (ou eram "Cliente") em clientes. */
@@ -1075,16 +1084,33 @@ export function saveClient(c) {
     }
     for (const f of CLIENT_COLS) {
       if (c[f] === undefined) continue;
-      let v = c[f] == null ? null : String(c[f]).trim() || null;
+      let v = c[f];
+      if (f === 'rep') v = v && typeof v === 'object' ? (Object.values(v).some((x) => String(x ?? '').trim()) ? JSON.stringify(v) : null) : (v ? String(v) : null);
+      else v = v == null ? null : String(v).trim() || null;
       if (f === 'name' && !v) continue;
       if (f === 'kind') v = v === 'pj' ? 'pj' : 'pf';
       if (f === 'status') v = v === 'arquivado' ? 'arquivado' : 'ativo';
+      if (f === 'gender') v = ['m', 'f'].includes(v) ? v : null;
+      if (f === 'uf' && v) v = v.toUpperCase().slice(0, 2);
       run(`UPDATE clients SET ${f} = ?, updated_at = ? WHERE id = ?`, v, now(), id);
+    }
+    // o endereço em uma linha (usado no recibo, nos modelos antigos…) acompanha os campos
+    if (ADDRESS_COLS.some((f) => c[f] !== undefined)) {
+      const full = fullAddress(getClientRaw(id));
+      if (full) run('UPDATE clients SET address = ? WHERE id = ?', full, id);
     }
     return id;
   });
 }
 const getClientRaw = (id) => get('SELECT * FROM clients WHERE id = ?', id);
+
+/** Clientes que podem ser o mesmo (CPF/CNPJ igual ou nome com as mesmas palavras). */
+export function similarClients({ name, cpf, excludeId } = {}) {
+  const d = String(cpf || '').replace(/\D/g, '');
+  return all('SELECT id, name, cpf, status FROM clients WHERE id <> ?', Number(excludeId) || -1)
+    .filter((c) => (d.length >= 11 && String(c.cpf || '').replace(/\D/g, '') === d) || (name && sameName(name, c.name)))
+    .slice(0, 5);
+}
 
 /** Liga (ou desliga, com jid nulo) o WhatsApp do cliente; casos e notas acompanham. */
 export function linkClientChat(id, jid) {

@@ -19,6 +19,7 @@ import { webmToOgg } from '../main/ogg.js';
 import { diagnoseConnection } from '../main/diag.js';
 import { DocsService, guessRoot, templateValues, PLACEHOLDERS, FOLDERS } from '../main/docs.js';
 import { seedDemoDocs, demoCourtsFetch } from '../main/demo.js';
+import { lookupCep, lookupCnpj, demoLookupFetch } from '../main/lookup.js';
 import { reais } from '../main/extenso.js';
 import * as leads from '../main/leads.js';
 import * as reports from '../main/reports.js';
@@ -144,6 +145,17 @@ export async function createCore({ dataDir, demo = false, version = '', safeStor
     fetch: demo ? demoCourtsFetch(() => db.listCases({ includeClosed: false })) : globalThis.fetch,
     getDatajudKey: () => settings.datajudKey || DATAJUD_PUBLIC_KEY,
   });
+
+  // CEP e CNPJ (serviços públicos); `lookup.fetch` é trocado nos testes
+  const lookup = { fetch: demo ? demoLookupFetch : globalThis.fetch, cache: new Map() };
+  const cachedLookup = async (key, fn) => {
+    const hit = lookup.cache.get(key);
+    if (hit && hit.at > Date.now() - 24 * 3600e3) return hit.value;
+    const value = await fn();
+    if (lookup.cache.size > 500) lookup.cache.clear();
+    lookup.cache.set(key, { value, at: Date.now() });
+    return value;
+  };
 
   const Service = demo ? DemoWhatsAppService : WhatsAppService;
   const wa = new Service({ dataDir, logFile: path.join(dataDir, 'logs', 'whatsapp.log') });
@@ -867,6 +879,15 @@ export async function createCore({ dataDir, demo = false, version = '', safeStor
       const chat = cl.jid ? db.getChat(cl.jid) : null;
       return { ...cl, chat: chat ? { jid: chat.jid, display_name: chat.display_name, unread: chat.unread, last_ts: chat.last_ts, last_preview: chat.last_preview } : null };
     },
+    'clients:lookupCep': async (_c, cep) => {
+      const d = String(cep || '').replace(/\D/g, '');
+      return cachedLookup(`cep:${d}`, () => lookupCep(d, lookup.fetch));
+    },
+    'clients:lookupCnpj': async (_c, cnpj) => {
+      const d = String(cnpj || '').replace(/\D/g, '');
+      return cachedLookup(`cnpj:${d}`, () => lookupCnpj(d, lookup.fetch));
+    },
+    'clients:similar': (_c, q) => db.similarClients(q || {}),
     'clients:save': (ctx, c) => { const id = db.saveClient({ ...c, userName: ctx.user.name }); clientChanged(id); return id; },
     'clients:linkChat': (_c, id, jid) => {
       const before = db.getClient(id)?.jid;
@@ -1619,7 +1640,7 @@ export async function createCore({ dataDir, demo = false, version = '', safeStor
   });
 
   return {
-    events, api, call, dropConn, backupFile, resolveMedia, wa, google, docs, dataDir, demo,
+    events, api, call, dropConn, backupFile, resolveMedia, wa, google, docs, dataDir, demo, lookup, courts,
     /** Roda agora a busca dos tribunais (DJEN + DataJud), como o relógio faria. */
     runCourts: () => Promise.all([checkIntimations(), datajudDaily()]),
     /** Roda agora os avisos periódicos (lembretes, audiências, financeiro…), como o relógio faria. */
