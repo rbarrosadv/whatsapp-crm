@@ -794,6 +794,45 @@ try {
   await page.waitForTimeout(300);
   await shot(page, '12-dark');
 
+  // 7e) importar a lista do LinkLei (CSV), escolher o cliente pelas partes, arquivado provisório
+  const csvPath = path.join(dataDir, 'relatorio-processos.csv');
+  fs.writeFileSync(csvPath, [
+    'Processo;Situação;Atualizado em;Nº do processo;Tribunal',
+    'Tribunal de Justiça do Mato Grosso - TJMT;Ativo;07/10/2026;1001556-08.2023.8.11.0042;Tribunal de Justiça do Mato Grosso - TJMT',
+    'TRT da 23ª Região - TRT23;Ativo;07/10/2026;0001095-63.2026.5.23.0107;TRT da 23ª Região - TRT23',
+    'ELSON FERREIRA BARROS x CLEBERSON DA ROCHA;Ativo;07/10/2026;1012345-10.2022.8.11.0003;Tribunal de Justiça do Mato Grosso - TJMT',
+  ].join('\n'));
+  await page.click('.rail-btn[title="Jurídico"]');
+  if (await page.locator('.view-legal .back-btn').count()) await page.click('.view-legal .back-btn');
+  await page.click('.view-legal .seg:has-text("Processos")');
+  const [chooser] = await Promise.all([page.waitForEvent('filechooser'), page.click('.view-legal button:has-text("Importar lista")')]);
+  await chooser.setFiles(csvPath);
+  await page.waitForSelector('.import-stats .stat-value:text-is("3")');
+  check(true, 'prévia da importação conta os processos novos');
+  await shot(page, '15-importar-previa');
+  await page.click('.modal button:has-text("Importar")');
+  await page.waitForFunction(() => window.api.call('cases:importStatus').then((st) => !st.running && st.done === 3), null, { timeout: 20000 });
+  check(true, 'importação consulta os tribunais em segundo plano');
+  await page.fill('.view-legal .legal-search', '');
+  await page.selectOption('.view-legal .legal-tools select >> nth=0', 'semcliente');
+  await page.waitForSelector('.no-client-card');
+  check(await page.locator('.no-client-card').count() === 3, 'processos importados ficam "sem cliente"');
+  await shot(page, '15b-sem-cliente');
+  const trtCard = page.locator('.no-client-card', { hasText: '0001095-63.2026.5.23.0107' });
+  await trtCard.locator('.party-row.cliente').first().waitFor();
+  const clientName = (await trtCard.locator('.party-row.cliente b').first().innerText()).trim();
+  await trtCard.locator('button:has-text("Confirmar")').click();
+  await page.waitForSelector(`.toast:has-text("Cliente: ${clientName}")`);
+  await page.waitForFunction(() => document.querySelectorAll('.no-client-card').length === 2);
+  check(true, 'escolher o cliente pelas partes do DJEN cria o cadastro');
+  await page.selectOption('.view-legal .legal-tools select >> nth=0', 'vigiar');
+  await page.locator('.cases-table tr', { hasText: '1001556-08.2023.8.11.0042' }).click();
+  await page.waitForSelector('.modal-case .case-banner.danger:has-text("Arquivado provisoriamente")');
+  check(await page.locator('.modal-case .case-banner.warn:has-text("Cliente a identificar")').count() === 1, 'ficha mostra cliente a identificar e o controle de prescrição');
+  await shot(page, '15c-arquivado-vigiar');
+  await page.keyboard.press('Escape');
+  await page.selectOption('.view-legal .legal-tools select >> nth=0', 'aberto');
+
   // 8) nova conversa por número
   await page.click('.rail-btn[title="Atendimento"]');
   await page.click('.chatlist-head button[title^="Nova conversa"]');

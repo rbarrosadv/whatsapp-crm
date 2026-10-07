@@ -462,6 +462,12 @@ function migrate() {
   // versão 19: endereço em campos (busca pelo CEP), qualificação completa
   // (sexo, órgão do RG) e empresa (nome fantasia, inscrições, representante em JSON)
   for (const c of ['gender', 'rg_issuer', 'cep', 'street', 'number', 'complement', 'district', 'city', 'uf', 'trade_name', 'ie', 'im', 'rep']) addColumn('clients', c, 'TEXT');
+  // processos importados: situação de arquivamento (provisório = vigiar a
+  // prescrição; definitivo = sugerir encerrar), partes achadas no DJEN para
+  // escolher o cliente, último andamento (processos parados)
+  for (const [c, t] of [['archive_state', 'TEXT'], ['archive_since', 'INTEGER'], ['archive_dismissed', 'INTEGER'], ['prescription_at', 'INTEGER'],
+    ['prescription_note', 'TEXT'], ['prescription_notified', 'INTEGER'], ['last_move_at', 'INTEGER'], ['parties_found', 'TEXT'],
+    ['parties_checked_at', 'INTEGER'], ['import_batch', 'TEXT'], ['classe', 'TEXT']]) addColumn('cases', c, t);
 
   const version = Number(get('SELECT value FROM meta WHERE key = ?', 'schema')?.value || 0);
   if (version < 1) seedDefaults();
@@ -982,7 +988,7 @@ export function setStage(jid, stageId) {
 
 const CASE_FIELDS = ['title', 'folder', 'process_number', 'area', 'court', 'opposing_party', 'tribunal', 'kind', 'filed_at',
   'client_role', 'description', 'responsible_id', 'claim_value', 'fee_fixed', 'fee_installments',
-  'fee_success', 'fee_total', 'fee_percent'];
+  'fee_success', 'fee_total', 'fee_percent', 'prescription_note'];
 
 function caseRow(c) {
   if (!c) return null;
@@ -994,8 +1000,10 @@ function caseRow(c) {
   return {
     ...c,
     responsible_name: c.responsible_id ? get('SELECT name FROM users WHERE id = ?', c.responsible_id)?.name || null : null,
-    client_name: cl?.name || (c.jid && !c.jid.startsWith('cliente:') ? getChat(c.jid)?.display_name : null) || null,
-    client_jid: cl ? cl.jid : (c.jid && !c.jid.startsWith('cliente:') ? c.jid : null),
+    client_name: cl?.name || (c.jid?.includes('@') ? getChat(c.jid)?.display_name : null) || null,
+    client_jid: cl ? cl.jid : (c.jid?.includes('@') ? c.jid : null),
+    no_client: !c.client_id && !c.jid?.includes('@'),
+    parties_found: c.parties_found ? JSON.parse(c.parties_found) : null,
     fee_fixed: !!c.fee_fixed, fee_installments: !!c.fee_installments, fee_success: !!c.fee_success,
     paid_total: pay.paid, billed_total: pay.total, payments_count: pay.n, overdue_payments: pay.overdue || 0,
     next_due: next,
@@ -1161,6 +1169,53 @@ export function listCases({ jid, clientId, pipelineId, includeClosed = true, sta
 }
 
 export function getCase(id) { return caseRow(get('SELECT * FROM cases WHERE id = ?', id)); }
+
+/** Processo sem cliente (importado): a chave provisória é "processo:<id>". */
+export function createCaseWithoutClient({ title, process_number, tribunal, area, court, responsible_id, import_batch, status }) {
+  return tx(() => {
+    const id = Number(run(`INSERT INTO cases (jid, client_id, title, process_number, tribunal, area, court, responsible_id, import_batch, status, closed_at, last_update_at, created_at, updated_at)
+                           VALUES ('processo:0', NULL, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, ?, ?)`,
+    title, process_number, tribunal || null, area || null, court || null, responsible_id || null, import_batch || null,
+    status === 'encerrado' ? 'encerrado' : 'aberto', status === 'encerrado' ? now() : null, now(), now()).lastInsertRowid);
+    run('UPDATE cases SET jid = ? WHERE id = ?', `processo:${id}`, id);
+    logActivity(`processo:${id}`, 'case', `Processo importado: ${process_number}`);
+    return id;
+  });
+}
+
+/** Liga o processo ao cliente: tarefas, notas e histórico do processo vão junto. */
+export function setCaseClient(caseId, clientId, { role } = {}) {
+  return tx(() => {
+    const k = get('SELECT * FROM cases WHERE id = ?', caseId);
+    const cl = getClientRaw(clientId);
+    if (!k || !cl) throw new Error('Processo ou cliente não encontrado');
+    const from = k.jid;
+    const to = clientKey(cl);
+    run('UPDATE cases SET client_id = ?, jid = ?, client_role = COALESCE(?, client_role), updated_at = ? WHERE id = ?', cl.id, to, role || null, now(), caseId);
+    if (from !== to && from?.startsWith('processo:')) for (const t of ['notes', 'tasks', 'activity']) run(`UPDATE ${t} SET jid = ? WHERE jid = ?`, to, from);
+    else run('UPDATE tasks SET jid = ? WHERE case_id = ?', to, caseId);
+    logActivity(to, 'case', `Processo ${k.process_number || k.title} ligado ao cliente`);
+    return caseId;
+  });
+}
+
+export function casesWithoutClient() {
+  return all("SELECT * FROM cases WHERE client_id IS NULL AND jid LIKE 'processo:%' ORDER BY status = 'aberto' DESC, id").map(caseRow);
+}
+
+/** Campos de controle do processo (fora do formulário). */
+export function setCaseMeta(id, fields) {
+  const allowed = ['archive_state', 'archive_since', 'archive_dismissed', 'prescription_at', 'prescription_note', 'prescription_notified',
+    'last_move_at', 'parties_found', 'parties_checked_at', 'classe', 'area', 'title', 'tribunal', 'court'];
+  const sets = [];
+  const vals = [];
+  for (const [k, v] of Object.entries(fields)) {
+    if (!allowed.includes(k) || v === undefined) continue;
+    sets.push(`${k} = ?`);
+    vals.push(k === 'parties_found' && v && typeof v !== 'string' ? JSON.stringify(v) : v);
+  }
+  if (sets.length) run(`UPDATE cases SET ${sets.join(', ')} WHERE id = ?`, ...vals, id);
+}
 
 export function saveCase(c) {
   return tx(() => {

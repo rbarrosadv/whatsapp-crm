@@ -396,8 +396,25 @@ export async function seedDemoDocs(root) {
 export function demoCourtsFetch(getCases) {
   const json = (o) => new Response(JSON.stringify(o), { status: 200, headers: { 'Content-Type': 'application/json' } });
   const day = (offset) => { const d = new Date(); d.setDate(d.getDate() - offset); return d.toISOString().slice(0, 10); };
-  return async (url) => {
+  const NAMES = [['ELSON FERREIRA BARROS', 'CLEBERSON DA ROCHA'], ['MARIA APARECIDA DOS SANTOS', 'BANCO BRADESCO S.A.'],
+    ['JOSE CARLOS PEREIRA', 'DOCE SABOR RESTAURANTE LTDA'], ['ANA PAULA RIBEIRO', 'ESTADO DE MATO GROSSO'], ['MM COMERCIO DE PAPEIS LTDA', 'EMILLY SOUZA LIMA']];
+  return async (url, init = {}) => {
     const u = new URL(url);
+    if (u.host === 'comunicaapi.pje.jus.br' && u.searchParams.get('numeroProcesso')) {
+      // busca pelo nº do processo: as partes (para escolher o cliente)
+      const d = u.searchParams.get('numeroProcesso').replace(/\D/g, '');
+      if (u.searchParams.get('pagina') !== '1' || Number(d.slice(-1)) === 9) return json({ status: 'success', count: 0, items: [] });
+      const [a, b] = NAMES[Number(d.slice(-2)) % NAMES.length];
+      return json({
+        status: 'success', count: 1,
+        items: [{
+          id: Number(`77${d.slice(-6)}`), data_disponibilizacao: day(30), siglaTribunal: 'TJMT', tipoComunicacao: 'Intimação', tipoDocumento: 'Despacho',
+          nomeOrgao: 'Vara de demonstração', nomeClasse: 'PROCEDIMENTO COMUM CÍVEL', numeroprocessocommascara: d, texto: 'Intimem-se as partes.',
+          destinatarios: [{ nome: a, polo: 'A' }, { nome: b, polo: 'P' }],
+          destinatarioadvogados: [{ advogado: { nome: 'RAFAEL AUGUSTO DE BARROS CORREA', numero_oab: '14271', uf_oab: 'MT' } }],
+        }],
+      });
+    }
     if (u.host === 'comunicaapi.pje.jus.br') {
       if (u.searchParams.get('pagina') !== '1') return json({ status: 'success', count: 0, items: [] });
       const known = getCases().filter((k) => k.process_number).slice(0, 2);
@@ -436,6 +453,33 @@ export function demoCourtsFetch(getCases) {
     if (u.host === 'api-publica.datajud.cnj.jus.br') {
       const now = Date.now();
       const iso = (d) => new Date(now - d * 864e5).toISOString();
+      let asked = '';
+      try { asked = String(JSON.parse(init.body || '{}').query?.match?.numeroProcesso || ''); } catch { /* sem corpo */ }
+      if (/^\d{20}$/.test(asked) && !getCases().some((k) => String(k.process_number || '').replace(/\D/g, '') === asked && k.import_batch == null)) {
+        // processos importados: variados (trabalhista, arquivado provisório, baixa definitiva, audiência marcada)
+        const n = Number(asked.slice(-4));
+        const trab = asked.slice(13, 14) === '5';
+        const moves = [{ codigo: 26, nome: 'Distribuído por sorteio', dataHora: iso(700) }, { codigo: 11010, nome: 'Mero expediente', dataHora: iso(500) }];
+        if (n % 7 === 0) moves.push({ codigo: 245, nome: 'Arquivado Provisoriamente', dataHora: iso(400) });
+        else if (n % 7 === 1) moves.push({ codigo: 848, nome: 'Trânsito em julgado', dataHora: iso(320) }, { codigo: 22, nome: 'Baixa Definitiva', dataHora: iso(300) });
+        else if (n % 7 === 2) moves.push({ codigo: 970, nome: `Audiência de conciliação designada para ${new Date(now + 20 * 864e5).toLocaleDateString('pt-BR')} às 14:00`, dataHora: iso(2) });
+        else if (n % 7 === 3) moves.push({ codigo: 219, nome: 'Julgado procedente o pedido', dataHora: iso(1) });
+        return json({
+          hits: {
+            hits: [{
+              _source: {
+                numeroProcesso: asked,
+                classe: { nome: trab ? 'Ação Trabalhista - Rito Ordinário' : (n % 3 === 0 ? 'Divórcio Litigioso' : 'Procedimento Comum Cível') },
+                assuntos: [{ nome: trab ? 'Verbas Rescisórias' : (n % 3 === 0 ? 'Dissolução' : 'Indenização por Dano Moral') }],
+                orgaoJulgador: { nome: trab ? '3ª Vara do Trabalho de Cuiabá' : '5ª Vara Cível de Cuiabá' },
+                dataAjuizamento: '20230115000000',
+                dataHoraUltimaAtualizacao: iso(1),
+                movimentos: moves,
+              },
+            }],
+          },
+        });
+      }
       return json({
         hits: {
           hits: [{

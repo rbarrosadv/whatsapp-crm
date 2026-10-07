@@ -21,6 +21,8 @@ import { DocsService, guessRoot, templateValues, PLACEHOLDERS, FOLDERS } from '.
 import { seedDemoDocs, demoCourtsFetch } from '../main/demo.js';
 import { lookupCep, lookupCnpj, demoLookupFetch } from '../main/lookup.js';
 import { reais } from '../main/extenso.js';
+import { readSheet } from '../main/sheet.js';
+import { detectColumns, parseImport, classifyArea, archiveState, suggestPrescription, partiesFromDjen, isGenericTitle } from '../main/importer.js';
 import * as leads from '../main/leads.js';
 import * as reports from '../main/reports.js';
 import { receiptPdf, externalSign } from '../main/pdf.js';
@@ -38,7 +40,7 @@ export const USER_KEYS = ['notifications', 'notificationPreview', 'theme', 'last
   'lastFilter', 'agendaHidden', 'agendaView', 'agendaHours', 'discreet', 'discreetMessages', 'spellcheck', 'wordSuggest', 'autocorrect', 'notifyCourts', 'pushKinds'];
 export const OFFICE_KEYS = ['sendReadReceipts', 'forgottenHours', 'chargeTemplate', 'pixKey', 'paymentNoticeDays',
   'staleCaseDays', 'googleSync', 'googleCalendarId', 'signMessages', 'docsRoot', 'docsRequestTemplate', 'datajudKey',
-  'officeName', 'officeDoc', 'officeAddress', 'officeCity', 'proposalTemplate', 'proposalValidDays',
+  'officeName', 'officeDoc', 'officeAddress', 'officeCity', 'proposalTemplate', 'proposalValidDays', 'prescriptionYears',
   'receiptSigner', 'receiptSignMode', 'courtsNotifyAll'];
 
 export const DEFAULT_CHARGE_TEMPLATE = 'Olá, {nome}! Tudo bem? Passando para lembrar da {parcela} dos honorários referentes a {caso}, '
@@ -88,6 +90,21 @@ function fileSafeStorage(dir) {
  * @param {{dataDir: string, demo?: boolean, version?: string, safeStorage?: object,
  *          resolveUpload?: (token: string) => {path: string, name: string}}} opts
  */
+const fold = (x) => String(x || '').normalize('NFD').replace(/\p{M}/gu, '').toLowerCase().trim();
+/** Chama no máximo uma vez a cada `ms` (a última chamada sempre acontece). */
+function throttle(fn, ms) {
+  let last = 0;
+  let timer = null;
+  const call = () => {
+    const wait = last + ms - Date.now();
+    if (wait <= 0) { last = Date.now(); fn(); return; }
+    clearTimeout(timer);
+    timer = setTimeout(() => { last = Date.now(); fn(); }, wait);
+  };
+  call.cancel = () => clearTimeout(timer);
+  return call;
+}
+
 export async function createCore({ dataDir, demo = false, version = '', safeStorage, resolveUpload, features = {} }) {
   const events = new EventEmitter();
 
@@ -272,6 +289,42 @@ export async function createCore({ dataDir, demo = false, version = '', safeStor
     }
   }
 
+  /** Arquivados provisoriamente: avisa 90 e 30 dias antes da data de controle da prescrição, e no dia. */
+  function checkPrescriptions() {
+    const rows = db.all("SELECT id FROM cases WHERE status = 'aberto' AND archive_state = 'provisorio' AND prescription_at IS NOT NULL");
+    const due = [];
+    for (const { id } of rows) {
+      const k = db.getCase(id);
+      const days = Math.ceil((k.prescription_at - Date.now()) / DAY);
+      const level = days <= 0 ? 1 : days <= 30 ? 30 : days <= 90 ? 90 : null;
+      if (!level || (k.prescription_notified && k.prescription_notified <= level)) continue;
+      db.setCaseMeta(id, { prescription_notified: level });
+      due.push({ k, days });
+    }
+    // muitos de uma vez (ex.: logo depois de importar a carteira): um aviso só, por responsável
+    if (due.length > 3) {
+      const byUser = new Map();
+      for (const d of due) { const u = d.k.responsible_id || 0; byUser.set(u, [...(byUser.get(u) || []), d]); }
+      for (const [u, list] of byUser) {
+        notify({
+          kind: 'prescription', title: `${list.length} processo(s) arquivado(s): conferir a prescrição`,
+          body: `${list.filter((d) => d.days <= 0).length} com a data de controle vencida. Veja em Jurídico → Processos → Arquivados — vigiar prescrição.`,
+          discreet: 'Processos arquivados: conferir prescrição', action: { view: 'legal', tab: 'processos', status: 'vigiar' },
+        }, u ? { user: u } : undefined);
+      }
+      return;
+    }
+    for (const { k, days } of due) {
+      const id = k.id;
+      notify({
+        kind: 'prescription',
+        title: `${days <= 0 ? 'Conferir prescrição hoje' : `Prescrição: faltam ${days} dia(s)`} — ${k.client_name || k.process_number}`,
+        body: `${k.title}${k.process_number ? ` (${k.process_number})` : ''} está arquivado provisoriamente desde ${new Date(k.archive_since).toLocaleDateString('pt-BR')}. Confira se é preciso pedir o desarquivamento ou dar andamento.`,
+        discreet: 'Processo arquivado: conferir prescrição', action: { case: id },
+      }, k.responsible_id ? { user: k.responsible_id } : undefined);
+    }
+  }
+
   function chargeText(paymentId) {
     const p = db.getPayment(paymentId);
     if (!p) throw new Error('Parcela não encontrada');
@@ -334,6 +387,7 @@ export async function createCore({ dataDir, demo = false, version = '', safeStor
       checkForgotten();
       checkFinanceAndCases();
       checkHearings();
+      checkPrescriptions();
       // a cada ~10 min traz mudanças de horário feitas no Google
       if (++googleTick % 20 === 1 && google?.status().connected) {
         calSync.agenda(Date.now() - 7 * DAY, Date.now() + 120 * DAY).catch(() => {});
@@ -443,8 +497,115 @@ export async function createCore({ dataDir, demo = false, version = '', safeStor
     let newMoves = 0;
     for (const mv of p.moves) if (db.addMove({ case_id: caseId, ts: mv.ts, text: mv.text, source: 'datajud', ext_id: mv.ext_id })) newMoves++;
     db.markDatajud(caseId, null);
+    organizeCase(caseId, { classe: p.classe, assuntos: p.assuntos });
     if (newMoves || Object.keys(fill).length) caseChanged(db.getCase(caseId));
     return { found: true, newMoves, classe: p.classe, updated: p.updated };
+  }
+
+  /**
+   * Organiza o processo pelos andamentos: área (classe/assunto), título no
+   * lugar do genérico, último andamento e situação de arquivamento — provisório
+   * ganha data para conferir a prescrição; definitivo só fica sugerido (encerrar
+   * é sempre com a confirmação de alguém).
+   */
+  function organizeCase(caseId, { classe, assuntos } = {}) {
+    const k = db.getCase(caseId);
+    if (!k) return;
+    const moves = db.listMoves(caseId);
+    const st = archiveState(moves.map((m) => ({ ts: m.ts, text: m.text, ext_id: m.ext_id })));
+    const meta = { last_move_at: st.lastMove || k.last_move_at || null };
+    if (classe) meta.classe = classe;
+    const area = classifyArea({ tribunal: k.tribunal, number: k.process_number, classe: classe || k.classe, assuntos });
+    if (!k.area && area) meta.area = area;
+    if (classe && (isGenericTitle(k.title, k.tribunal) || /^Processo\b/.test(k.title))) meta.title = classe;
+    if (st.state !== (k.archive_state || null) || (st.state && st.since !== k.archive_since)) {
+      meta.archive_state = st.state;
+      meta.archive_since = st.since;
+      meta.archive_dismissed = null;
+      if (st.state === 'provisorio') {
+        meta.prescription_at = suggestPrescription(st.since, meta.area || k.area || area, settings.prescriptionYears || {});
+        meta.prescription_notified = null;
+      }
+      if (!st.state) { meta.prescription_at = null; meta.prescription_notified = null; }
+    }
+    db.setCaseMeta(caseId, meta);
+  }
+
+  // ---------------------------------------------------------- importar processos
+  const importJob = { running: false, phase: '', total: 0, done: 0, created: 0, batch: null, errors: [], userId: null, finishedAt: null };
+  const importStatus = () => ({ ...importJob, errors: importJob.errors.slice(-20), withoutClient: db.casesWithoutClient().length });
+
+  function readImportFile(token) {
+    const f = resolveUpload?.(token);
+    if (!f) throw new Error('Arquivo não encontrado. Envie de novo.');
+    const rows = readSheet(fs.readFileSync(f.path), f.name);
+    if (rows.length < 2) throw new Error('A planilha não tem linhas de processos.');
+    return { name: f.name, header: rows[0], rows: rows.slice(1) };
+  }
+
+  /** Busca as partes de um processo no DJEN (para escolher o cliente). */
+  async function findParties(caseId) {
+    const k = db.getCase(caseId);
+    if (!k?.process_number) throw new Error('Processo sem número.');
+    const items = await courts.djenByProcess(k.process_number);
+    let parties = partiesFromDjen(items, db.listOabs());
+    if (!parties.length) {
+      // sem comunicação no DJEN: o título da planilha (FULANO x CICLANO), se tinha
+      const fromTitle = (k.parties_found || []).filter((p) => p.from === 'titulo');
+      parties = fromTitle;
+    }
+    db.setCaseMeta(caseId, { parties_found: parties, parties_checked_at: Date.now() });
+    // a classe e o órgão da comunicação ajudam quando o DataJud não achou
+    const it = items[0];
+    if (it) {
+      const fill = {};
+      if (!k.court && it.orgao) fill.court = it.orgao;
+      if (isGenericTitle(k.title, k.tribunal) && it.classe) fill.title = nameCase(it.classe);
+      if (!k.area) { const a = classifyArea({ tribunal: k.tribunal, number: k.process_number, classe: it.classe }); if (a) fill.area = a; }
+      if (Object.keys(fill).length) db.setCaseMeta(caseId, fill);
+    }
+    db.relinkIntimations(caseId);
+    return db.getCase(caseId);
+  }
+
+  /** Em segundo plano, um processo por vez: DataJud (andamentos) e DJEN (partes). */
+  async function enrichImported(ids) {
+    importJob.running = true;
+    importJob.phase = 'Consultando os tribunais';
+    importJob.total = ids.length;
+    importJob.done = 0;
+    const pause = demo ? 5 : 1500;
+    const tick = throttle(() => send('cases:import', importStatus()), 1000);
+    for (const id of ids) {
+      if (importJob.stopped) return;
+      try { await updateDatajud(id); } catch (e) { importJob.errors.push(`${db.getCase(id)?.process_number}: ${e.message}`); }
+      await new Promise((r) => setTimeout(r, pause));
+      const k = db.getCase(id);
+      if (k?.no_client) {
+        try { await findParties(id); } catch (e) {
+          // o DJEN pediu para esperar: uma nova tentativa depois de 30 s
+          if (/esperar|429/.test(e.message)) {
+            await new Promise((r) => setTimeout(r, demo ? 10 : 30000));
+            try { await findParties(id); } catch (e2) { importJob.errors.push(`${k.process_number} (partes): ${e2.message}`); }
+          } else importJob.errors.push(`${k.process_number} (partes): ${e.message}`);
+        }
+        await new Promise((r) => setTimeout(r, pause));
+      }
+      importJob.done++;
+      tick();
+    }
+    tick.cancel();
+    importJob.running = false;
+    importJob.phase = 'Concluído';
+    importJob.finishedAt = Date.now();
+    send('cases:import', importStatus());
+    send('cases:changed', null);
+    const st = importStatus();
+    notify({
+      kind: 'courts', title: 'Importação dos processos concluída',
+      body: `${importJob.created} processo(s) cadastrado(s); ${st.withoutClient} sem cliente para identificar.`,
+      action: { view: 'legal', tab: 'processos', status: 'semcliente' },
+    }, importJob.userId ? { user: importJob.userId } : undefined);
   }
 
   let datajudRunning = false;
@@ -1107,6 +1268,93 @@ export async function createCore({ dataDir, demo = false, version = '', safeStor
       return id;
     },
     'cases:datajud': (_c, id) => updateDatajud(id),
+    /** Prévia da planilha: colunas reconhecidas, processos novos/já cadastrados, problemas. */
+    'cases:importPreview': (_c, token, map) => {
+      const f = readImportFile(token);
+      const cols = map && Object.keys(map).length ? map : detectColumns(f.header, f.rows);
+      if (cols.number == null) throw new Error('Não encontrei a coluna com o nº do processo. Escolha qual é.');
+      const parsed = parseImport(f.rows, cols);
+      const have = new Set(db.listCases({}).map((k) => String(k.process_number || '').replace(/\D/g, '')).filter(Boolean));
+      const items = parsed.items.map((it) => ({ ...it, exists: have.has(it.digits) }));
+      const byTrib = {};
+      for (const it of items) if (!it.exists) byTrib[it.tribunal || '?'] = (byTrib[it.tribunal || '?'] || 0) + 1;
+      return {
+        file: f.name, header: f.header, map: cols, total: f.rows.length,
+        newCount: items.filter((x) => !x.exists).length, existing: items.filter((x) => x.exists).length,
+        duplicates: parsed.duplicates, problems: parsed.problems, byTribunal: byTrib,
+        sample: items.slice(0, 200),
+      };
+    },
+    'cases:importRun': async (ctx, token, { map, responsibleId, skipClosed } = {}) => {
+      if (importJob.running) throw new Error('Já tem uma importação em andamento.');
+      const f = readImportFile(token);
+      const cols = map && Object.keys(map).length ? map : detectColumns(f.header, f.rows);
+      const { items } = parseImport(f.rows, cols);
+      const have = new Set(db.listCases({}).map((k) => String(k.process_number || '').replace(/\D/g, '')).filter(Boolean));
+      const users = auth.listUsers();
+      const userByName = (n) => (n ? users.find((u) => fold(u.name) && (fold(n).includes(fold(u.name)) || fold(u.name).includes(fold(n)))) : null);
+      const batch = `imp-${Date.now()}`;
+      const ids = [];
+      for (const it of items) {
+        if (have.has(it.digits)) continue;
+        const closed = /arquiv|encerr|baixad|extint|finaliz/i.test(it.status);
+        if (closed && skipClosed) continue;
+        const id = db.createCaseWithoutClient({
+          title: it.title || `Processo ${it.tribunal || ''}`.trim(),
+          process_number: it.number, tribunal: it.tribunal, area: it.area || null, court: it.court || null,
+          responsible_id: userByName(it.responsible)?.id || Number(responsibleId) || ctx.user.id,
+          import_batch: batch, status: 'aberto',
+        });
+        if (it.parties.length) db.setCaseMeta(id, { parties_found: it.parties.map((p) => ({ name: p.name, polo: p.polo === 'A' ? 'ativo' : 'passivo', from: 'titulo' })) });
+        if (it.opposing) db.saveCase({ id, opposing_party: it.opposing });
+        if (it.client) {
+          const found = db.listClients({ q: it.client, status: 'todos' }).find((c) => fold(c.name) === fold(it.client));
+          db.setCaseClient(id, found ? found.id : db.saveClient({ name: it.client, origin: `Importação (${f.name})`, userName: ctx.user.name }));
+        }
+        db.relinkIntimations(id);
+        have.add(it.digits);
+        ids.push(id);
+      }
+      Object.assign(importJob, { created: ids.length, batch, errors: [], userId: ctx.user.id, finishedAt: null });
+      send('cases:changed', null);
+      enrichImported(ids).catch((e) => { importJob.running = false; importJob.errors.push(e.message); });
+      return importStatus();
+    },
+    'cases:importStatus': () => importStatus(),
+    'cases:withoutClient': () => db.casesWithoutClient(),
+    'cases:findParties': async (_c, id) => { const k = await findParties(id); caseChanged(k); return k; },
+    /** Escolhe o cliente do processo: um cadastrado ou um novo pelo nome; as outras partes viram parte contrária. */
+    'cases:assignClient': (ctx, id, { client_id, name, kind, role, opposing = [], others = [] } = {}) => {
+      const k = db.getCase(id);
+      if (!k) throw new Error('Processo não encontrado');
+      let cid = client_id;
+      if (!cid) {
+        if (!String(name || '').trim()) throw new Error('Escolha o cliente.');
+        const same = db.similarClients({ name }).find((c) => fold(c.name) === fold(name));
+        cid = same?.id || db.saveClient({ name: nameCase(name), kind: kind === 'pj' ? 'pj' : 'pf', origin: 'Importação de processos', userName: ctx.user.name });
+      }
+      db.setCaseClient(id, cid, { role: role === 'passivo' ? 'reu' : role === 'ativo' ? 'autor' : null });
+      const have = new Set(db.listParties(id).map((p) => fold(p.name)));
+      for (const p of opposing) if (p?.name && !have.has(fold(p.name))) db.saveParty({ case_id: id, role: p.polo === 'passivo' ? 'reu' : 'autor', name: nameCase(p.name) });
+      for (const p of others) if (p?.name && !have.has(fold(p.name))) db.saveParty({ case_id: id, role: 'outro', name: nameCase(p.name) });
+      if (opposing.length && !k.opposing_party) db.saveCase({ id, opposing_party: opposing.map((p) => nameCase(p.name)).join(', ') });
+      clientChanged(cid);
+      caseChanged(db.getCase(id));
+      return { caseId: id, clientId: cid };
+    },
+    /** Arquivamento: confirmar encerramento, manter ativo ou ajustar a data de controle da prescrição. */
+    'cases:archive': (_c, id, { action, prescription_at, note } = {}) => {
+      const k = db.getCase(id);
+      if (!k) throw new Error('Processo não encontrado');
+      if (action === 'close') db.setCaseStatus(id, 'encerrado');
+      else if (action === 'dismiss') db.setCaseMeta(id, { archive_dismissed: Date.now() });
+      else if (action === 'watch') db.setCaseMeta(id, { archive_state: 'provisorio', archive_since: k.archive_since || Date.now(), archive_dismissed: null, prescription_at: prescription_at ?? suggestPrescription(k.archive_since || Date.now(), k.area, settings.prescriptionYears || {}), prescription_notified: null });
+      else if (action === 'clear') db.setCaseMeta(id, { archive_state: null, archive_since: null, prescription_at: null, prescription_notified: null });
+      if (prescription_at !== undefined && action !== 'watch') db.setCaseMeta(id, { prescription_at: prescription_at || null, prescription_notified: null });
+      if (note !== undefined) db.setCaseMeta(id, { prescription_note: note || null });
+      caseChanged(db.getCase(id));
+      return db.getCase(id);
+    },
     'parties:save': (_c, p) => { const id = db.saveParty(p); caseChanged(db.getCase(p.case_id)); return id; },
     'parties:delete': (_c, id, caseId) => { db.deleteParty(id); caseChanged(db.getCase(caseId)); },
     'moves:add': (ctx, m) => { const id = db.addMove({ ...m, user_name: ctx.user.name }); caseChanged(db.getCase(m.case_id)); return id; },
@@ -1652,6 +1900,7 @@ export async function createCore({ dataDir, demo = false, version = '', safeStor
     },
     logFile: path.join(dataDir, 'logs', 'whatsapp.log'),
     async stop() {
+      importJob.stopped = true;
       timers.forEach((t) => clearInterval(t));
       await wa.stop();
       // nada mais pode tocar no banco depois de fechado (avisos atrasados do WhatsApp)

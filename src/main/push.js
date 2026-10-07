@@ -20,7 +20,7 @@ export const PUSH_DEFAULTS = { agenda: true, tribunais: true, financeiro: true, 
 
 /** Em que grupo cai cada tipo de aviso do sistema. */
 export function pushKindOf(kind) {
-  if (['reminder', 'hearing'].includes(kind)) return 'agenda';
+  if (['reminder', 'hearing', 'prescription'].includes(kind)) return 'agenda';
   if (['intimation', 'court', 'case-move', 'courts'].includes(kind)) return 'tribunais';
   if (kind === 'finance') return 'financeiro';
   if (kind === 'message') return 'mensagens';

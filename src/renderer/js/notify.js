@@ -20,7 +20,7 @@ export function runAction(a) {
   if (!a) return;
   if (a.case) import('./views/casemodal.js').then((m) => m.openCase(a.case, { tab: a.tab || 'dados' }));
   else if (a.chat) openChat(a.chat);
-  else if (a.filter) { setView('inbox'); emit('open-filter', a.filter); } else if (a.view === 'legal' && a.tab) import('./store.js').then((m) => m.openLegal(a.tab));
+  else if (a.filter) { setView('inbox'); emit('open-filter', a.filter); } else if (a.view === 'legal' && a.tab) import('./store.js').then((m) => m.openLegal(a.tab, a.status ? { status: a.status } : {}));
   else if (a.view) setView(a.view);
 }
 

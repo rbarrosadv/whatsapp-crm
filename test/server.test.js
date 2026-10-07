@@ -827,3 +827,92 @@ test('cadastro do cliente: CEP e CNPJ pelo servidor, endereço montado, {qualifi
     assert.equal(pjv.representante, 'Fulano Sócio');
   } finally { srv.core.lookup.fetch = saved; }
 });
+
+/** .xlsx mínimo (texto em linha), no formato da exportação do LinkLei. */
+async function makeXlsx(rows) {
+  const { writeZip } = await import('../src/main/zip.js');
+  const esc = (s) => String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;');
+  const col = (i) => String.fromCharCode(65 + i);
+  const sheet = rows.map((r, ri) => `<row r="${ri + 1}">${r.map((v, ci) => `<c r="${col(ci)}${ri + 1}" t="inlineStr"><is><t>${esc(v)}</t></is></c>`).join('')}</row>`).join('');
+  return writeZip({
+    '[Content_Types].xml': '<?xml version="1.0"?><Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"/>',
+    'xl/workbook.xml': '<workbook xmlns:r="r"><sheets><sheet name="Processos" sheetId="1" r:id="rId1"/></sheets></workbook>',
+    'xl/_rels/workbook.xml.rels': '<Relationships><Relationship Id="rId1" Target="worksheets/sheet1.xml"/></Relationships>',
+    'xl/worksheets/sheet1.xml': `<worksheet><sheetData>${sheet}</sheetData></worksheet>`,
+  });
+}
+
+test('importar processos do LinkLei: prévia, cadastro sem cliente, DataJud organiza (área, arquivados), partes do DJEN e escolha do cliente', async () => {
+  const c = client();
+  await c.req('/auth/login', { body: { login: 'barros', password: 'segredo1' } });
+  const TJ = 'Tribunal de Justiça do Mato Grosso - TJMT';
+  const xlsx = await makeXlsx([
+    ['Processo', 'Situação', 'Atualizado em', 'Nº do processo', 'Casos vinculados', 'Tribunal', 'Últimos eventos da agenda', 'Última interação e atividade', 'Últimas movimentações'],
+    [TJ, 'Ativo', '07/10/2026', '1001556-08.2023.8.11.0042', '', TJ, '', '', 'Arquivado Provisoriamente'],
+    [TJ, 'Ativo', '07/10/2026', '8020964-28.2019.8.11.0001', '', TJ, '', '', ''],
+    [TJ, 'Ativo', '07/10/2026', '1007883-32.2024.8.11.0044', '', TJ, '', '', ''],
+    ['Tribunal Regional do Trabalho da Vigésima Terceira Região - TRT23', 'Ativo', '07/10/2026', '0001095-63.2026.5.23.0107', '', 'TRT da 23ª Região - TRT23', '', '', ''],
+    [TJ, 'Falhado', '07/10/2026', '1000001-11.2025.8.11.0009', '', TJ, '', '', ''],
+    ['ELSON FERREIRA BARROS x CLEBERSON DA ROCHA', 'Ativo', '07/10/2026', '1012345-10.2022.8.11.0003', '', TJ, '', '', ''],
+    [TJ, 'Ativo', '07/10/2026', '1001556-08.2023.8.11.0042', '', TJ, '', '', ''],
+    ['Sem número', 'Ativo', '07/10/2026', '123', '', TJ, '', '', ''],
+  ]);
+  const up = await c.req('/upload', { raw: xlsx, headers: { 'X-File-Name': 'relatorio-processos.xlsx' } });
+  const pre = await c.call('cases:importPreview', up.json.token);
+  assert.equal(pre.map.number, 3, 'acha a coluna do nº pelo conteúdo');
+  assert.equal(pre.newCount, 6);
+  assert.equal(pre.duplicates, 1, 'nº repetido entra uma vez');
+  assert.equal(pre.problems.length, 1);
+  assert.equal(pre.byTribunal.TRT23, 1);
+  assert.deepEqual(pre.sample.find((x) => x.digits.endsWith('0003')).parties.map((p) => p.name), ['Elson Ferreira Barros', 'Cleberson da Rocha']);
+
+  let st = await c.call('cases:importRun', up.json.token, {});
+  assert.equal(st.created, 6);
+  for (let i = 0; i < 200 && (st = await c.call('cases:importStatus')).running; i++) await wait(50);
+  assert.equal(st.done, 6);
+  const again = await c.call('cases:importPreview', up.json.token);
+  assert.equal(again.newCount, 0, 'importar de novo não duplica');
+
+  const list = await c.call('cases:withoutClient');
+  assert.equal(list.length, 6, 'entram como "cliente a identificar"');
+  const by = (end) => list.find((k) => k.process_number.replace(/\D/g, '').endsWith(end));
+  const prov = by('0042');
+  assert.equal(prov.archive_state, 'provisorio', 'arquivado provisoriamente: vigiar');
+  assert.ok(prov.prescription_at > prov.archive_since, 'com data para conferir a prescrição');
+  assert.equal(prov.status, 'aberto', 'provisório não vai para o arquivo morto');
+  assert.equal(prov.area, 'Família e Sucessões', 'área pela classe do DataJud');
+  const def = by('0001');
+  assert.equal(def.archive_state, 'definitivo', 'baixa definitiva só fica sugerida');
+  assert.equal(def.status, 'aberto');
+  const trt = by('0107');
+  assert.equal(trt.area, 'Trabalhista');
+  assert.equal(trt.title, 'Ação Trabalhista - Rito Ordinário', 'título genérico vira a classe');
+  assert.ok(trt.parties_found.some((p) => p.suggested && p.polo === 'ativo'), 'sugere o cliente pela OAB do escritório');
+  assert.equal(by('0009').parties_found.length, 0, 'sem publicação no DJEN: escolhe à mão');
+  assert.ok(by('0003').parties_found.length >= 2);
+
+  // escolher o cliente: cria pelo nome e a outra parte vira parte contrária
+  const sug = trt.parties_found.find((p) => p.suggested);
+  const other = trt.parties_found.find((p) => !p.suggested);
+  const r = await c.call('cases:assignClient', trt.id, { name: sug.name, role: sug.polo, opposing: [other] });
+  const full = await c.call('cases:full', trt.id);
+  assert.equal(full.case.client_id, r.clientId);
+  assert.equal(full.case.client_role, 'autor');
+  assert.ok(full.parties.some((p) => p.name === other.name), 'parte contrária gravada');
+  assert.equal((await c.call('cases:withoutClient')).length, 5);
+  // o mesmo nome em outro processo usa o cliente já cadastrado
+  const r2 = await c.call('cases:assignClient', by('0044').id, { name: sug.name.toUpperCase() });
+  assert.equal(r2.clientId, r.clientId, 'não duplica o cliente');
+
+  // baixa definitiva: encerrar só com confirmação
+  await c.call('cases:archive', def.id, { action: 'close' });
+  assert.equal((await c.call('cases:full', def.id)).case.status, 'encerrado');
+  // prescrição perto: aviso para o responsável
+  const notes = [];
+  const listen = (ch, data) => { if (ch === 'notify') notes.push(data); };
+  srv.core.events.on('event', listen);
+  await c.call('cases:archive', prov.id, { prescription_at: Date.now() + 10 * 864e5 });
+  await srv.core.runChecks();
+  srv.core.events.off('event', listen);
+  assert.ok(notes.some((n) => n.kind === 'prescription' && /faltam 10 dia/.test(n.title)), 'avisa a prescrição');
+});

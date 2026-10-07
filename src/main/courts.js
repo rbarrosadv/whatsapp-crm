@@ -210,6 +210,21 @@ export class CourtsService {
     return out;
   }
 
+  /** Comunicações de um processo pelo nº (para achar as partes): até 2 páginas. */
+  async djenByProcess(number, { maxPages = 2 } = {}) {
+    const out = [];
+    for (let page = 1; page <= maxPages; page++) {
+      const q = new URLSearchParams({ numeroProcesso: cnjDigits(number), pagina: String(page), itensPorPagina: '100' });
+      const data = await this.getJson(`${DJEN_URL}?${q}`);
+      const items = data.items || data.content || [];
+      out.push(...items.map(parseDjenItem));
+      const total = Number(data.count ?? data.totalElements ?? items.length);
+      if (!items.length || out.length >= total) break;
+      await new Promise((r) => setTimeout(r, 700));
+    }
+    return out;
+  }
+
   /** Processo no DataJud pelo número (null se o tribunal não tiver ou não achar). */
   async datajud(number) {
     const index = datajudIndex(number);

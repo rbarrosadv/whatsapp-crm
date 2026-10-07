@@ -9,6 +9,7 @@ import { avatarEl, caseStageMenu, stagePicker } from '../components.js';
 import { taskRow, taskDialog } from './crmpanel.js';
 import { caseFolderPanel } from './docs.js';
 import { icon, dataIcon } from '../icons.js';
+import { caseBanners } from './importcases.js';
 
 export const TASK_KINDS = {
   prazo: { icon: '', label: 'Prazo' },
@@ -133,7 +134,7 @@ export async function openCase(id, { tab = 'dados' } = {}) {
   const off2 = on('tasks', () => reload());
 
   function render() {
-    const chat = (k.client_jid && state.chats.get(k.client_jid)) || { jid: k.jid, display_name: k.client_name || 'Cliente' };
+    const chat = (k.client_jid && state.chats.get(k.client_jid)) || { jid: k.jid, display_name: k.client_name || (k.no_client ? 'Cliente a identificar' : 'Cliente') };
     const st = stageById(k.stage_id);
     const closed = k.status !== 'aberto';
     const since = Date.now() - (k.last_update_at || k.created_at);
@@ -180,7 +181,8 @@ export async function openCase(id, { tab = 'dados' } = {}) {
             } },
           ]),
         }, icon('more', 16))),
-      closed ? null : h('div', { class: `case-return ${since > (state.settings.staleCaseDays ?? 15) * 864e5 ? 'late' : ''}` },
+      caseBanners(k, { reload }),
+      closed || k.no_client ? null : h('div', { class: `case-return ${since > (state.settings.staleCaseDays ?? 15) * 864e5 ? 'late' : ''}` },
         `Último retorno ao cliente: há ${fmtDuration(since)}`,
         h('button', { class: 'btn btn-sm', onclick: () => api('cases:touch', id).then(() => toast('Retorno registrado', 'success')).catch(errToast) }, 'Registrar retorno agora'),
         h('span', { class: 'muted small' }, '(atualiza sozinho quando você manda mensagem para o cliente)')),

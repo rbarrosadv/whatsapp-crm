@@ -13,6 +13,7 @@ import { renderIntimations } from './intimations.js';
 import { icon } from '../icons.js';
 import { contactList, contactDialog } from './commercial.js';
 import { clientForm } from './clientform.js';
+import { importDialog, importProgress, drawWithoutClient, archiveBadge } from './importcases.js';
 import { looksLikeCompany, fmtCnpj, fmtCpf } from '../qualify.js';
 
 let root;
@@ -21,7 +22,8 @@ let clientId = null; // ficha aberta
 let clientTab = 'processos';
 let q = '';
 let caseStatus = 'aberto';
-let caseResp = ''; // '' todos | 'me'
+let caseResp = ''; // '' todos | 'me' | id de alguém da equipe
+let team = [];
 let loading = 0;
 let listBody = null;
 
@@ -71,15 +73,19 @@ async function render() {
           class: `seg ${tab === id ? 'active' : ''}`, onclick: () => { tab = id; render(); },
         }, label))),
       h('div', { class: 'row' },
+        tab === 'processos' && state.me?.role !== 'estagiario' ? h('button', { class: 'btn', title: 'Importar a lista de processos de outro sistema (LinkLei…), em Excel ou CSV', onclick: () => importDialog() }, [icon('upload', 15), 'Importar lista']) : null,
         tab === 'processos' ? h('button', { class: 'btn', title: 'Ver os processos em colunas por etapa', onclick: () => setView('board') }, 'Funil') : null,
         h('button', { class: 'btn', onclick: () => clientDialog() }, [icon('plus', 15), 'Cliente']),
         h('button', { class: 'btn btn-primary', onclick: () => newCaseDialog(null) }, [icon('plus', 15), 'Processo']))),
     tab === 'intimacoes' ? null : h('div', { class: 'row legal-tools' }, search,
       tab === 'processos' ? h('select', { class: 'input select-sm', onchange: (e) => { caseStatus = e.target.value; drawList(); } },
-        [['aberto', 'Em andamento'], ['encerrado', 'Encerrados'], ['', 'Todos']].map(([v, l]) => h('option', { value: v, selected: caseStatus === v }, l))) : null,
+        CASE_FILTERS.map(([v, l]) => h('option', { value: v, selected: caseStatus === v }, l))) : null,
       tab === 'processos' ? h('select', { class: 'input select-sm', onchange: (e) => { caseResp = e.target.value; drawList(); } },
-        [['', 'Toda a equipe'], ['me', 'Meus processos']].map(([v, l]) => h('option', { value: v, selected: caseResp === v }, l))) : null),
+        [['', 'Toda a equipe'], ['me', 'Meus processos'], ...team.filter((u) => u.id !== state.me?.id).map((u) => [String(u.id), u.name])]
+          .map(([v, l]) => h('option', { value: v, selected: caseResp === v }, l))) : null),
+    tab === 'processos' ? importProgress() : null,
     body);
+  if (!team.length) api('team:list').then((t) => { team = t; if (tab === 'processos' && t.length > 1 && my === loading) render(); }).catch(() => {});
   draw();
 }
 
@@ -329,10 +335,17 @@ function linkChatDialog(c) {
 
 // ------------------------------------------------------------ processos
 
+const CASE_FILTERS = [['aberto', 'Em andamento'], ['semcliente', 'Sem cliente (importados)'], ['vigiar', 'Arquivados — vigiar prescrição'],
+  ['baixa', 'Baixa definitiva: encerrar?'], ['encerrado', 'Encerrados (arquivo morto)'], ['', 'Todos']];
+
 async function drawCases(el, my) {
+  if (caseStatus === 'semcliente') { drawWithoutClient(el, { q, onChange: () => drawList() }); return; }
   let list;
-  try { list = await api('cases:list', { ...(caseStatus ? { status: caseStatus } : {}), withFlow: true, responsible: caseResp || undefined }); } catch (e) { errToast(e); return; }
+  const status = ['vigiar', 'baixa'].includes(caseStatus) ? 'aberto' : caseStatus;
+  try { list = await api('cases:list', { ...(status ? { status } : {}), withFlow: true, responsible: caseResp || undefined }); } catch (e) { errToast(e); return; }
   if (my !== loading) return;
+  if (caseStatus === 'vigiar') list = list.filter((k) => k.archive_state === 'provisorio').sort((a, b) => (a.prescription_at || Infinity) - (b.prescription_at || Infinity));
+  if (caseStatus === 'baixa') list = list.filter((k) => k.archive_state === 'definitivo' && !k.archive_dismissed);
   const nq = normalize(q);
   const items = list.filter((k) => !nq || normalize(`${k.title} ${k.client_name || ''} ${k.process_number || ''} ${k.opposing_party || ''} ${k.area || ''}`).includes(nq));
   if (!items.length) {
@@ -344,8 +357,8 @@ async function drawCases(el, my) {
     h('tbody', null, items.map((k) => {
       const st = stageById(k.stage_id);
       return h('tr', { class: 'clickable', onclick: () => openCase(k.id) },
-        h('td', null, h('b', null, k.title), k.opposing_party ? h('div', { class: 'muted small' }, `x ${k.opposing_party}`) : null),
-        h('td', null, k.client_id ? h('a', { href: '#', onclick: (e) => { e.preventDefault(); e.stopPropagation(); clientId = k.client_id; clientTab = 'processos'; tab = 'clientes'; render(); } }, k.client_name || 'Cliente') : (k.client_name || '—')),
+        h('td', null, h('b', null, k.title), k.opposing_party ? h('div', { class: 'muted small' }, `x ${k.opposing_party}`) : null, archiveBadge(k)),
+        h('td', null, k.no_client ? h('span', { class: 'pill pill-warn' }, 'a identificar') : k.client_id ? h('a', { href: '#', onclick: (e) => { e.preventDefault(); e.stopPropagation(); clientId = k.client_id; clientTab = 'processos'; tab = 'clientes'; render(); } }, k.client_name || 'Cliente') : (k.client_name || '—')),
         h('td', { class: 'mono small' }, k.process_number || '', k.tribunal ? h('div', { class: 'muted small' }, k.tribunal) : null),
         h('td', { class: 'small' }, k.responsible_name || h('span', { class: 'muted' }, '—')),
         h('td', { class: 'small' }, k.next_step ? h('span', null, k.next_step, h('div', { class: 'muted' }, `${k.flow_done}/${k.flow_total} etapas`)) : icon('check', 16),
