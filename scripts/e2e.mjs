@@ -379,6 +379,10 @@ try {
   await page.click('.modal .seg:has-text("Audiência")');
   await page.fill('.modal .field:has-text("Título") input', 'Audiência Carlos x Transportes');
   await page.selectOption('.modal .field:has-text("Cliente") select', { label: 'Carlos Pereira' });
+  // horário fixo no meio do dia (perto da meia-noite o evento ocuparia dois dias da semana)
+  const slot = await page.evaluate(() => { const d = new Date(); d.setHours(11, 0, 0, 0); const p = (n) => String(n).padStart(2, '0'); return [`${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}T11:00`, `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}T12:00`]; });
+  await page.locator('.modal input[type="datetime-local"]').nth(0).fill(slot[0]);
+  await page.locator('.modal input[type="datetime-local"]').nth(1).fill(slot[1]);
   await page.click('.modal button:has-text("Salvar")');
   await page.waitForSelector('.tg-event:has-text("Audiência Carlos x Transportes")', { timeout: 8000 });
   check(await page.locator('.tg-event:has-text("Audiência Carlos x Transportes")').count() === 1, 'audiência criada na agenda vai para o Google (sem duplicar)');
