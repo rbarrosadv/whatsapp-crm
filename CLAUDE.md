@@ -133,7 +133,9 @@ Motor (`src/main`, sem Electron apesar do nome da pasta):
   intimações → `courts:import` (cria cliente/caso/partes, religa intimações).
   **Avisos** (`notifyCase`): um por processo com andamento/intimação nova,
   `{user}` conforme a preferência `notifyCourts` (`mine` = responsável — ou,
-  sem responsável, o dono da OAB/todos menos estagiário; `all`; `off`); a 1ª
+  sem responsável, o dono da OAB/todos menos estagiário; `all`; `off`; o
+  escritório pode ligar `courtsNotifyAll` — toda a equipe, inclusive estagiária,
+  recebe como `all`, menos quem escolheu `off`); a 1ª
   consulta do DataJud (histórico) não avisa; clique abre o processo
   (`action.case`, `notify.js`). DJEN e DataJud rodam a cada 6 h (6h–22h);
   `core.runCourts()` roda na hora (testes).

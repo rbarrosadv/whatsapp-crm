@@ -18,7 +18,7 @@ export function mountSettings(el) {
 }
 
 // configurações que valem para o escritório todo (só sócio muda)
-const OFFICE_KEYS = ['sendReadReceipts', 'forgottenHours', 'chargeTemplate', 'pixKey', 'paymentNoticeDays',
+const OFFICE_KEYS = ['courtsNotifyAll', 'sendReadReceipts', 'forgottenHours', 'chargeTemplate', 'pixKey', 'paymentNoticeDays',
   'staleCaseDays', 'googleSync', 'googleCalendarId', 'signMessages', 'docsRequestTemplate', 'datajudKey',
   'officeName', 'officeDoc', 'officeAddress', 'officeCity'];
 
@@ -274,6 +274,9 @@ function render() {
           h('select', { class: 'input', onchange: (e) => setSetting('notifyCourts', e.target.value).catch(errToast) },
             [['mine', 'Dos processos em que sou responsável'], ['all', 'De todos os processos do escritório'], ['off', 'Não avisar (vejo no Hoje e no Jurídico)']]
               .map(([v, l]) => h('option', { value: v, selected: (state.settings.notifyCourts || 'mine') === v }, l)))),
+        h('label', { class: 'toggle-row' }, h('div', null, h('div', null, 'Avisar toda a equipe de todas as intimações e andamentos'),
+          h('div', { class: 'muted small' }, 'Vale para o escritório (só sócio muda). Ligado, todos recebem, inclusive a estagiária; quem escolheu "Não avisar" acima continua sem aviso.')),
+        h('input', { type: 'checkbox', class: 'switch', checked: !!state.settings.courtsNotifyAll, disabled: !state.can.admin, onchange: (e) => setSetting('courtsNotifyAll', e.target.checked).catch(errToast) })),
         h('button', { class: 'btn btn-sm', onclick: () => import('../store.js').then((m) => m.openLegal('intimacoes')) }, 'Abrir Intimações'),
         state.can.admin ? h('label', { class: 'field' }, h('span', null, 'Chave pública do DataJud (só trocar se o CNJ mudar)'),
           h('input', { class: 'input mono', value: state.settings.datajudKey || '', placeholder: 'padrão do CNJ', onchange: (e) => setSetting('datajudKey', e.target.value.trim() || null).catch(errToast) })) : null),

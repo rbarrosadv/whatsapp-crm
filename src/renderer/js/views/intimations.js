@@ -4,7 +4,7 @@
 // pessoa confere). Processos que aparecem nas intimações e ainda não estão no
 // sistema podem ser cadastrados daqui.
 import { h, fill, modal, toast, errToast, confirmDialog, fmtDateTime, toLocalInput, fromLocalInput, openExternal, normalize } from '../util.js';
-import { state, api, on, openClient } from '../store.js';
+import { state, api, on, openClient, setSetting } from '../store.js';
 import { openCase } from './casemodal.js';
 import { icon } from '../icons.js';
 
@@ -65,7 +65,15 @@ function oabPanel(st, canEdit, redraw) {
           o.last_error ? `Erro na última busca: ${o.last_error}` : o.last_check ? `Buscado em ${fmtDateTime(o.last_check)}` : 'Ainda não buscado',
           o.user_name ? ` · usuário: ${o.user_name}` : '', o.active ? '' : ' · pausado')),
       canEdit ? h('button', { class: 'btn btn-sm', onclick: () => oabDialog(o, redraw) }, 'Editar') : null)))
-      : h('p', { class: 'muted' }, 'Cadastre a OAB de cada advogado(a) do escritório. O sistema busca as intimações publicadas no DJEN em nome de cada um.'));
+      : h('p', { class: 'muted' }, 'Cadastre a OAB de cada advogado(a) do escritório. O sistema busca as intimações publicadas no DJEN em nome de cada um.'),
+    h('div', { class: 'row wrap notify-who' },
+      h('span', { class: 'small' }, 'Quem recebe o aviso das intimações:'),
+      h('select', {
+        class: 'input select-sm', disabled: !state.can.admin, title: state.can.admin ? '' : 'Só sócio muda',
+        onchange: (e) => setSetting('courtsNotifyAll', e.target.value === 'all').then(redraw).catch(errToast),
+      },
+      h('option', { value: 'mine', selected: !state.settings.courtsNotifyAll }, 'O responsável pelo processo'),
+      h('option', { value: 'all', selected: !!state.settings.courtsNotifyAll }, 'Toda a equipe'))));
 }
 
 async function oabDialog(o, redraw) {

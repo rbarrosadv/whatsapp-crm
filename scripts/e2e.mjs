@@ -617,6 +617,10 @@ try {
   await page.waitForSelector('.intim.intim-nova', { timeout: 15000 });
   check(await page.locator('.intim.intim-nova').count() >= 2, 'intimações do DJEN para conferir');
   await shot(page, '05k-intimacoes');
+  await page.locator('.notify-who select').selectOption('all');
+  await page.waitForFunction(() => document.querySelector('.notify-who select')?.value === 'all');
+  check(await page.evaluate(() => window.api.call('settings:get').then((s) => s.courtsNotifyAll === true)), 'intimações: opção de avisar toda a equipe');
+  await page.locator('.notify-who select').selectOption('mine');
   await page.locator('.hist-panel select').selectOption('6');
   await page.click('.hist-panel button:has-text("Buscar meus processos")');
   await page.waitForSelector('.hist-panel:has-text("Última busca")', { timeout: 20000 });

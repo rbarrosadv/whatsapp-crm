@@ -417,9 +417,20 @@ test('avisos de andamento novo: vão para o responsável, abrem o processo e res
     db.run('UPDATE cases SET datajud_checked_at = ? WHERE id = ?', Date.now() - 7 * 3600e3, id);
     await srv.core.runCourts();
     assert.equal(got.filter((g) => g.data.action?.case === id && g.to.user === me.id).length, 0);
+    // escritório manda avisar toda a equipe: todos recebem (menos quem escolheu "não avisar")
+    await c.call('settings:set', 'courtsNotifyAll', true);
+    got.length = 0;
+    db.run("DELETE FROM case_moves WHERE case_id = ? AND source = 'datajud' AND text LIKE 'Juntada%'", id);
+    db.run('UPDATE cases SET datajud_checked_at = ? WHERE id = ?', Date.now() - 7 * 3600e3, id);
+    await srv.core.runCourts();
+    const users = (await c.call('users:list')).filter((u) => u.active && u.id !== me.id);
+    const to = new Set(got.filter((g) => g.data.action?.case === id).map((g) => g.to.user));
+    assert.ok(users.length && users.every((u) => to.has(u.id)), 'toda a equipe avisada, inclusive estagiária');
+    assert.ok(!to.has(me.id), 'quem desligou continua sem aviso');
   } finally {
     srv.core.events.off('event', listen);
     await c.call('settings:set', 'notifyCourts', 'mine');
+    await c.call('settings:set', 'courtsNotifyAll', false);
   }
 });
 

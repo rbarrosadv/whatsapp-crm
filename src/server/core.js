@@ -38,7 +38,7 @@ export const USER_KEYS = ['notifications', 'notificationPreview', 'theme', 'last
 export const OFFICE_KEYS = ['sendReadReceipts', 'forgottenHours', 'chargeTemplate', 'pixKey', 'paymentNoticeDays',
   'staleCaseDays', 'googleSync', 'googleCalendarId', 'signMessages', 'docsRoot', 'docsRequestTemplate', 'datajudKey',
   'officeName', 'officeDoc', 'officeAddress', 'officeCity', 'proposalTemplate', 'proposalValidDays',
-  'receiptSigner', 'receiptSignMode'];
+  'receiptSigner', 'receiptSignMode', 'courtsNotifyAll'];
 
 export const DEFAULT_CHARGE_TEMPLATE = 'Olá, {nome}! Tudo bem? Passando para lembrar da {parcela} dos honorários referentes a {caso}, '
   + 'no valor de {valor}, com vencimento em {vencimento}.{pix_linha}\nQualquer dúvida, estou à disposição.';
@@ -355,8 +355,10 @@ export async function createCore({ dataDir, demo = false, version = '', safeStor
    */
   function notifyCase(k, n, { fallbackUserId } = {}) {
     for (const u of auth.listUsers().filter((x) => x.active)) {
-      const pref = auth.userPrefs(u.id).notifyCourts || 'mine';
+      let pref = auth.userPrefs(u.id).notifyCourts || 'mine';
       if (pref === 'off') continue;
+      // o escritório pode mandar avisar toda a equipe (inclusive a estagiária) de tudo
+      if (settings.courtsNotifyAll) pref = 'all';
       const owner = k?.responsible_id || fallbackUserId || null;
       if (pref === 'mine' && owner && owner !== u.id) continue;
       if (pref === 'mine' && !owner && u.role === 'estagiario') continue;
