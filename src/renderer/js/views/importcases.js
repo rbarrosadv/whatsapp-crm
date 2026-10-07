@@ -7,8 +7,8 @@ import { icon } from '../icons.js';
 import { looksLikeCompany } from '../qualify.js';
 
 const FIELD_LABELS = {
-  number: 'Nº do processo', title: 'Título / partes', tribunal: 'Tribunal', status: 'Situação', client: 'Cliente',
-  opposing: 'Parte contrária', responsible: 'Responsável', area: 'Área', court: 'Vara',
+  number: 'Nº do processo / protocolo', title: 'Título / partes', tribunal: 'Tribunal', status: 'Situação', client: 'Cliente',
+  opposing: 'Parte contrária', responsible: 'Responsável', area: 'Área', court: 'Vara', benefit: 'Benefício (INSS)',
 };
 
 /** Janela: escolher o arquivo → prévia (colunas, novos, repetidos, problemas) → importar. */
@@ -20,6 +20,7 @@ export async function importDialog() {
   const body = h('div', { class: 'import-box' }, h('p', { class: 'muted' }, 'Lendo a planilha…'));
   let pre = null;
   let map = null;
+  let mode = 'judicial';
   const team = await api('team:list').catch(() => []);
   const resp = h('select', { class: 'input' }, team.map((u) => h('option', { value: u.id, selected: u.id === state.me?.id }, u.name)));
   const draw = () => {
@@ -29,12 +30,21 @@ export async function importDialog() {
         pre.header.map((col, i) => h('option', { value: i, selected: map[key] === i }, col || `Coluna ${i + 1}`)));
       sel.addEventListener('change', async () => {
         if (sel.value === '') delete map[key]; else map[key] = Number(sel.value);
-        try { pre = await api('cases:importPreview', token, map); draw(); } catch (e) { errToast(e); }
+        try { pre = await api('cases:importPreview', token, map, { mode }); draw(); } catch (e) { errToast(e); }
       });
       return h('label', { class: 'field' }, h('span', null, label), sel);
     }));
     const tribs = Object.entries(pre.byTribunal).sort((a, b) => b[1] - a[1]).map(([t, n]) => `${t}: ${n}`).join(' · ');
+    const modeSeg = h('div', { class: 'segmented' }, [['judicial', 'Processos judiciais (nº CNJ)'], ['inss', 'Protocolos do INSS']].map(([v, l]) => h('button', {
+      class: `seg ${mode === v ? 'active' : ''}`, type: 'button',
+      onclick: async () => {
+        if (mode === v) return;
+        mode = v;
+        try { pre = await api('cases:importPreview', token, null, { mode }); map = { ...pre.map }; draw(); } catch (e) { errToast(e); }
+      },
+    }, l)));
     fill(body,
+      h('div', { class: 'row wrap' }, h('span', { class: 'small' }, 'O que tem na planilha:'), modeSeg),
       h('div', { class: 'stats import-stats' },
         h('div', { class: 'stat' }, h('div', { class: 'stat-value' }, String(pre.newCount)), h('div', { class: 'stat-label' }, 'processos novos'), h('div', { class: 'muted small' }, tribs)),
         h('div', { class: 'stat' }, h('div', { class: 'stat-value' }, String(pre.existing)), h('div', { class: 'stat-label' }, 'já cadastrados'), h('div', { class: 'muted small' }, 'ficam como estão')),
@@ -57,7 +67,9 @@ export async function importDialog() {
       pre.sample.length > 60 ? h('p', { class: 'muted small' }, `… e mais ${pre.sample.length - 60} na planilha.`) : null,
       h('div', { class: 'grid2' },
         h('label', { class: 'field' }, h('span', null, 'Responsável pelos processos (quando a planilha não diz)'), resp)),
-      h('div', { class: 'import-explain' },
+      mode === 'inss' ? h('div', { class: 'import-explain' }, icon('help', 16), h('div', null,
+        'Os protocolos entram como processos administrativos no INSS (sem consulta automática: o INSS não tem consulta pública). ',
+        'Cada um ganha a situação "Em análise" e o lembrete de conferir no Meu INSS a cada 15 dias.')) : h('div', { class: 'import-explain' },
         icon('help', 16),
         h('div', null,
           h('b', null, 'Depois de importar, o sistema trabalha sozinho, um processo por vez: '),
@@ -76,7 +88,7 @@ export async function importDialog() {
         primary: true,
         onClick: async () => {
           if (!pre?.newCount) { toast('Nenhum processo novo para importar.', 'error'); return false; }
-          await api('cases:importRun', token, { map, responsibleId: Number(resp.value) });
+          await api('cases:importRun', token, { map, responsibleId: Number(resp.value), mode });
           toast(`${pre.newCount} processo(s) importado(s). Consultando os tribunais…`, 'success');
           return true;
         },

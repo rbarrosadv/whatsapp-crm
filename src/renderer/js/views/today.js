@@ -214,6 +214,16 @@ function dayView(sum, events, awaiting) {
       });
     }), sum.prescriptions.length > 6 ? h('a', { href: '#', onclick: (e) => { e.preventDefault(); openLegal('processos', { status: 'vigiar' }); } }, `ver todos (${sum.prescriptions.length})`) : null));
   }
+  if (sum.inss?.length) {
+    groups.push(group('INSS: conferir no Meu INSS', 'Processos administrativos com a conferência vencida', sum.inss.slice(0, 6).map((k) => actionRow({
+      who: k.client_name || k.process_number || 'INSS', clientId: k.client_id,
+      text: `${k.inss_benefit || k.title}${k.process_number ? ` · protocolo ${k.process_number}` : ''}`,
+      meta: `última conferência há ${fmtDuration(Date.now() - k.since)}`,
+      onOpen: () => openCase(k.id),
+      action: 'Conferi', onAction: () => api('cases:inssChecked', k.id).then(render).catch(errToast),
+      secondary: { label: 'Abrir', onClick: () => openCase(k.id) },
+    })), sum.inss.length > 6 ? `e mais ${sum.inss.length - 6}` : null));
+  }
   if (sum.idleCases?.length) {
     groups.push(group(`Processos parados há mais de ${sum.idleDays} dias`, 'Sem andamento no tribunal: vale cobrar o cartório ou peticionar', sum.idleCases.slice(0, 6).map((k) => actionRow({
       who: k.client_name || k.process_number, clientId: k.client_id,

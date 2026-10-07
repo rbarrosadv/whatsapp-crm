@@ -1228,3 +1228,4 @@ h2, h3 { letter-spacing: -0.01em; }
 .chat-hint[hidden] { display: none; }
 .inline-check[hidden] { display: none; }
 .modal-body > p { white-space: pre-line; }
+.inss-box { grid-column: 1 / -1; border: 1px solid var(--border); border-radius: 10px; padding: 12px 14px; display: flex; flex-direction: column; gap: 10px; background: var(--panel-2); }

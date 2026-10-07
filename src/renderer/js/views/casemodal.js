@@ -2,7 +2,7 @@
 // prazos/audiências, documentos e notas — tudo numa janela com abas.
 import {
   h, fill, modal, toast, errToast, confirmDialog, promptDialog, popupMenu, fmtMoney, fmtDateTime, fmtDuration,
-  fmtSize, toLocalInput, fromLocalInput, normalize, openMedia, saveMedia, pickFiles, uploadFiles, downloadBlob,
+  fmtSize, toLocalInput, fromLocalInput, normalize, openMedia, saveMedia, pickFiles, uploadFiles, downloadBlob, openExternal,
 } from '../util.js';
 import { state, on, api, stageById, openChat, openClient } from '../store.js';
 import { avatarEl, caseStageMenu, stagePicker } from '../components.js';
@@ -18,6 +18,11 @@ export const TASK_KINDS = {
   reuniao: { icon: '', label: 'Reunião' },
   tarefa: { icon: '', label: 'Tarefa' },
 };
+
+const INSS_STATUS = { analise: 'Em análise', exigencia: 'Exigência (cumprir em 30 dias)', concedido: 'Concedido', indeferido: 'Indeferido', recurso: 'Em recurso (CRPS)', cancelado: 'Cancelado / desistência' };
+const INSS_BENEFITS = ['Aposentadoria por idade', 'Aposentadoria por tempo de contribuição', 'Aposentadoria especial', 'Aposentadoria por incapacidade permanente',
+  'Auxílio por incapacidade temporária (auxílio-doença)', 'Auxílio-acidente', 'BPC/LOAS — pessoa idosa', 'BPC/LOAS — pessoa com deficiência', 'Pensão por morte',
+  'Salário-maternidade', 'Auxílio-reclusão', 'Revisão de benefício', 'Certidão de tempo de contribuição', 'Recurso ao CRPS'];
 
 const TRIBUNAIS = ['TJMT', 'TRT23', 'TRF1', 'JEF', 'JEC', 'STJ', 'STF', 'TST', 'TRE-MT', 'INSS (administrativo)', 'PROCON'];
 const AREAS = ['Cível', 'Trabalhista', 'Família e Sucessões', 'Previdenciário', 'Consumidor', 'Tributário', 'Empresarial',
@@ -212,11 +217,12 @@ export async function openCase(id, { tab = 'dados' } = {}) {
       options.map(([v, l]) => h('option', { value: v, selected: String(value ?? '') === String(v) }, l)));
     fill(el,
       h('div', { class: 'case-grid' },
-        h('label', { class: 'field' }, h('span', null, 'Tipo'), sel('kind', [['judicial', 'Processo judicial'], ['extrajudicial', 'Extrajudicial / administrativo'], ['consultivo', 'Consultivo (sem processo)']], k.kind || 'judicial')),
+        h('label', { class: 'field' }, h('span', null, 'Tipo'), sel('kind', [['judicial', 'Processo judicial'], ['inss', 'Administrativo no INSS'], ['extrajudicial', 'Extrajudicial / outro administrativo'], ['consultivo', 'Consultivo (sem processo)']], k.kind || 'judicial')),
         h('label', { class: 'field' }, h('span', null, 'Advogado(a) responsável'),
           sel('responsible_id', [['', '— escolher —'], ...team.map((u) => [u.id, u.name])], k.responsible_id || '')),
-        h('label', { class: 'field wide' }, h('span', null, 'Nº do processo (CNJ) / procedimento'),
-          h('input', { class: 'input mono', value: k.process_number || '', placeholder: '0000000-00.0000.0.00.0000', onchange: save('process_number') })),
+        k.kind === 'inss' ? inssBlock() : null,
+        h('label', { class: 'field wide' }, h('span', null, k.kind === 'inss' ? 'Nº do requerimento / protocolo no INSS' : 'Nº do processo (CNJ) / procedimento'),
+          h('input', { class: 'input mono', value: k.process_number || '', placeholder: k.kind === 'inss' ? 'Protocolo do Meu INSS' : '0000000-00.0000.0.00.0000', onchange: save('process_number') })),
         h('label', { class: 'field' }, h('span', null, 'Tribunal'),
           h('input', { class: 'input', value: k.tribunal || '', list: 'trib-list', placeholder: 'Ex.: TJMT, TRT23', onchange: save('tribunal') }), tribList),
         h('label', { class: 'field' }, h('span', null, 'Vara / comarca / órgão'),
@@ -234,6 +240,41 @@ export async function openCase(id, { tab = 'dados' } = {}) {
           h('textarea', { class: 'input', rows: 3, placeholder: 'Em poucas linhas: o que aconteceu e o que o cliente quer.', onchange: save('description') }, k.description || ''))),
       partiesBlock(),
       h('p', { class: 'muted small' }, `Aberto em ${fmtDateTime(k.created_at)}. As alterações são salvas sozinhas.`));
+  }
+
+  /** INSS: benefício, situação (exigência → prazo de 30 dias), conferência no Meu INSS. */
+  function inssBlock() {
+    const save = (field) => (e) => api('cases:save', { id, [field]: e.target.value }).catch(errToast);
+    const benefits = h('datalist', { id: 'inss-benefits' }, INSS_BENEFITS.map((b) => h('option', { value: b })));
+    const lastCheck = k.inss_checked_at ? `conferido em ${new Date(k.inss_checked_at).toLocaleDateString('pt-BR')}` : 'ainda não conferido';
+    return h('div', { class: 'inss-box wide' },
+      h('div', { class: 'row wrap' }, icon('landmark', 18), h('b', null, 'INSS'),
+        h('span', { class: 'muted small' }, 'O INSS não tem consulta pública: o andamento é conferido no Meu INSS (gov.br do segurado).')),
+      h('div', { class: 'case-grid' },
+        h('label', { class: 'field' }, h('span', null, 'Benefício'),
+          h('input', { class: 'input', value: k.inss_benefit || '', list: 'inss-benefits', placeholder: 'Ex.: Aposentadoria por idade', onchange: save('inss_benefit') }), benefits),
+        h('label', { class: 'field' }, h('span', null, 'Situação no INSS'),
+          h('select', {
+            class: 'input',
+            onchange: async (e) => {
+              const v = e.target.value;
+              if (v === 'exigencia' && !await confirmDialog('Exigência do INSS: criar o prazo de 30 dias para cumprir (a partir de hoje)? Confira depois a data da ciência na agenda.', { okLabel: 'Criar prazo' })) { e.target.value = k.inss_status || 'analise'; return; }
+              api('cases:save', { id, inss_status: v }).then(() => {
+                if (v === 'exigencia') toast('Prazo da exigência criado na agenda', 'success');
+                if (v === 'indeferido') toast('Prazo do recurso (30 dias) criado na agenda. Avise o cliente.', 'success', 6000);
+                if (v === 'concedido') toast('Benefício concedido! Avise o cliente (sugestão no topo).', 'success', 6000);
+              }).catch(errToast);
+            },
+          }, Object.entries(INSS_STATUS).map(([v, l]) => h('option', { value: v, selected: (k.inss_status || 'analise') === v }, l)))),
+        h('label', { class: 'field' }, h('span', null, 'Data de entrada'),
+          h('input', { class: 'input', type: 'date', value: k.filed_at || '', onchange: save('filed_at') })),
+        h('label', { class: 'field' }, h('span', null, 'Conferir no Meu INSS'),
+          h('select', { class: 'input', onchange: save('inss_check_days') },
+            [[0, 'Sem lembrete'], [7, 'A cada 7 dias'], [15, 'A cada 15 dias'], [30, 'A cada 30 dias']].map(([v, l]) => h('option', { value: v, selected: Number(k.inss_check_days ?? 15) === v }, l))))),
+      h('div', { class: 'row wrap' },
+        h('button', { class: 'btn btn-sm', onclick: () => api('cases:inssChecked', id).then(() => toast('Conferência registrada', 'success')).catch(errToast) }, [icon('check', 15), 'Conferi no Meu INSS hoje']),
+        h('span', { class: 'muted small' }, lastCheck),
+        h('a', { href: '#', class: 'small', onclick: (e) => { e.preventDefault(); openExternal('https://meu.inss.gov.br/'); } }, 'Abrir o Meu INSS')));
   }
 
   function partiesBlock() {

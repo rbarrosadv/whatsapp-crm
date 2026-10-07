@@ -576,6 +576,8 @@ export async function createCore({ dataDir, demo = false, version = '', safeStor
       const h = hearingFromText(hint.text);
       return h ? `foi marcada ${h.title.toLowerCase()} para ${new Date(h.ts).toLocaleDateString('pt-BR')}${h.hasTime ? ` às ${new Date(h.ts).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' })}` : ''}. Vamos conversar antes para prepararmos tudo.` : 'foi marcada uma audiência. Em breve passamos os detalhes.';
     }
+    if (/benef[ií]cio concedido|concedeu o benef/.test(t)) return 'o INSS concedeu o benefício! Vamos acompanhar a implantação e o primeiro pagamento.';
+    if (/indefer/.test(t)) return 'o INSS negou o pedido. Vamos analisar o motivo e conversar sobre o recurso ou a ação judicial.';
     if (/improcedente/.test(t)) return 'saiu a sentença, e o pedido não foi aceito pelo juiz. Vamos analisar e conversar sobre o recurso.';
     if (/procedente/.test(t) || /senten/.test(t)) return 'saiu a sentença do processo. Vamos analisar os detalhes e te explicar os próximos passos.';
     if (/acordo/.test(t)) return 'o acordo foi homologado pelo juiz.';
@@ -584,6 +586,32 @@ export async function createCore({ dataDir, demo = false, version = '', safeStor
     if (/per[ií]cia|laudo/.test(t)) return 'houve andamento sobre a perícia. Em breve passamos os detalhes.';
     if (/ac[oó]rd|provid|recurso/.test(t)) return 'o tribunal julgou o recurso. Vamos analisar e te explicar.';
     return `houve um andamento importante (${hint.title.toLowerCase()}).`;
+  }
+
+  // ---------------------------------------------------------- INSS (administrativo)
+  const INSS_STATUS = { analise: 'Em análise', exigencia: 'Exigência', concedido: 'Concedido', indeferido: 'Indeferido', recurso: 'Em recurso (CRPS)', cancelado: 'Cancelado / desistência' };
+  /**
+   * Mudou a situação no INSS: exigência → prazo de 30 dias para cumprir;
+   * indeferido → prazo de 30 dias para o recurso e sugestão de avisar o
+   * cliente; concedido → sugestão de avisar o cliente.
+   */
+  function inssStatusChanged(id, status, ctx) {
+    const k = db.getCase(id);
+    if (!k) return;
+    db.logActivity(k.jid, 'case', `${k.title}: situação no INSS → ${INSS_STATUS[status] || status}`, ctx.user.name);
+    const deadline = (title) => {
+      const due = new Date(Date.now() + 30 * DAY); due.setHours(18, 0, 0, 0);
+      const t = db.saveTask({ jid: k.jid, case_id: id, kind: 'prazo', title, due_at: due.getTime(), assignee_id: k.responsible_id || ctx.user.id });
+      syncTaskLater(t);
+      send('tasks:changed', null);
+    };
+    if (status === 'exigencia') deadline(`Cumprir exigência do INSS${k.inss_benefit ? ` — ${k.inss_benefit}` : ''} (30 dias, confira a data da ciência)`);
+    if (status === 'indeferido') deadline(`Recurso ao CRPS ou ação judicial — ${k.inss_benefit || k.title} (30 dias da ciência, confira)`);
+    if (status === 'concedido' || status === 'indeferido') {
+      db.addHint({ case_id: id, kind: 'client', ts: Date.now(), title: status === 'concedido' ? 'Benefício concedido' : 'Benefício indeferido',
+        text: status === 'concedido' ? `O INSS concedeu o benefício${k.inss_benefit ? ` (${k.inss_benefit})` : ''}.` : `O INSS indeferiu o pedido${k.inss_benefit ? ` (${k.inss_benefit})` : ''}.`,
+        ref: `inss:${status}:${Date.now()}` });
+    }
   }
 
   // contatos salvos no WhatsApp: em fila, com intervalo (nada de rajada)
@@ -689,7 +717,7 @@ export async function createCore({ dataDir, demo = false, version = '', safeStor
     datajudRunning = true;
     try {
       const due = db.listCases({ includeClosed: false })
-        .filter((k) => k.process_number && k.kind !== 'consultivo' && (!k.datajud_checked_at || Date.now() - k.datajud_checked_at > 6 * 3600e3))
+        .filter((k) => k.process_number && !['consultivo', 'inss', 'extrajudicial'].includes(k.kind) && (!k.datajud_checked_at || Date.now() - k.datajud_checked_at > 6 * 3600e3))
         .slice(0, 200);
       const changed = [];
       for (const k of due) {
@@ -1383,6 +1411,12 @@ export async function createCore({ dataDir, demo = false, version = '', safeStor
       return id;
     },
     'cases:datajud': (_c, id) => updateDatajud(id),
+    'cases:inssChecked': (ctx, id) => {
+      db.run('UPDATE cases SET inss_checked_at = ? WHERE id = ?', Date.now(), id);
+      const k = db.getCase(id);
+      db.logActivity(k.jid, 'case', `${k.title}: conferido no Meu INSS`, ctx.user.name);
+      caseChanged(k);
+    },
     'hints:list': (ctx, { caseId, scope } = {}) => db.listHints({ caseId, responsible: scope === 'all' || caseId ? null : ctx.user.id }),
     /** Audiência sugerida → compromisso na agenda do responsável (data conferida pela pessoa). */
     'hints:hearing': (ctx, id, { due_at, title, assignee_id } = {}) => {
@@ -1422,11 +1456,11 @@ export async function createCore({ dataDir, demo = false, version = '', safeStor
     },
     'hints:dismiss': (ctx, id) => { const hint = db.getHint(id); db.setHint(id, 'ignorada', ctx.user.name); if (hint) caseChanged(db.getCase(hint.case_id)); },
     /** Prévia da planilha: colunas reconhecidas, processos novos/já cadastrados, problemas. */
-    'cases:importPreview': (_c, token, map) => {
+    'cases:importPreview': (_c, token, map, { mode } = {}) => {
       const f = readImportFile(token);
-      const cols = map && Object.keys(map).length ? map : detectColumns(f.header, f.rows);
+      const cols = map && Object.keys(map).length ? map : detectColumns(f.header, f.rows, { mode });
       if (cols.number == null) throw new Error('Não encontrei a coluna com o nº do processo. Escolha qual é.');
-      const parsed = parseImport(f.rows, cols);
+      const parsed = parseImport(f.rows, cols, { mode });
       const have = new Set(db.listCases({}).map((k) => String(k.process_number || '').replace(/\D/g, '')).filter(Boolean));
       const items = parsed.items.map((it) => ({ ...it, exists: have.has(it.digits) }));
       const byTrib = {};
@@ -1438,11 +1472,12 @@ export async function createCore({ dataDir, demo = false, version = '', safeStor
         sample: items.slice(0, 200),
       };
     },
-    'cases:importRun': async (ctx, token, { map, responsibleId, skipClosed } = {}) => {
+    'cases:importRun': async (ctx, token, { map, responsibleId, skipClosed, mode } = {}) => {
       if (importJob.running) throw new Error('Já tem uma importação em andamento.');
       const f = readImportFile(token);
-      const cols = map && Object.keys(map).length ? map : detectColumns(f.header, f.rows);
-      const { items } = parseImport(f.rows, cols);
+      const cols = map && Object.keys(map).length ? map : detectColumns(f.header, f.rows, { mode });
+      const { items } = parseImport(f.rows, cols, { mode });
+      const inss = mode === 'inss';
       const have = new Set(db.listCases({}).map((k) => String(k.process_number || '').replace(/\D/g, '')).filter(Boolean));
       const users = auth.listUsers();
       const userByName = (n) => (n ? users.find((u) => fold(u.name) && (fold(n).includes(fold(u.name)) || fold(u.name).includes(fold(n)))) : null);
@@ -1453,8 +1488,9 @@ export async function createCore({ dataDir, demo = false, version = '', safeStor
         const closed = /arquiv|encerr|baixad|extint|finaliz/i.test(it.status);
         if (closed && skipClosed) continue;
         const id = db.createCaseWithoutClient({
-          title: it.title || `Processo ${it.tribunal || ''}`.trim(),
-          process_number: it.number, tribunal: it.tribunal, area: it.area || null, court: it.court || null,
+          title: it.title || (inss ? `INSS${it.benefit ? ` — ${it.benefit}` : ''}` : `Processo ${it.tribunal || ''}`.trim()),
+          process_number: it.number, tribunal: inss ? 'INSS (administrativo)' : it.tribunal, area: it.area || (inss ? 'Previdenciário' : null), court: it.court || null,
+          kind: inss ? 'inss' : 'judicial', inss_benefit: inss ? it.benefit || null : null,
           responsible_id: userByName(it.responsible)?.id || oabOwnerOf(it.digits) || Number(responsibleId) || ctx.user.id,
           import_batch: batch, status: 'aberto',
         });
@@ -1470,6 +1506,8 @@ export async function createCore({ dataDir, demo = false, version = '', safeStor
       }
       Object.assign(importJob, { created: ids.length, batch, errors: [], userId: ctx.user.id, finishedAt: null });
       send('cases:changed', null);
+      // INSS não tem consulta pública: só o cadastro (a conferência é no Meu INSS)
+      if (inss) { Object.assign(importJob, { running: false, phase: 'Concluído', total: ids.length, done: ids.length, finishedAt: Date.now() }); return importStatus(); }
       enrichImported(ids).catch((e) => { importJob.running = false; importJob.errors.push(e.message); });
       return importStatus();
     },
@@ -1576,7 +1614,10 @@ export async function createCore({ dataDir, demo = false, version = '', safeStor
       if (!auth.can(ctx.user.role, 'finance:list')) c = auth.stripMoney(c);
       // processo novo sem responsável escolhido fica com quem criou (como as tarefas)
       if (!c.id && c.responsible_id === undefined) c = { ...c, responsible_id: ctx.user.id };
+      const before = c.id ? db.getCase(c.id) : null;
+      if (c.kind === 'inss' && !before?.inss_status && c.inss_status === undefined) c = { ...c, inss_status: 'analise', inss_check_days: c.inss_check_days ?? 15, tribunal: c.tribunal ?? 'INSS (administrativo)' };
       const id = db.saveCase(c);
+      if (c.inss_status !== undefined && c.inss_status !== before?.inss_status) inssStatusChanged(id, c.inss_status, ctx);
       if (c.process_number !== undefined) db.relinkIntimations(id);
       const k = db.getCase(id);
       wa.markChanged(k.jid);
@@ -1951,6 +1992,7 @@ export async function createCore({ dataDir, demo = false, version = '', safeStor
         hints: db.listHints({ responsible: assignee }),
         idleCases: Number(settings.idleCaseDays ?? 90) > 0 ? db.idleCases(Number(settings.idleCaseDays ?? 90) * DAY, { responsible: assignee }).slice(0, 30) : [],
         idleDays: Number(settings.idleCaseDays ?? 90),
+        inss: db.inssToCheck({ responsible: assignee }).slice(0, 20).map((k) => ({ id: k.id, title: k.title, client_name: k.client_name, client_id: k.client_id, process_number: k.process_number, inss_benefit: k.inss_benefit, inss_status: k.inss_status, since: k.inss_checked_at || k.created_at })),
         prescriptions: db.all("SELECT id FROM cases WHERE status = 'aberto' AND archive_state = 'provisorio' AND prescription_at IS NOT NULL AND prescription_at < ?", Date.now() + 90 * DAY)
           .map((r) => db.getCase(r.id)).filter((k) => !assignee || !k.responsible_id || k.responsible_id === assignee)
           .sort((a, b) => a.prescription_at - b.prescription_at).slice(0, 30)

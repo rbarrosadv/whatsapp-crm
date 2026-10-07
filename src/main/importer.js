@@ -14,17 +14,29 @@ const COLS = {
   title: /^(processo|titulo|nome|acao|caso|descricao)$/,
   tribunal: /tribunal|^orgao$/,
   status: /situacao|status|^fase$/,
-  client: /^cliente|cliente\(s\)|^clientes$/,
+  client: /^cliente|cliente\(s\)|^clientes$|segurad|requerente/,
   opposing: /contraria|adverso|^reu$|parte contraria|polo passivo/,
   responsible: /respons|advogado|^adv\b/,
   area: /^area|area do direito/,
   court: /vara|juizo|comarca|orgao julgador/,
   moves: /movimenta/,
+  benefit: /benef[ií]cio|especie/,
 };
 
 /** Qual coluna é o quê: pelo nome do cabeçalho e, para o nº, pelo conteúdo. */
-export function detectColumns(header, rows) {
+export function detectColumns(header, rows, { mode } = {}) {
   const h = header.map(fold);
+  if (mode === 'inss') {
+    const map = {};
+    const num = h.findIndex((x) => /protocolo|requerimento|n[ºo°.]*\s*(do\s+)?(processo|beneficio|nb)|^nb$/.test(x));
+    if (num >= 0) map.number = num;
+    for (const [key, re] of Object.entries(COLS)) {
+      if (key === 'number') continue;
+      const i = h.findIndex((x, idx) => re.test(x) && !Object.values(map).includes(idx));
+      if (i >= 0) map[key] = i;
+    }
+    return map;
+  }
   const map = {};
   for (const [key, re] of Object.entries(COLS)) {
     const i = h.findIndex((x, idx) => re.test(x) && !Object.values(map).includes(idx));
@@ -71,25 +83,27 @@ export const isGenericTitle = (title, tribunal) => {
  * Linhas da planilha → processos. `map` = colunas (detectColumns, que a tela
  * deixa corrigir). Junta números repetidos e separa os sem nº válido.
  */
-export function parseImport(rows, map) {
+export function parseImport(rows, map, { mode } = {}) {
   const items = [];
   const seen = new Map();
   const problems = [];
+  const inss = mode === 'inss';
   rows.forEach((r, i) => {
     const raw = map.number != null ? r[map.number] : '';
     const digits = cnjDigits(raw);
     const get = (k) => (map[k] != null ? String(r[map[k]] || '').trim() : '');
     if (!r.some((c) => String(c || '').trim())) return;
-    if (!validCnj(digits)) { problems.push({ line: i + 2, value: raw || '(vazio)', reason: 'nº do processo inválido' }); return; }
+    if (inss ? digits.length < 5 : !validCnj(digits)) { problems.push({ line: i + 2, value: raw || '(vazio)', reason: inss ? 'nº do protocolo inválido' : 'nº do processo inválido' }); return; }
     if (seen.has(digits)) { seen.get(digits).dupes++; return; }
     const title = get('title');
     const tribunalText = get('tribunal');
     const it = {
       line: i + 2,
       digits,
-      number: formatCnj(digits),
-      tribunal: tribunalOf(digits) || (/- ([A-Z0-9]+)$/.exec(tribunalText)?.[1] || ''),
-      title: isGenericTitle(title, tribunalText) ? '' : title,
+      number: inss ? String(raw).trim() : formatCnj(digits),
+      tribunal: inss ? 'INSS' : tribunalOf(digits) || (/- ([A-Z0-9]+)$/.exec(tribunalText)?.[1] || ''),
+      title: inss ? title : (isGenericTitle(title, tribunalText) ? '' : title),
+      benefit: get('benefit'),
       status: get('status'),
       client: get('client'),
       opposing: get('opposing'),

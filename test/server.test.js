@@ -1017,3 +1017,38 @@ test('cadastro: sugere a conversa do WhatsApp, salva o contato (opção), pasta 
   assert.equal(back, folder);
   assert.ok((await c.call('docs:list', back)).exists !== false);
 });
+
+test('INSS administrativo: situação gera prazos e aviso ao cliente, conferência no Meu INSS no Hoje, importação de protocolos', async () => {
+  const c = client();
+  await c.req('/auth/login', { body: { login: 'barros', password: 'segredo1' } });
+  const cid = await c.call('clients:save', { name: 'Segurada Teste' });
+  const k = await c.call('cases:save', { client_id: cid, title: 'Aposentadoria', kind: 'inss', inss_benefit: 'Aposentadoria por idade', process_number: '123456789' });
+  let full = await c.call('cases:full', k);
+  assert.equal(full.case.inss_status, 'analise');
+  assert.equal(full.case.tribunal, 'INSS (administrativo)');
+  await c.call('cases:save', { id: k, inss_status: 'exigencia' });
+  let tasks = await c.call('tasks:list', { caseId: k });
+  assert.ok(tasks.some((t) => t.kind === 'prazo' && /exigência/i.test(t.title) && Math.round((t.due_at - Date.now()) / 864e5) === 30), 'exigência: prazo de 30 dias');
+  await c.call('cases:save', { id: k, inss_status: 'concedido' });
+  full = await c.call('cases:full', k);
+  const hint = full.hints.find((x) => x.kind === 'client');
+  assert.ok(hint, 'concedido: sugere avisar o cliente');
+  assert.match((await c.call('hints:clientText', hint.id)).text, /concedeu o benefício/);
+  // conferência vencida aparece no Hoje
+  db.run('UPDATE cases SET inss_checked_at = ? WHERE id = ?', Date.now() - 20 * 864e5, k);
+  const range = { dayStart: Date.now() - 864e5, dayEnd: Date.now() + 864e5, weekStart: Date.now() - 864e5, weekEnd: Date.now() + 7 * 864e5, scope: 'all' };
+  assert.ok((await c.call('today:summary', range)).inss.some((x) => x.id === k));
+  await c.call('cases:inssChecked', k);
+  assert.ok(!(await c.call('today:summary', range)).inss.some((x) => x.id === k), 'conferido sai da lista');
+  // planilha de protocolos
+  const csv = Buffer.from('Segurado;Protocolo;Benefício\nMaria Teste;987654321;BPC/LOAS\nJoão Teste;87654;Pensão por morte\n;12;x\n');
+  const up = await c.req('/upload', { raw: csv, headers: { 'X-File-Name': 'protocolos.csv' } });
+  const pre = await c.call('cases:importPreview', up.json.token, null, { mode: 'inss' });
+  assert.equal(pre.newCount, 2);
+  assert.equal(pre.problems.length, 1);
+  const st = await c.call('cases:importRun', up.json.token, { mode: 'inss' });
+  assert.equal(st.created, 2);
+  const imp = (await c.call('cases:list', {})).filter((x) => x.import_batch === st.batch);
+  assert.ok(imp.every((x) => x.kind === 'inss' && x.inss_status === 'analise' && x.client_id), 'protocolos com o segurado como cliente');
+  assert.ok(imp.some((x) => x.inss_benefit === 'BPC/LOAS'));
+});

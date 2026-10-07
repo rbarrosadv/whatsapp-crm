@@ -467,7 +467,9 @@ function migrate() {
   // escolher o cliente, último andamento (processos parados)
   for (const [c, t] of [['archive_state', 'TEXT'], ['archive_since', 'INTEGER'], ['archive_dismissed', 'INTEGER'], ['prescription_at', 'INTEGER'],
     ['prescription_note', 'TEXT'], ['prescription_notified', 'INTEGER'], ['last_move_at', 'INTEGER'], ['parties_found', 'TEXT'],
-    ['parties_checked_at', 'INTEGER'], ['import_batch', 'TEXT'], ['classe', 'TEXT']]) addColumn('cases', c, t);
+    ['parties_checked_at', 'INTEGER'], ['import_batch', 'TEXT'], ['classe', 'TEXT'],
+    // processo administrativo no INSS (sem consulta automática: o andamento fica no Meu INSS)
+    ['inss_benefit', 'TEXT'], ['inss_status', 'TEXT'], ['inss_check_days', 'INTEGER'], ['inss_checked_at', 'INTEGER']]) addColumn('cases', c, t);
   // sugestões a partir dos andamentos/intimações: audiência para pôr na agenda,
   // andamento importante para avisar o cliente (nada é feito sem alguém conferir)
   db.exec(`
@@ -999,7 +1001,7 @@ export function setStage(jid, stageId) {
 
 const CASE_FIELDS = ['title', 'folder', 'process_number', 'area', 'court', 'opposing_party', 'tribunal', 'kind', 'filed_at',
   'client_role', 'description', 'responsible_id', 'claim_value', 'fee_fixed', 'fee_installments',
-  'fee_success', 'fee_total', 'fee_percent', 'prescription_note'];
+  'fee_success', 'fee_total', 'fee_percent', 'prescription_note', 'inss_benefit', 'inss_status', 'inss_check_days'];
 
 function caseRow(c) {
   if (!c) return null;
@@ -1182,12 +1184,13 @@ export function listCases({ jid, clientId, pipelineId, includeClosed = true, sta
 export function getCase(id) { return caseRow(get('SELECT * FROM cases WHERE id = ?', id)); }
 
 /** Processo sem cliente (importado): a chave provisória é "processo:<id>". */
-export function createCaseWithoutClient({ title, process_number, tribunal, area, court, responsible_id, import_batch, status }) {
+export function createCaseWithoutClient({ title, process_number, tribunal, area, court, responsible_id, import_batch, status, kind = 'judicial', inss_benefit = null }) {
   return tx(() => {
-    const id = Number(run(`INSERT INTO cases (jid, client_id, title, process_number, tribunal, area, court, responsible_id, import_batch, status, closed_at, last_update_at, created_at, updated_at)
-                           VALUES ('processo:0', NULL, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, ?, ?)`,
+    const id = Number(run(`INSERT INTO cases (jid, client_id, title, process_number, tribunal, area, court, responsible_id, import_batch, status, closed_at, kind, inss_benefit, inss_status, inss_check_days, last_update_at, created_at, updated_at)
+                           VALUES ('processo:0', NULL, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, ?, ?)`,
     title, process_number, tribunal || null, area || null, court || null, responsible_id || null, import_batch || null,
-    status === 'encerrado' ? 'encerrado' : 'aberto', status === 'encerrado' ? now() : null, now(), now()).lastInsertRowid);
+    status === 'encerrado' ? 'encerrado' : 'aberto', status === 'encerrado' ? now() : null, kind, inss_benefit,
+    kind === 'inss' ? 'analise' : null, kind === 'inss' ? 15 : null, now(), now()).lastInsertRowid);
     run('UPDATE cases SET jid = ? WHERE id = ?', `processo:${id}`, id);
     logActivity(`processo:${id}`, 'case', `Processo importado: ${process_number}`);
     return id;
@@ -1247,6 +1250,14 @@ export function idleCases(ms, { responsible } = {}) {
   }));
 }
 
+/** Processos do INSS com a conferência no Meu INSS vencida. */
+export function inssToCheck({ responsible } = {}) {
+  return all(`SELECT id FROM cases WHERE status = 'aberto' AND kind = 'inss' AND COALESCE(inss_check_days, 15) > 0
+                AND COALESCE(inss_checked_at, created_at) + COALESCE(inss_check_days, 15) * 86400000 < ?
+                ${responsible ? 'AND (responsible_id = ? OR responsible_id IS NULL)' : ''}
+              ORDER BY COALESCE(inss_checked_at, created_at)`, now(), ...(responsible ? [responsible] : [])).map((r) => caseRow(get('SELECT * FROM cases WHERE id = ?', r.id)));
+}
+
 /** A pasta mudou de lugar (arquivo morto): troca o caminho no cliente e nos casos. */
 export function renameFolderPrefix(from, to) {
   for (const t of ['clients', 'cases']) {
@@ -1293,6 +1304,7 @@ export function saveCase(c) {
       if (f.startsWith('fee_') && ['fee_fixed', 'fee_installments', 'fee_success'].includes(f)) v = v ? 1 : 0;
       else if (f === 'fee_total' || f === 'fee_percent' || f === 'claim_value') v = v === '' || v == null ? null : Number(String(v).replace(/\./g, (m, i, str) => (str.includes(',') ? '' : m)).replace(',', '.')) || 0;
       else if (f === 'responsible_id') v = v ? Number(v) : null;
+      else if (f === 'inss_check_days') v = v === '' || v == null ? null : Number(v);
       else v = v == null ? null : String(v).trim() || null;
       if (f === 'title' && !v) continue;
       sets.push(`${f} = ?`);
