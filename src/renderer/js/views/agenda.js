@@ -25,9 +25,14 @@ function addDays(ts, n) { const d = new Date(ts); d.setDate(d.getDate() + n); re
 function startOfWeek(ts) { const d = new Date(startOfDay(ts)); d.setDate(d.getDate() - d.getDay()); return d.getTime(); }
 function startOfMonth(ts) { const d = new Date(startOfDay(ts)); d.setDate(1); return d.getTime(); }
 
+const isPhone = () => window.matchMedia('(max-width: 760px)').matches;
+let sideOpen = false; // celular: agendas e Google ficam recolhidos
+
 export function mountAgenda(el) {
   root = el;
   view = state.settings.agendaView || 'week';
+  // no celular a semana (7 colunas) não cabe: começa no dia
+  if (isPhone() && view === 'week') view = 'day';
   const refresh = debounce(() => state.view === 'agenda' && load(), 250);
   on('view', (v) => { if (v === 'agenda') load(true); });
   on('tasks', refresh);
@@ -88,17 +93,19 @@ function render() {
     else { const d = new Date(anchor); d.setMonth(d.getMonth() + dir); anchor = startOfDay(d.getTime()); }
     load();
   };
-  const seg = (v, label) => h('button', { class: `seg ${view === v ? 'active' : ''}`, onclick: () => { view = v; setSetting('agendaView', v).catch(() => {}); load(); } }, label);
+  const seg = (v, label) => h('button', { class: `seg ${view === v ? 'active' : ''}`, onclick: () => { view = v; if (!isPhone()) setSetting('agendaView', v).catch(() => {}); load(); } }, label);
 
   const main = h('div', { class: 'agenda-main' });
   fill(root,
-    h('div', { class: 'agenda' },
+    h('div', { class: `agenda ${sideOpen ? 'side-open' : ''}` },
       h('aside', { class: 'agenda-side' },
         h('button', { class: 'btn btn-primary wide', onclick: () => eventDialog({ start: nextSlot() }) }, [icon('plus', 15), 'Novo compromisso']),
         googleCard(),
         calendarLegend()),
       h('section', { class: 'agenda-body' },
         h('div', { class: 'agenda-toolbar' },
+          h('button', { class: 'btn btn-primary phone-only', title: 'Novo compromisso', onclick: () => eventDialog({ start: nextSlot() }) }, icon('plus', 16)),
+          h('button', { class: 'btn phone-only', title: 'Agendas e Google', onclick: () => { sideOpen = !sideOpen; render(); } }, icon('calendar', 16)),
           h('button', { class: 'btn', onclick: () => { anchor = startOfDay(Date.now()); load(); } }, 'Hoje'),
           h('button', { class: 'icon-btn', title: 'Anterior', onclick: () => move(-1) }, '‹'),
           h('button', { class: 'icon-btn', title: 'Próximo', onclick: () => move(1) }, '›'),
