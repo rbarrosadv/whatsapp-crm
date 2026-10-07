@@ -142,6 +142,9 @@ export function clientDialog(pre = {}) {
       else hint.textContent = 'CNPJ não encontrado na Receita.';
     } catch (e) { hint.textContent = e.message; }
   });
+  const mkFolder = h('input', { type: 'checkbox', checked: true });
+  const folderRow = h('label', { class: 'inline-check', hidden: true }, mkFolder, ' Criar a pasta do cliente no OneDrive (02 CLIENTES)');
+  api('docs:status').then((st) => { folderRow.hidden = !st.ok; }).catch(() => {});
   let dlg = null;
   dlg = modal({
     title: 'Novo cliente',
@@ -154,6 +157,7 @@ export function clientDialog(pre = {}) {
         h('label', { class: 'field' }, h('span', null, 'Telefone'), phone),
         h('label', { class: 'field' }, h('span', null, 'E-mail'), email)),
       hint,
+      folderRow,
       h('p', { class: 'muted small' }, 'O WhatsApp é opcional: dá para ligar depois, na ficha do cliente.')),
     actions: [
       { label: 'Cancelar' },
@@ -171,6 +175,14 @@ export function clientDialog(pre = {}) {
             phone: phone.value, email: email.value || found.email || '', origin: 'Cadastro', ...addr,
             rep: found.partners?.length === 1 ? { name: found.partners[0].name, role: found.partners[0].role, same_address: true } : undefined,
           });
+          if (!folderRow.hidden && mkFolder.checked) {
+            // pasta antiga com o mesmo nome? liga essa; senão cria no padrão
+            try {
+              const f = await api('docs:clientFolder', id);
+              if (f.suggestion?.score >= 3) await api('docs:linkClient', id, f.suggestion.rel);
+              else if (!f.folder) await api('docs:createClientFolder', id);
+            } catch (e) { errToast(e); }
+          }
           clientId = id; clientTab = 'dados';
           setView('legal');
           render();
@@ -197,6 +209,7 @@ async function renderClient(my) {
   ].filter(Boolean);
   if (!tabs.some(([id]) => id === clientTab)) clientTab = 'processos';
   const body = h('div', { class: 'client-body' });
+  const chatHint = h('div', { class: 'chat-hint', hidden: true });
   const chat = c.jid ? state.chats.get(c.jid) : null;
   fill(root,
     h('button', { class: 'btn btn-sm back-btn', onclick: () => { clientId = null; render(); } }, '← Clientes'),
@@ -210,11 +223,31 @@ async function renderClient(my) {
         c.jid
           ? h('button', { class: 'btn', onclick: () => openChat(c.jid) }, 'WhatsApp', c.chat?.unread ? h('span', { class: 'badge' }, c.chat.unread) : null)
           : h('button', { class: 'btn', title: 'Ligar uma conversa do WhatsApp do escritório a este cliente', onclick: () => linkChatDialog(c) }, 'Ligar WhatsApp'),
+        c.jid && state.settings.waSaveContacts ? h('button', {
+          class: 'btn', title: 'Salva o nome do cadastro na lista de contatos do WhatsApp do escritório',
+          onclick: () => api('clients:saveContact', c.id).then(() => toast('Contato salvo no WhatsApp', 'success')).catch(errToast),
+        }, 'Salvar contato') : null,
         h('button', { class: 'btn btn-primary', onclick: () => newCaseDialog(null, { clientId: c.id }) }, [icon('plus', 15), 'Processo']))),
+    chatHint,
     h('div', { class: 'tabs' }, tabs.map(([id, label]) => h('button', {
       class: `tab ${clientTab === id ? 'active' : ''}`, onclick: () => { clientTab = id; render(); },
     }, label))),
     body);
+  if (!c.jid) {
+    api('clients:suggestChats', c.id).then((list) => {
+      if (!list.length || !chatHint.isConnected) return;
+      chatHint.hidden = false;
+      fill(chatHint, icon('message', 16),
+        h('span', null, list.length === 1 ? 'Conversa do WhatsApp que parece ser deste cliente: ' : 'Conversas que parecem ser deste cliente: '),
+        list.map((x) => h('button', {
+          class: 'btn btn-sm',
+          title: `Achada pelo ${x.by}`,
+          onclick: async () => {
+            try { await api('clients:linkChat', c.id, x.jid); toast(`WhatsApp ligado: ${x.name}`, 'success'); } catch (e) { errToast(e); }
+          },
+        }, `Ligar ${x.name}${x.phone ? ` (${formatPhone(x.phone)})` : ''}`)));
+    }).catch(() => {});
+  }
   ({ processos: clientCases, dados: clientData, documentos: clientDocs, financeiro: clientFinance, atendimentos: clientContacts, historico: clientHistory })[clientTab](body, c);
 }
 

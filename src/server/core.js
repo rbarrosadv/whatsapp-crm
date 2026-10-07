@@ -22,6 +22,7 @@ import { seedDemoDocs, demoCourtsFetch } from '../main/demo.js';
 import { lookupCep, lookupCnpj, demoLookupFetch } from '../main/lookup.js';
 import { reais } from '../main/extenso.js';
 import { readSheet } from '../main/sheet.js';
+import { sameName } from '../renderer/js/qualify.js';
 import {
   detectColumns, parseImport, classifyArea, archiveState, suggestPrescription, partiesFromDjen, isGenericTitle, hearingFromText, CLIENT_WORTHY,
 } from '../main/importer.js';
@@ -42,7 +43,7 @@ export const USER_KEYS = ['notifications', 'notificationPreview', 'theme', 'last
   'lastFilter', 'agendaHidden', 'agendaView', 'agendaHours', 'discreet', 'discreetMessages', 'spellcheck', 'wordSuggest', 'autocorrect', 'notifyCourts', 'pushKinds'];
 export const OFFICE_KEYS = ['sendReadReceipts', 'forgottenHours', 'chargeTemplate', 'pixKey', 'paymentNoticeDays',
   'staleCaseDays', 'googleSync', 'googleCalendarId', 'signMessages', 'docsRoot', 'docsRequestTemplate', 'datajudKey',
-  'officeName', 'officeDoc', 'officeAddress', 'officeCity', 'proposalTemplate', 'proposalValidDays', 'prescriptionYears', 'clientUpdateTemplate', 'idleCaseDays',
+  'officeName', 'officeDoc', 'officeAddress', 'officeCity', 'proposalTemplate', 'proposalValidDays', 'prescriptionYears', 'clientUpdateTemplate', 'idleCaseDays', 'waSaveContacts',
   'receiptSigner', 'receiptSignMode', 'courtsNotifyAll'];
 
 export const DEFAULT_CHARGE_TEMPLATE = 'Olá, {nome}! Tudo bem? Passando para lembrar da {parcela} dos honorários referentes a {caso}, '
@@ -585,6 +586,15 @@ export async function createCore({ dataDir, demo = false, version = '', safeStor
     return `houve um andamento importante (${hint.title.toLowerCase()}).`;
   }
 
+  // contatos salvos no WhatsApp: em fila, com intervalo (nada de rajada)
+  let contactChain = Promise.resolve();
+  function queueContactSave(jid, name) {
+    contactChain = contactChain.then(async () => {
+      try { await wa.saveContact(jid, name); } catch (e) { console.error('salvar contato:', e.message); }
+      await new Promise((r) => setTimeout(r, demo ? 10 : 5000));
+    });
+  }
+
   /** Dono (usuário) da OAB que recebeu as intimações do processo, se houver um só. */
   function oabOwnerOf(digits) {
     const oabs = new Map(db.listOabs().map((o) => [String(o.id), o.user_id]));
@@ -1114,11 +1124,34 @@ export async function createCore({ dataDir, demo = false, version = '', safeStor
     },
     'clients:similar': (_c, q) => db.similarClients(q || {}),
     'clients:save': (ctx, c) => { const id = db.saveClient({ ...c, userName: ctx.user.name }); clientChanged(id); return id; },
+    /** Conversas do WhatsApp que parecem ser deste cliente (telefone ou nome), ainda sem cliente. */
+    'clients:suggestChats': (_c, id) => {
+      const cl = db.getClient(id);
+      if (!cl || cl.jid) return [];
+      const phones = [cl.phone, cl.phone2].map((p) => String(p || '').replace(/\D/g, '')).filter((p) => p.length >= 8).map((p) => p.slice(-8));
+      const linked = new Set(db.all('SELECT jid FROM clients WHERE jid IS NOT NULL').map((r) => r.jid));
+      return db.listChats().filter((c) => !c.is_group && !linked.has(c.jid) && !String(c.jid).endsWith('@g.us'))
+        .map((c) => {
+          const digits = String(c.jid).endsWith('@s.whatsapp.net') ? c.jid.split('@')[0] : '';
+          const byPhone = digits && phones.some((p) => digits.endsWith(p));
+          const byName = sameName(cl.name, c.display_name) || (c.contact_name && sameName(cl.name, c.contact_name));
+          return byPhone || byName ? { jid: c.jid, name: c.display_name, phone: digits, by: byPhone ? 'telefone' : 'nome', last_ts: c.last_ts } : null;
+        })
+        .filter(Boolean).sort((a, b) => (a.by === b.by ? (b.last_ts || 0) - (a.last_ts || 0) : a.by === 'telefone' ? -1 : 1)).slice(0, 5);
+    },
+    /** Salva o contato no WhatsApp do escritório com o nome do cadastro (um por vez). */
+    'clients:saveContact': async (_c, id) => {
+      const cl = db.getClient(id);
+      if (!cl?.jid) throw new Error('Ligue o WhatsApp do cliente primeiro.');
+      return wa.saveContact(cl.jid, cl.name);
+    },
     'clients:linkChat': (_c, id, jid) => {
       const before = db.getClient(id)?.jid;
       db.linkClientChat(id, jid || null);
       if (before) wa.markChanged(before);
       clientChanged(id);
+      // opção do escritório: salvar o contato no WhatsApp com o nome do cadastro
+      if (jid && settings.waSaveContacts) queueContactSave(jid, db.getClient(id)?.name);
     },
     'clients:fromChat': (ctx, jid) => { const id = db.ensureClientForChat(chatOrThrow(jid), ctx.user.name); clientChanged(id); return id; },
     'clients:activity': (_c, id) => db.listActivity(db.clientKey(db.getClient(id))),
@@ -1658,6 +1691,44 @@ export async function createCore({ dataDir, demo = false, version = '', safeStor
       if (rel && cl && !cl.folder && rel.split('/').length >= 3) { db.saveClient({ id: cl.id, folder: rel.split('/').slice(0, 2).join('/') }); clientChanged(cl.id); }
       send('cases:changed', db.getCase(caseId)?.jid);
       return rel || null;
+    },
+    /**
+     * Ao encerrar: o que mover para o 03 ARQUIVO MORTO. Sem outro processo
+     * aberto do cliente, a pasta inteira do cliente; senão só a do processo.
+     * Ao reabrir (`back`): o caminho de volta para o 02 CLIENTES.
+     */
+    'docs:archivePlan': (_c, caseId, { back = false } = {}) => {
+      const k = db.getCase(caseId);
+      if (!k) throw new Error('Processo não encontrado');
+      const cl = k.client_id ? db.getClient(k.client_id) : null;
+      const exists = (rel) => rel && docs.root() && fs.existsSync(docs.abs(rel));
+      const hasFolder = !!(k.folder || cl?.folder);
+      if (!docs.root()) return { can: false, hasFolder, reason: 'A pasta do OneDrive não está ligada a este servidor.' };
+      const [CLI, ARQ] = [FOLDERS.clientes, FOLDERS.arquivo];
+      if (!back) {
+        const others = cl ? db.listCases({ clientId: cl.id, status: 'aberto' }).filter((x) => x.id !== k.id).length : 0;
+        if (!others && exists(cl?.folder) && cl.folder.startsWith(`${CLI}/`)) {
+          return { can: true, mode: 'client', from: cl.folder, to: `${ARQ}/${cl.folder.slice(CLI.length + 1)}` };
+        }
+        if (exists(k.folder) && k.folder.startsWith(`${CLI}/`)) {
+          return { can: true, mode: 'case', from: k.folder, to: `${ARQ}/${k.folder.slice(CLI.length + 1)}`, others };
+        }
+        return { can: false, hasFolder, reason: hasFolder ? 'A pasta não está em 02 CLIENTES.' : 'Este processo não tem pasta no OneDrive.' };
+      }
+      if (exists(cl?.folder) && cl.folder.startsWith(`${ARQ}/`)) return { can: true, mode: 'client', from: cl.folder, to: `${CLI}/${cl.folder.slice(ARQ.length + 1)}` };
+      if (exists(k.folder) && k.folder.startsWith(`${ARQ}/`)) return { can: true, mode: 'case', from: k.folder, to: `${CLI}/${k.folder.slice(ARQ.length + 1)}` };
+      return { can: false, hasFolder };
+    },
+    'docs:archiveFolder': (ctx, caseId, { back = false } = {}) => {
+      const plan = api['docs:archivePlan'](ctx, caseId, { back });
+      if (!plan.can) throw new Error(plan.reason || 'Nada para mover.');
+      const to = docs.move(plan.from, plan.to);
+      db.renameFolderPrefix(plan.from, to);
+      const k = db.getCase(caseId);
+      db.logActivity(k.jid, 'case', `Pasta movida para ${to.split('/')[0]}: ${to.split('/').slice(1).join('/')}`, ctx.user.name);
+      if (k.client_id) clientChanged(k.client_id);
+      caseChanged(db.getCase(caseId));
+      return to;
     },
     'docs:mkdir': (ctx, rel) => { docs.check(rel, ctx.user); return docs.mkdir(rel); },
     'docs:upload': (ctx, dirRel, tokens) => {

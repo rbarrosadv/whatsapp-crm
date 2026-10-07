@@ -9,7 +9,7 @@ import { avatarEl, caseStageMenu, stagePicker } from '../components.js';
 import { taskRow, taskDialog } from './crmpanel.js';
 import { caseFolderPanel } from './docs.js';
 import { icon, dataIcon } from '../icons.js';
-import { caseBanners } from './importcases.js';
+import { caseBanners, closeCase, reopenCase } from './importcases.js';
 import { hintLabel, runHint, dismissHint } from './hints.js';
 
 export const TASK_KINDS = {
@@ -172,8 +172,8 @@ export async function openCase(id, { tab = 'dados' } = {}) {
           onclick: (e) => popupMenu(e.currentTarget, [
             { icon: '', label: 'Renomear caso', onClick: async () => { const t = await promptDialog('Nome do caso', { value: k.title }); if (t) api('cases:save', { id, title: t }).catch(errToast); } },
             closed
-              ? { icon: '↺', label: 'Reabrir caso', onClick: () => api('cases:setStatus', id, 'aberto').catch(errToast) }
-              : { icon: '', label: 'Encerrar caso', onClick: () => api('cases:setStatus', id, 'encerrado').catch(errToast) },
+              ? { icon: '↺', label: 'Reabrir caso', onClick: () => reopenCase(id) }
+              : { icon: '', label: 'Encerrar caso', onClick: () => closeCase(id) },
             '-',
             { icon: '', label: 'Excluir caso', danger: true, onClick: async () => {
               if (!await confirmDialog(`Excluir o caso “${k.title}”? As parcelas e a lista de documentos dele também serão apagadas (os arquivos e as mensagens continuam).`, { okLabel: 'Excluir', danger: true })) return;

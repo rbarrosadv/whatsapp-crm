@@ -1247,6 +1247,13 @@ export function idleCases(ms, { responsible } = {}) {
   }));
 }
 
+/** A pasta mudou de lugar (arquivo morto): troca o caminho no cliente e nos casos. */
+export function renameFolderPrefix(from, to) {
+  for (const t of ['clients', 'cases']) {
+    run(`UPDATE ${t} SET folder = ? || substr(folder, ?) WHERE folder = ? OR folder LIKE ? || '/%'`, to, String(from).length + 1, from, from);
+  }
+}
+
 /** Campos de controle do processo (fora do formulário). */
 export function setCaseMeta(id, fields) {
   const allowed = ['archive_state', 'archive_since', 'archive_dismissed', 'prescription_at', 'prescription_note', 'prescription_notified',

@@ -811,6 +811,19 @@ export class WhatsAppService extends EventEmitter {
 
   // ------------------------------------------------------------ ações
 
+  /**
+   * Salva o contato na lista do WhatsApp do escritório com o nome do cadastro
+   * (sincroniza com o celular). Um por vez, chamado só quando alguém liga o
+   * cliente à conversa — nunca em lote.
+   */
+  async saveContact(jid, name) {
+    const sock = this.requireSock();
+    const full = String(name || '').trim();
+    if (!full || !String(jid).endsWith('@s.whatsapp.net')) return false;
+    await sock.addOrEditContact(jid, { fullName: full, firstName: full.split(/\s+/)[0], saveOnPrimaryAddressbook: true });
+    return true;
+  }
+
   async sendText(chatJid, text, quotedId) {
     const sock = this.requireSock();
     const opts = {};

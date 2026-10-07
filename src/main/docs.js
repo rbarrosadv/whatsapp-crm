@@ -340,6 +340,22 @@ export class DocsService {
     return posix(rel);
   }
 
+  /**
+   * Move uma pasta dentro da pasta do escritório (ex.: para o 03 ARQUIVO MORTO).
+   * Se o destino já existir, usa "NOME (2)". Devolve o caminho novo.
+   */
+  move(fromRel, toRel) {
+    const from = this.abs(fromRel);
+    if (!fs.existsSync(from)) throw new Error('A pasta não foi encontrada no OneDrive.');
+    let dest = posix(toRel);
+    for (let i = 2; fs.existsSync(this.abs(dest)); i++) dest = `${posix(toRel)} (${i})`;
+    fs.mkdirSync(path.dirname(this.abs(dest)), { recursive: true });
+    fs.renameSync(from, this.abs(dest));
+    // o índice da busca guarda os caminhos: troca o começo
+    db.run("UPDATE doc_index SET rel = ? || substr(rel, ?) WHERE rel LIKE ? || '/%'", dest, posix(fromRel).length + 1, posix(fromRel));
+    return dest;
+  }
+
   /** Cria a pasta do cliente no padrão: 02 CLIENTES/NOME COMPLETO (+ _CADASTRO). */
   createClientFolder(name) {
     const rel = `${FOLDERS.clientes}/${safeFileName(String(name || '').toUpperCase())}`;

@@ -49,6 +49,12 @@ function textMsg(remoteJid, fromMe, text, tsSec, pushName) {
 }
 
 export class DemoWhatsAppService extends WhatsAppService {
+  /** Demonstração: guarda o que "teria sido" salvo na agenda do WhatsApp. */
+  async saveContact(jid, name) {
+    this.savedContacts = [...(this.savedContacts || []), { jid, name }];
+    return true;
+  }
+
   hasSession() {
     return fs.existsSync(path.join(this.authDir, 'creds.json'));
   }

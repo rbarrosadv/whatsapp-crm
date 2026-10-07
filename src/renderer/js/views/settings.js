@@ -20,7 +20,7 @@ export function mountSettings(el) {
 // configurações que valem para o escritório todo (só sócio muda)
 const OFFICE_KEYS = ['courtsNotifyAll', 'sendReadReceipts', 'forgottenHours', 'chargeTemplate', 'pixKey', 'paymentNoticeDays',
   'staleCaseDays', 'googleSync', 'googleCalendarId', 'signMessages', 'docsRequestTemplate', 'datajudKey',
-  'officeName', 'officeDoc', 'officeAddress', 'officeCity', 'idleCaseDays', 'prescriptionYears', 'clientUpdateTemplate'];
+  'officeName', 'officeDoc', 'officeAddress', 'officeCity', 'idleCaseDays', 'prescriptionYears', 'clientUpdateTemplate', 'waSaveContacts'];
 
 function toggle(key, label, hint, def = true) {
   const val = state.settings[key] ?? def;
@@ -228,6 +228,7 @@ function render() {
         desktopToggle('minimizeToTray', 'Continuar rodando ao fechar a janela', 'O app fica perto do relógio e segue avisando de mensagens e lembretes.', true),
         desktopToggle('openAtLogin', 'Abrir junto com o Windows', 'Vale só para este computador.', false),
         toggle('sendReadReceipts', 'Marcar como lida no celular ao abrir a conversa', 'Envia a confirmação de leitura (tique azul), se ela estiver ativa no seu WhatsApp.'),
+        toggle('waSaveContacts', 'Salvar o contato no WhatsApp ao ligar o cliente à conversa', 'Grava o nome do cadastro na lista de contatos do WhatsApp do escritório (um de cada vez, nunca em lote). Pode não aparecer na agenda de todo celular.', false),
         toggle('enterToSend', 'Enter envia a mensagem', 'Desligado: use Ctrl+Enter para enviar e Enter para pular linha.'),
         toggle('spellcheck', 'Corretor ortográfico', 'Sublinha palavras erradas; clique com o botão direito na palavra para ver as correções.'),
         toggle('autocorrect', 'Correção automática (português do Brasil)', 'Ao terminar a palavra, corrige acentos esquecidos e erros comuns: nao → não, voce → você, procuracao → procuração. Backspace logo depois desfaz.'),

@@ -983,3 +983,37 @@ test('dia a dia: intimação com audiência vira sugestão para a agenda; senten
   await c.call('hints:sendClient', sent.id, msg.text, { via: 'copy' });
   assert.equal((await c.call('cases:full', caseId)).hints.length, 0, 'sugestões resolvidas saem da ficha');
 });
+
+test('cadastro: sugere a conversa do WhatsApp, salva o contato (opção), pasta vai e volta do arquivo morto', async () => {
+  const c = client();
+  await c.req('/auth/login', { body: { login: 'barros', password: 'segredo1' } });
+  const linked = new Set((await c.call('clients:list', { status: 'todos' })).map((x) => x.jid).filter(Boolean));
+  const chat = (await c.call('chats:list')).find((x) => !x.is_group && !linked.has(x.jid) && x.jid.endsWith('@s.whatsapp.net') && /\s/.test(x.display_name));
+  const id = await c.call('clients:save', { name: `${chat.display_name} Teste`, phone: '' });
+  const sug = await c.call('clients:suggestChats', id);
+  assert.ok(sug.some((x) => x.jid === chat.jid && x.by === 'nome'), 'acha a conversa pelo nome');
+  await c.call('settings:set', 'waSaveContacts', true);
+  await c.call('clients:linkChat', id, chat.jid);
+  for (let i = 0; i < 20 && !(srv.core.wa.savedContacts || []).some((x) => x.jid === chat.jid); i++) await wait(20);
+  assert.ok(srv.core.wa.savedContacts.some((x) => x.jid === chat.jid && x.name === `${chat.display_name} Teste`), 'contato salvo no WhatsApp com o nome do cadastro');
+  await c.call('settings:set', 'waSaveContacts', false);
+
+  // pasta: cliente sem outro processo aberto → a pasta inteira vai para o arquivo morto
+  const cid = await c.call('clients:save', { name: 'Arquivo Morto Teste' });
+  const folder = await c.call('docs:createClientFolder', cid);
+  const k = await c.call('cases:save', { client_id: cid, title: 'Cobrança' });
+  const kf = await c.call('docs:createCaseFolder', k);
+  assert.ok(kf.startsWith(`${folder}/`));
+  await c.call('cases:archive', k, { action: 'close' });
+  const plan = await c.call('docs:archivePlan', k);
+  assert.equal(plan.mode, 'client');
+  const to = await c.call('docs:archiveFolder', k);
+  assert.equal(to, '03 ARQUIVO MORTO/ARQUIVO MORTO TESTE');
+  assert.equal((await c.call('clients:get', cid)).folder, to);
+  assert.ok((await c.call('cases:full', k)).case.folder.startsWith(`${to}/`), 'caminho do processo acompanha');
+  // reabriu: volta
+  await c.call('cases:setStatus', k, 'aberto');
+  const back = await c.call('docs:archiveFolder', k, { back: true });
+  assert.equal(back, folder);
+  assert.ok((await c.call('docs:list', back)).exists !== false);
+});

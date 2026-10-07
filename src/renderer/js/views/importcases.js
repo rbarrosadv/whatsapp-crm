@@ -249,9 +249,42 @@ export function caseBanners(k, { reload } = {}) {
     out.push(h('div', { class: 'case-banner' },
       icon('archive', 18),
       h('div', { class: 'grow' }, h('b', null, `Baixa definitiva nos andamentos (${fmtDay(k.archive_since)}). `), 'Encerrar o processo? Ele vai para os encerrados (arquivo morto) e continua no sistema.'),
-      h('button', { class: 'btn btn-sm btn-primary', onclick: () => api('cases:archive', k.id, { action: 'close' }).then(() => toast('Processo encerrado', 'success')).catch(errToast) }, 'Encerrar'),
+      h('button', { class: 'btn btn-sm btn-primary', onclick: () => closeCase(k.id) }, 'Encerrar'),
       h('button', { class: 'btn btn-sm', onclick: () => api('cases:archive', k.id, { action: 'watch' }).catch(errToast) }, 'É provisório: vigiar'),
       h('button', { class: 'btn btn-sm', onclick: () => api('cases:archive', k.id, { action: 'dismiss' }).catch(errToast) }, 'Continua ativo')));
   }
   return out;
+}
+
+// ------------------------------------------------------------ encerrar / reabrir com a pasta
+
+/** Encerra o processo e oferece levar a pasta para o 03 ARQUIVO MORTO. */
+export async function closeCase(id) {
+  try { await api('cases:archive', id, { action: 'close' }); } catch (e) { errToast(e); return; }
+  toast('Processo encerrado (continua no sistema, em Encerrados)', 'success');
+  await folderPrompt(id, false);
+}
+
+/** Reabre o processo e oferece trazer a pasta de volta para o 02 CLIENTES. */
+export async function reopenCase(id) {
+  try { await api('cases:setStatus', id, 'aberto'); } catch (e) { errToast(e); return; }
+  await folderPrompt(id, true);
+}
+
+async function folderPrompt(id, back) {
+  let plan;
+  try { plan = await api('docs:archivePlan', id, { back }); } catch { return; }
+  if (!plan.can) {
+    if (!back && plan.hasFolder) toast('Lembrete: mover a pasta do processo para o 03 ARQUIVO MORTO no OneDrive (Explorador de Arquivos).', 'info', 8000);
+    return;
+  }
+  const what = plan.mode === 'client' ? 'a pasta do cliente' : 'a pasta deste processo';
+  const msg = back
+    ? `Trazer ${what} de volta para o 02 CLIENTES?\n\n${plan.from}\n→ ${plan.to}`
+    : `Mover ${what} para o 03 ARQUIVO MORTO?${plan.mode === 'case' ? ' (o cliente tem outros processos abertos: a pasta dele fica onde está)' : ''}\n\n${plan.from}\n→ ${plan.to}`;
+  if (!await confirmDialog(msg, { okLabel: back ? 'Trazer de volta' : 'Mover para o arquivo morto' })) return;
+  try {
+    await api('docs:archiveFolder', id, { back });
+    toast(back ? 'Pasta de volta em 02 CLIENTES' : 'Pasta movida para o 03 ARQUIVO MORTO', 'success');
+  } catch (e) { errToast(e); }
 }
