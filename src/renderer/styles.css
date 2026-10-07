@@ -1229,3 +1229,9 @@ h2, h3 { letter-spacing: -0.01em; }
 .inline-check[hidden] { display: none; }
 .modal-body > p { white-space: pre-line; }
 .inss-box { grid-column: 1 / -1; border: 1px solid var(--border); border-radius: 10px; padding: 12px 14px; display: flex; flex-direction: column; gap: 10px; background: var(--panel-2); }
+.od-setup .od-step { display: flex; gap: 12px; align-items: flex-start; padding: 10px 0; border-top: 1px solid var(--border); }
+.od-num { flex: none; width: 24px; height: 24px; border-radius: 50%; background: var(--panel-3); display: grid; place-items: center; font-weight: 700; font-size: 13px; }
+.od-step.done .od-num { background: #22c55e; color: #fff; }
+.od-list { margin: 0; padding-left: 18px; line-height: 1.6; }
+.od-list code { font-size: 12px; background: var(--panel-2); padding: 1px 6px; border-radius: 4px; word-break: break-all; }
+.od-setup .row .input { flex: 1; min-width: 240px; }

@@ -1,6 +1,6 @@
 // Ponto de entrada da interface.
 import './bridge.js';
-import { h, debounce } from './util.js';
+import { h, debounce, toast } from './util.js';
 import { setupNotifications } from './notify.js';
 import { state, on, bootstrap, setView, openChat, forgetAvatar, setSetting } from './store.js';
 import { mountChatList } from './views/chatlist.js';
@@ -171,6 +171,14 @@ async function main() {
   setView(initial);
   showView(initial);
   window.__crm = { state, openChat, setView };
+  // volta do login da Microsoft (Ajustes → Documentos → OneDrive)
+  const params = new URLSearchParams(location.search);
+  if (params.has('onedrive')) {
+    history.replaceState(null, '', '/');
+    setView('settings');
+    if (params.get('onedrive') === 'ok') toast('OneDrive conectado. Agora escolha a pasta BARROS ADVOGADOS (passo 3).', 'success', 8000);
+    else toast(`OneDrive: ${params.get('msg') || 'não foi possível conectar'}`, 'error', 10000);
+  }
 }
 
 main().catch((e) => {

@@ -55,7 +55,6 @@ export function safeFileName(s, max = 120) {
 }
 
 const today = () => new Date().toISOString().slice(0, 10);
-const posix = (rel) => rel.split(path.sep).join('/');
 
 // ------------------------------------------------------------ texto dos arquivos
 
@@ -107,15 +106,7 @@ export function pdfText(buf) {
 }
 
 export function fileText(abs) {
-  const ext = path.extname(abs).toLowerCase();
-  try {
-    const buf = fs.readFileSync(abs);
-    if (ext === '.docx') return docxText(buf).slice(0, MAX_TEXT);
-    if (ext === '.pdf') return pdfText(buf).slice(0, MAX_TEXT);
-    if (ext === '.rtf') return buf.toString('latin1').replace(/\\'([0-9a-f]{2})/gi, (_, h) => String.fromCharCode(parseInt(h, 16)))
-      .replace(/\\[a-z]+-?\d* ?|[{}]/gi, '').slice(0, MAX_TEXT);
-    return buf.toString('utf8').slice(0, MAX_TEXT);
-  } catch { return ''; }
+  try { return bufferText(fs.readFileSync(abs), path.extname(abs).toLowerCase()); } catch { return ''; }
 }
 
 /** .docx simples (um parágrafo por linha) — para a demonstração e os testes. */
@@ -225,43 +216,69 @@ export const PLACEHOLDERS = [
 
 // ------------------------------------------------------------ serviço
 
+/** Texto pesquisável a partir do conteúdo (já lido). */
+export function bufferText(buf, ext) {
+  try {
+    if (ext === '.docx') return docxText(buf).slice(0, MAX_TEXT);
+    if (ext === '.pdf') return pdfText(buf).slice(0, MAX_TEXT);
+    if (ext === '.rtf') return buf.toString('latin1').replace(/\\'([0-9a-f]{2})/gi, (_, h) => String.fromCharCode(parseInt(h, 16)))
+      .replace(/\\[a-z]+-?\d* ?|[{}]/gi, '').slice(0, MAX_TEXT);
+    return buf.toString('utf8').slice(0, MAX_TEXT);
+  } catch { return ''; }
+}
+
+/** Caminho relativo limpo (barras normais, sem "..") — a pasta do escritório é o limite. */
+export function safeRel(rel) {
+  const parts = String(rel || '').split(/[\\/]+/).filter(Boolean);
+  if (parts.some((p) => p === '..' || p === '.')) throw new Error('Caminho fora da pasta do escritório.');
+  return parts.join('/');
+}
+const dirOf = (rel) => safeRel(rel).split('/').slice(0, -1).join('/');
+const baseOf = (rel) => safeRel(rel).split('/').pop() || '';
+
 export class DocsService {
-  /** @param {{ getRoot: () => string|null }} opts */
-  constructor({ getRoot }) {
-    this.getRoot = getRoot;
+  /**
+   * @param {{ getStore: () => (import('./storage.js').LocalStore|import('./storage.js').GraphStore|null),
+   *           describe?: () => object }} opts
+   * `getStore` = onde está a pasta (disco deste computador ou OneDrive pela API).
+   */
+  constructor({ getStore, describe }) {
+    this.getStore = getStore;
+    this.describe = describe || (() => ({}));
     this.indexing = null;
     this.lastIndex = 0;
   }
 
-  root() {
-    const r = this.getRoot();
-    return r && fs.existsSync(r) && fs.statSync(r).isDirectory() ? path.resolve(r) : null;
-  }
+  /** A pasta do escritório configurada (não confere se está acessível). */
+  store() { return this.getStore() || null; }
+  get mode() { return this.store()?.kind || null; }
 
-  status() {
-    const configured = this.getRoot() || null;
-    const root = this.root();
-    if (!root) return { configured, ok: false, guess: guessRoot() };
-    const present = Object.values(FOLDERS).filter((f) => fs.existsSync(path.join(root, f)));
+  async status() {
+    const st = this.store();
+    const extra = this.describe();
+    if (!st || !(await st.ok())) return { ...extra, ok: false, mode: st?.kind || extra.mode || null, guess: guessRoot() };
+    const top = (await st.list('').catch(() => [])) || [];
+    const names = new Set(top.filter((e) => e.dir).map((e) => e.name));
+    const present = Object.values(FOLDERS).filter((f) => names.has(f));
     const n = db.get('SELECT COUNT(*) AS n FROM doc_index')?.n || 0;
-    return { configured, ok: true, root, folders: present, missing: Object.values(FOLDERS).filter((f) => !present.includes(f)), indexed: n, indexing: !!this.indexing, lastIndex: this.lastIndex };
+    return {
+      ...extra, ok: true, mode: st.kind, root: st.kind === 'local' ? st.root : null,
+      folders: present, missing: Object.values(FOLDERS).filter((f) => !present.includes(f)),
+      indexed: n, indexing: !!this.indexing, lastIndex: this.lastIndex,
+    };
   }
 
-  requireRoot() {
-    const r = this.root();
-    if (!r) throw new Error('A pasta do escritório no OneDrive não foi encontrada. Configure em Ajustes → Documentos.');
-    return r;
+  requireStore() {
+    const st = this.store();
+    if (!st) throw new Error('A pasta do escritório no OneDrive não está configurada. Veja em Ajustes → Documentos.');
+    return st;
   }
 
-  /** Caminho absoluto de um relativo, sem sair da pasta do escritório. */
-  abs(rel = '') {
-    const root = this.requireRoot();
-    const a = path.resolve(root, String(rel || '').replace(/\//g, path.sep));
-    if (a !== root && !a.startsWith(root + path.sep)) throw new Error('Caminho fora da pasta do escritório.');
-    return a;
+  /** Caminho no disco (só no modo local: abrir no Word/Explorador). */
+  localPath(rel = '') {
+    const st = this.store();
+    return st?.kind === 'local' ? st.abs(safeRel(rel)) : null;
   }
-
-  rel(abs) { return posix(path.relative(this.requireRoot(), abs)); }
 
   /**
    * Quem pode ver o quê: financeiro e administrativo só sócios; em 07 EQUIPE
@@ -269,7 +286,7 @@ export class DocsService {
    */
   allowed(rel, user) {
     if (!user || user.role === 'socio') return true;
-    const parts = posix(String(rel || '')).split('/').filter(Boolean);
+    const parts = safeRel(rel).split('/').filter(Boolean);
     if (!parts.length) return true;
     if (PARTNERS_ONLY.includes(parts[0])) return false;
     if (parts[0] === FOLDERS.equipe && parts[1]) {
@@ -279,49 +296,50 @@ export class DocsService {
     return true;
   }
 
+  /** Confere o acesso e devolve o caminho relativo limpo. */
   check(rel, user) {
-    if (!this.allowed(rel, user)) throw new Error('Você não tem acesso a esta pasta.');
-    return this.abs(rel);
+    const r = safeRel(rel);
+    if (!this.allowed(r, user)) throw new Error('Você não tem acesso a esta pasta.');
+    this.requireStore();
+    return r;
   }
 
-  list(rel, user) {
-    const dir = this.check(rel, user);
-    if (!fs.existsSync(dir)) return { rel: posix(rel || ''), exists: false, entries: [] };
+  async exists(rel) { const st = this.store(); return !!(st && rel && await st.exists(safeRel(rel)).catch(() => false)); }
+
+  async list(rel, user) {
+    const r = this.check(rel, user);
+    const list = await this.requireStore().list(r);
+    if (!list) return { rel: r, exists: false, entries: [] };
     const entries = [];
-    for (const d of fs.readdirSync(dir, { withFileTypes: true })) {
-      if (HIDDEN.test(d.name)) continue;
-      const r = posix(path.join(rel || '', d.name));
-      if (!this.allowed(r, user)) continue;
-      let st;
-      try { st = fs.statSync(path.join(dir, d.name)); } catch { continue; }
-      entries.push({ name: d.name, rel: r, dir: st.isDirectory(), size: st.isDirectory() ? null : st.size, mtime: st.mtimeMs, ext: path.extname(d.name).toLowerCase() });
+    for (const e of list) {
+      if (HIDDEN.test(e.name)) continue;
+      const er = r ? `${r}/${e.name}` : e.name;
+      if (!this.allowed(er, user)) continue;
+      entries.push({ name: e.name, rel: er, dir: e.dir, size: e.dir ? null : e.size, mtime: e.mtime, ext: e.dir ? '' : path.extname(e.name).toLowerCase() });
     }
     entries.sort((a, b) => (b.dir - a.dir) || a.name.localeCompare(b.name, 'pt-BR', { numeric: true }));
-    return { rel: posix(rel || ''), exists: true, entries };
+    return { rel: r, exists: true, entries };
   }
 
   /** Pastas de clientes (ativos e arquivo morto). */
-  clientFolders() {
-    const root = this.root();
-    if (!root) return [];
+  async clientFolders() {
+    const st = this.store();
+    if (!st) return [];
     const out = [];
     for (const top of [FOLDERS.clientes, FOLDERS.arquivo]) {
-      const dir = path.join(root, top);
-      if (!fs.existsSync(dir)) continue;
-      for (const d of fs.readdirSync(dir, { withFileTypes: true })) {
-        if (d.isDirectory() && !HIDDEN.test(d.name)) out.push({ name: d.name, rel: `${top}/${d.name}`, archived: top === FOLDERS.arquivo });
-      }
+      const list = await st.list(top).catch(() => null);
+      for (const d of list || []) if (d.dir && !HIDDEN.test(d.name)) out.push({ name: d.name, rel: `${top}/${d.name}`, archived: top === FOLDERS.arquivo });
     }
     return out;
   }
 
   /** Pasta de cliente que parece ser desta pessoa (nome igual ou que começa igual). */
-  suggestClientFolder(name) {
+  async suggestClientFolder(name) {
     const want = fold(name).replace(/[^a-z0-9 ]/g, ' ').replace(/\s+/g, ' ').trim();
     if (!want) return null;
     const words = want.split(' ');
     let best = null;
-    for (const f of this.clientFolders()) {
+    for (const f of await this.clientFolders()) {
       const have = fold(f.name).replace(/[^a-z0-9 ]/g, ' ').replace(/\s+/g, ' ').trim();
       // pastas antigas: "CLIENTE x PARTE - ASSUNTO" ou "NOME_B31" → compara só o nome
       const head = have.split(/ x | - |_/)[0].trim();
@@ -334,34 +352,33 @@ export class DocsService {
     return best;
   }
 
-  mkdir(rel) {
-    const a = this.abs(rel);
-    fs.mkdirSync(a, { recursive: true });
-    return posix(rel);
+  async mkdir(rel) {
+    const r = safeRel(rel);
+    await this.requireStore().mkdir(r);
+    return r;
+  }
+
+  /** Cria a pasta do cliente no padrão: 02 CLIENTES/NOME COMPLETO (+ _CADASTRO). */
+  async createClientFolder(name) {
+    const rel = `${FOLDERS.clientes}/${safeFileName(String(name || '').toUpperCase())}`;
+    await this.mkdir(`${rel}/_CADASTRO`);
+    return rel;
   }
 
   /**
    * Move uma pasta dentro da pasta do escritório (ex.: para o 03 ARQUIVO MORTO).
    * Se o destino já existir, usa "NOME (2)". Devolve o caminho novo.
    */
-  move(fromRel, toRel) {
-    const from = this.abs(fromRel);
-    if (!fs.existsSync(from)) throw new Error('A pasta não foi encontrada no OneDrive.');
-    let dest = posix(toRel);
-    for (let i = 2; fs.existsSync(this.abs(dest)); i++) dest = `${posix(toRel)} (${i})`;
-    fs.mkdirSync(path.dirname(this.abs(dest)), { recursive: true });
-    fs.renameSync(from, this.abs(dest));
+  async move(fromRel, toRel) {
+    const st = this.requireStore();
+    const from = safeRel(fromRel);
+    if (!(await st.exists(from))) throw new Error('A pasta não foi encontrada no OneDrive.');
+    let dest = safeRel(toRel);
+    for (let i = 2; await st.exists(dest); i++) dest = `${safeRel(toRel)} (${i})`;
+    await st.move(from, dest);
     // o índice da busca guarda os caminhos: troca o começo
-    db.run("UPDATE doc_index SET rel = ? || substr(rel, ?) WHERE rel LIKE ? || '/%'", dest, posix(fromRel).length + 1, posix(fromRel));
+    db.run("UPDATE doc_index SET rel = ? || substr(rel, ?) WHERE rel LIKE ? || '/%'", dest, from.length + 1, from);
     return dest;
-  }
-
-  /** Cria a pasta do cliente no padrão: 02 CLIENTES/NOME COMPLETO (+ _CADASTRO). */
-  createClientFolder(name) {
-    const rel = `${FOLDERS.clientes}/${safeFileName(String(name || '').toUpperCase())}`;
-    this.mkdir(rel);
-    this.mkdir(`${rel}/_CADASTRO`);
-    return rel;
   }
 
   /** Nome da pasta do caso: ASSUNTO x PARTE CONTRÁRIA - nº do processo. */
@@ -373,26 +390,29 @@ export class DocsService {
   }
 
   /** Não sobrescreve: "arquivo (2).docx". */
-  uniqueRel(dirRel, name) {
+  async uniqueRel(dirRel, name) {
+    const st = this.requireStore();
     const ext = path.extname(name);
     const base = name.slice(0, name.length - ext.length);
+    const dir = safeRel(dirRel);
     let candidate = name;
-    for (let i = 2; fs.existsSync(this.abs(`${dirRel}/${candidate}`)); i++) candidate = `${base} (${i})${ext}`;
-    return posix(path.join(dirRel, candidate));
+    for (let i = 2; await st.exists(`${dir}/${candidate}`); i++) candidate = `${base} (${i})${ext}`;
+    return `${dir}/${candidate}`;
   }
 
   /** Copia arquivos enviados (uploads) para uma pasta, com a data na frente do nome. */
-  saveFiles(dirRel, files, user, { datePrefix = true } = {}) {
-    this.check(dirRel, user);
-    this.mkdir(dirRel);
+  async saveFiles(dirRel, files, user, { datePrefix = true } = {}) {
+    const dir = this.check(dirRel, user);
+    const st = this.requireStore();
+    await st.mkdir(dir);
     const out = [];
     for (const f of files) {
       let name = safeFileName(f.name, 150);
       if (datePrefix && !/^\d{4}-\d{2}-\d{2}/.test(name)) name = `${today()} - ${name}`;
-      const rel = this.uniqueRel(dirRel, name);
-      fs.copyFileSync(f.path, this.abs(rel));
+      const rel = await this.uniqueRel(dir, name);
+      await st.copyIn(rel, f.path);
       out.push(rel);
-      this.indexOne(rel);
+      await this.indexOne(rel, { buf: fs.readFileSync(f.path) });
     }
     return out;
   }
@@ -401,58 +421,63 @@ export class DocsService {
    * "Usar como base": copia um documento (modelo ou peça de outro caso) para a
    * pasta de destino, preenchendo os marcadores se for .docx.
    */
-  copyAsBase(srcRel, destDirRel, values, user, newName) {
+  async copyAsBase(srcRel, destDirRel, values, user, newName) {
     const src = this.check(srcRel, user);
-    this.check(destDirRel, user);
-    if (!fs.statSync(src).isFile()) throw new Error('Escolha um arquivo.');
+    const dest = this.check(destDirRel, user);
+    const st = this.requireStore();
+    const info = await st.stat(src);
+    if (!info || info.dir) throw new Error('Escolha um arquivo.');
     const ext = path.extname(src).toLowerCase();
     let name = newName ? safeFileName(newName) : path.basename(src, ext).replace(/^\d{4}-\d{2}-\d{2} - /, '').replace(/^MODELO\s*[-–]\s*/i, '');
     if (!name.toLowerCase().endsWith(ext)) name += ext;
     if (!/^\d{4}-\d{2}-\d{2}/.test(name)) name = `${today()} - ${name}`;
-    this.mkdir(destDirRel);
-    const rel = this.uniqueRel(destDirRel, name);
-    const buf = fs.readFileSync(src);
-    fs.writeFileSync(this.abs(rel), ext === '.docx' ? fillDocx(buf, values || {}) : buf);
-    this.indexOne(rel);
+    await st.mkdir(dest);
+    const rel = await this.uniqueRel(dest, name);
+    const buf = await st.read(src);
+    const out = ext === '.docx' ? fillDocx(buf, values || {}) : buf;
+    await st.write(rel, out);
+    await this.indexOne(rel, { buf: out });
     return rel;
   }
 
   /** Modelos em 04 MODELOS (com a área = subpasta). */
-  templates() {
-    const root = this.root();
-    if (!root) return [];
-    const base = path.join(root, FOLDERS.modelos);
-    if (!fs.existsSync(base)) return [];
+  async templates() {
+    const st = this.store();
+    if (!st) return [];
     const out = [];
-    const walk = (dir, depth) => {
-      for (const d of fs.readdirSync(dir, { withFileTypes: true })) {
+    const walk = async (rel, depth) => {
+      const list = await st.list(rel).catch(() => null);
+      for (const d of list || []) {
         if (HIDDEN.test(d.name)) continue;
-        const a = path.join(dir, d.name);
-        if (d.isDirectory()) { if (depth < 4) walk(a, depth + 1); continue; }
+        const r = `${rel}/${d.name}`;
+        if (d.dir) { if (depth < 4) await walk(r, depth + 1); continue; }
         if (!/\.(docx?|odt|rtf|pdf|xlsx?)$/i.test(d.name)) continue;
-        const rel = this.rel(a);
-        const area = posix(path.relative(base, dir)) || 'Geral';
-        out.push({ name: d.name, rel, area, fillable: /\.docx$/i.test(d.name) });
+        const area = rel.slice(FOLDERS.modelos.length + 1) || 'Geral';
+        out.push({ name: d.name, rel: r, area, fillable: /\.docx$/i.test(d.name) });
       }
     };
-    walk(base, 0);
+    await walk(FOLDERS.modelos, 0);
     return out.sort((a, b) => a.area.localeCompare(b.area, 'pt-BR') || a.name.localeCompare(b.name, 'pt-BR'));
   }
 
   // -------------------------------------------------------- busca
 
-  indexOne(rel) {
+  /**
+   * Põe um arquivo no índice. Só lê o conteúdo de documentos de tamanho
+   * normal (no OneDrive, ler = baixar): PDFs grandes (autos, escaneados)
+   * ficam só com a busca pelo nome.
+   */
+  async indexOne(rel, { buf, meta } = {}) {
     try {
-      const a = this.abs(rel);
-      const st = fs.statSync(a);
-      const name = path.basename(a);
-      // só lê o conteúdo de documentos de tamanho normal: no OneDrive com
-      // "arquivos sob demanda", ler um arquivo faz ele ser baixado; PDFs grandes
-      // (autos do processo, escaneados) ficam só com a busca pelo nome
-      const ext = path.extname(a).toLowerCase();
-      const text = TEXT_EXT.has(ext) && st.size < (ext === '.pdf' ? 8e6 : 15e6) ? fileText(a) : '';
+      const st = this.requireStore();
+      const info = meta || await st.stat(rel);
+      if (!info || info.dir) return;
+      const name = baseOf(rel);
+      const ext = path.extname(name).toLowerCase();
+      const readable = TEXT_EXT.has(ext) && info.size < (ext === '.pdf' ? 8e6 : 15e6);
+      const text = readable ? bufferText(buf || await st.read(rel), ext) : '';
       db.run('INSERT OR REPLACE INTO doc_index (rel, name, mtime, size, text, fold) VALUES (?, ?, ?, ?, ?, ?)',
-        rel, name, Math.floor(st.mtimeMs), st.size, text, fold(`${name}\n${text}`));
+        rel, name, Math.floor(info.mtime || Date.now()), info.size || 0, text, fold(`${name}\n${text}`));
     } catch { /* arquivo sumiu ou está aberto */ }
   }
 
@@ -462,32 +487,18 @@ export class DocsService {
    */
   reindex() {
     if (this.indexing) return this.indexing;
-    const root = this.root();
-    if (!root) return Promise.resolve(0);
+    const st = this.store();
+    if (!st) return Promise.resolve(0);
     this.indexing = (async () => {
+      if (!(await st.ok())) return 0;
       const known = new Map(db.all('SELECT rel, mtime FROM doc_index').map((r) => [r.rel, r.mtime]));
       const seen = new Set();
       let changed = 0;
-      let n = 0;
-      const stack = [root];
-      while (stack.length) {
-        const dir = stack.pop();
-        let list;
-        try { list = fs.readdirSync(dir, { withFileTypes: true }); } catch { continue; }
-        for (const d of list) {
-          if (HIDDEN.test(d.name)) continue;
-          const a = path.join(dir, d.name);
-          if (d.isDirectory()) { stack.push(a); continue; }
-          const rel = posix(path.relative(root, a));
-          seen.add(rel);
-          let st;
-          try { st = fs.statSync(a); } catch { continue; }
-          if (known.get(rel) === Math.floor(st.mtimeMs)) continue;
-          this.indexOne(rel);
-          changed++;
-          if (++n % 25 === 0) await new Promise((r) => setImmediate(r));
-          if (seen.size > 100000) break; // pasta gigante: para por aqui
-        }
+      for await (const f of st.walk()) {
+        seen.add(f.rel);
+        if (known.get(f.rel) === Math.floor(f.mtime)) continue;
+        await this.indexOne(f.rel, { meta: f });
+        changed++;
       }
       for (const rel of known.keys()) if (!seen.has(rel)) { db.run('DELETE FROM doc_index WHERE rel = ?', rel); changed++; }
       this.lastIndex = Date.now();
@@ -527,7 +538,7 @@ export class DocsService {
           snippet = `${a ? '…' : ''}${r.text.slice(a, pos + 160).replace(/\s+/g, ' ').trim()}…`;
         }
       }
-      return { rel: r.rel, name: r.name, folder: posix(path.dirname(r.rel)), mtime: r.mtime, size: r.size, snippet, ext: path.extname(r.name).toLowerCase() };
+      return { rel: r.rel, name: r.name, folder: dirOf(r.rel), mtime: r.mtime, size: r.size, snippet, ext: path.extname(r.name).toLowerCase() };
     });
   }
 }

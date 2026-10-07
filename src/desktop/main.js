@@ -272,7 +272,7 @@ ipcMain.handle('desktop', async (_e, action, ...args) => {
     // arquivo de verdade (no Word, no Explorador), para editar e salvar no OneDrive
     case 'openDoc': {
       if (config.mode !== 'local' || !local?.core?.docs) return false;
-      const abs = local.core.docs.abs(String(args[0] || ''));
+      const abs = local.core.docs.localPath(String(args[0] || ''));
       if (/\.(exe|bat|cmd|com|scr|msi|ps1|vbs|js|jse|wsf|lnk|hta|jar|reg|pif|cpl|dll)$/i.test(abs)) throw new Error('arquivo executável');
       if (!fs.existsSync(abs)) throw new Error('Arquivo não encontrado na pasta do escritório.');
       const err = await shell.openPath(abs);
@@ -281,7 +281,7 @@ ipcMain.handle('desktop', async (_e, action, ...args) => {
     }
     case 'showDoc': {
       if (config.mode !== 'local' || !local?.core?.docs) return false;
-      shell.showItemInFolder(local.core.docs.abs(String(args[0] || '')));
+      shell.showItemInFolder(local.core.docs.localPath(String(args[0] || '')));
       return true;
     }
     case 'focus': showWindow(); return null;

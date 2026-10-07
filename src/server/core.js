@@ -17,7 +17,9 @@ import { GoogleService } from '../main/google.js';
 import { CalendarSync } from '../main/calendar-sync.js';
 import { webmToOgg } from '../main/ogg.js';
 import { diagnoseConnection } from '../main/diag.js';
-import { DocsService, guessRoot, templateValues, PLACEHOLDERS, FOLDERS } from '../main/docs.js';
+import { DocsService, guessRoot, templateValues, PLACEHOLDERS, FOLDERS, safeRel } from '../main/docs.js';
+import { LocalStore, GraphStore } from '../main/storage.js';
+import { OneDriveAuth } from '../main/onedrive.js';
 import { seedDemoDocs, demoCourtsFetch } from '../main/demo.js';
 import { lookupCep, lookupCnpj, demoLookupFetch } from '../main/lookup.js';
 import { reais } from '../main/extenso.js';
@@ -43,7 +45,7 @@ export const USER_KEYS = ['notifications', 'notificationPreview', 'theme', 'last
   'lastFilter', 'agendaHidden', 'agendaView', 'agendaHours', 'discreet', 'discreetMessages', 'spellcheck', 'wordSuggest', 'autocorrect', 'notifyCourts', 'pushKinds'];
 export const OFFICE_KEYS = ['sendReadReceipts', 'forgottenHours', 'chargeTemplate', 'pixKey', 'paymentNoticeDays',
   'staleCaseDays', 'googleSync', 'googleCalendarId', 'signMessages', 'docsRoot', 'docsRequestTemplate', 'datajudKey',
-  'officeName', 'officeDoc', 'officeAddress', 'officeCity', 'proposalTemplate', 'proposalValidDays', 'prescriptionYears', 'clientUpdateTemplate', 'idleCaseDays', 'waSaveContacts',
+  'officeName', 'officeDoc', 'officeAddress', 'officeCity', 'proposalTemplate', 'proposalValidDays', 'prescriptionYears', 'clientUpdateTemplate', 'idleCaseDays', 'waSaveContacts', 'docsMode',
   'receiptSigner', 'receiptSignMode', 'courtsNotifyAll'];
 
 export const DEFAULT_CHARGE_TEMPLATE = 'Olá, {nome}! Tudo bem? Passando para lembrar da {parcela} dos honorários referentes a {caso}, '
@@ -157,7 +159,28 @@ export async function createCore({ dataDir, demo = false, version = '', safeStor
   // documentos: pasta do escritório no OneDrive (no demo, uma pasta de exemplo)
   const demoDocs = path.join(dataDir, 'OneDrive (demonstração)', 'BARROS ADVOGADOS');
   if (demo) await seedDemoDocs(demoDocs);
-  const docs = new DocsService({ getRoot: () => settings.docsRoot || (demo ? demoDocs : guessRoot()) });
+  // pasta do escritório: no disco (OneDrive sincronizado neste computador) ou
+  // no OneDrive pela API da Microsoft (servidor) — Ajustes → Documentos
+  const onedrive = new OneDriveAuth({ dir: path.join(dataDir, 'onedrive'), crypt: fileSafeStorage(path.join(dataDir, 'onedrive')) });
+  let storeCache = null;
+  const getStore = () => {
+    if (settings.docsMode === 'onedrive') {
+      const st = onedrive.status();
+      if (!st.connected || !st.folder) return null;
+      if (storeCache?.kind !== 'onedrive' || storeCache.itemId !== st.folder.itemId) {
+        storeCache = new GraphStore({ driveId: st.folder.driveId, itemId: st.folder.itemId, getToken: () => onedrive.token(), fetch: (...a) => onedrive.fetch(...a) });
+      }
+      return storeCache;
+    }
+    const root = settings.docsRoot || (demo ? demoDocs : guessRoot());
+    if (!root || !fs.existsSync(root)) return null;
+    if (storeCache?.kind !== 'local' || storeCache.root !== path.resolve(root)) storeCache = new LocalStore(root);
+    return storeCache;
+  };
+  const docs = new DocsService({
+    getStore,
+    describe: () => ({ configured: settings.docsRoot || null, docsMode: settings.docsMode || 'local', onedrive: onedrive.status() }),
+  });
   const docUrl = (rel) => `/docs/file/${rel.split('/').map(encodeURIComponent).join('/')}`;
 
   // tribunais (DJEN e DataJud); no demo, respostas simuladas no mesmo formato
@@ -614,6 +637,20 @@ export async function createCore({ dataDir, demo = false, version = '', safeStor
     }
   }
 
+  /** Passa a usar a pasta do OneDrive (API) como pasta do escritório; refaz o índice da busca. */
+  async function useOneDrive(st) {
+    settings.docsMode = 'onedrive';
+    db.setSetting('docsMode', 'onedrive');
+    db.run('DELETE FROM doc_index');
+    docs.lastIndex = 0;
+    storeCache = null;
+    send('settings:office', null);
+    const ok = await docs.store()?.ok();
+    if (!ok) throw new Error('A conta do escritório não consegue abrir essa pasta. Confira se ela foi compartilhada com permissão de edição.');
+    docs.reindex().catch((e) => console.error('índice do OneDrive:', e.message));
+    return { ...st, mode: 'onedrive' };
+  }
+
   // contatos salvos no WhatsApp: em fila, com intervalo (nada de rajada)
   let contactChain = Promise.resolve();
   function queueContactSave(jid, name) {
@@ -941,10 +978,10 @@ export async function createCore({ dataDir, demo = false, version = '', safeStor
   }
 
   /** Arquivo anexado ao caso também vai para a pasta dele no OneDrive (se houver). */
-  function copyToCaseFolder(caseId, files) {
+  async function copyToCaseFolder(caseId, files) {
     const k = db.getCase(caseId);
-    if (!k?.folder || !docs.root()) return;
-    try { docs.saveFiles(k.folder, files, null); } catch (e) { console.error('pasta do caso:', e.message); }
+    if (!k?.folder || !docs.store()) return;
+    try { await docs.saveFiles(k.folder, files, null); } catch (e) { console.error('pasta do caso:', e.message); }
   }
 
   function broadcastConfig() {
@@ -1553,7 +1590,7 @@ export async function createCore({ dataDir, demo = false, version = '', safeStor
     'checklist:add': (_c, caseId, labels) => { const n = db.addChecklistItems(caseId, labels); caseChanged(db.getCase(caseId)); return n; },
     'checklist:delete': (_c, id) => { const i = db.checklistItem(id); db.deleteChecklistItem(id); if (i) caseChanged(db.getCase(i.case_id)); },
     /** Marca como recebido (opcional: arquivos enviados vão para a pasta do caso com o nome do documento). */
-    'checklist:set': (ctx, ids, status, tokens) => {
+    'checklist:set': async (ctx, ids, status, tokens) => {
       const first = db.checklistItem(ids?.[0]);
       if (!first) throw new Error('Item não encontrado');
       const k = db.getCase(first.case_id);
@@ -1561,8 +1598,8 @@ export async function createCore({ dataDir, demo = false, version = '', safeStor
       if (tokens?.length) {
         const files = uploads(tokens);
         try {
-          if (k.folder && docs.root()) {
-            const saved = docs.saveFiles(k.folder, files.map((f, i) => ({ path: f.path, name: `${first.label.slice(0, 80)}${files.length > 1 ? ` (${i + 1})` : ''}${path.extname(f.name)}` })), ctx.user);
+          if (k.folder && docs.store()) {
+            const saved = await docs.saveFiles(k.folder, files.map((f, i) => ({ path: f.path, name: `${first.label.slice(0, 80)}${files.length > 1 ? ` (${i + 1})` : ''}${path.extname(f.name)}` })), ctx.user);
             file = saved[0];
           } else {
             const dir = path.join(wa.mediaDir, '_casos', String(k.id));
@@ -1656,53 +1693,72 @@ export async function createCore({ dataDir, demo = false, version = '', safeStor
       return files.length;
     },
     // documentos (pasta do escritório no OneDrive)
-    'docs:status': () => ({ ...docs.status(), placeholders: PLACEHOLDERS, structure: FOLDERS }),
-    'docs:list': (ctx, rel) => {
-      const r = docs.list(rel || '', ctx.user);
+    // OneDrive pela API da Microsoft (servidor): app cadastrado no portal, login, pasta compartilhada
+    'onedrive:status': () => ({ ...onedrive.status(), mode: settings.docsMode || 'local' }),
+    'onedrive:setApp': (_c, app) => { onedrive.setApp(app || {}); return onedrive.status(); },
+    'onedrive:authUrl': (_c, origin) => {
+      if (!/^https?:\/\/[\w.:-]+$/.test(String(origin || ''))) throw new Error('Endereço inválido.');
+      return onedrive.authUrl(`${origin}/onedrive/callback`);
+    },
+    'onedrive:shared': () => onedrive.sharedFolders(),
+    'onedrive:useLink': async (_c, url) => useOneDrive(await onedrive.useShareLink(url)),
+    'onedrive:choose': (_c, folder) => useOneDrive(onedrive.setFolder(folder || {})),
+    'onedrive:disconnect': () => {
+      onedrive.disconnect();
+      settings.docsMode = 'local';
+      db.setSetting('docsMode', 'local');
+      db.run('DELETE FROM doc_index');
+      docs.lastIndex = 0;
+      storeCache = null;
+      send('settings:office', null);
+      return onedrive.status();
+    },
+    'docs:status': async () => ({ ...(await docs.status()), placeholders: PLACEHOLDERS, structure: FOLDERS }),
+    'docs:list': async (ctx, rel) => {
+      const r = await docs.list(rel || '', ctx.user);
       for (const e of r.entries) if (!e.dir) e.url = docUrl(e.rel);
       return r;
     },
     'docs:search': async (ctx, q, opts = {}) => {
-      if (!docs.root()) return [];
+      if (!docs.store()) return [];
       // índice vazio: espera a 1ª leitura; senão atualiza em segundo plano a cada 10 min
       if (!docs.lastIndex) await docs.reindex();
       else if (Date.now() - docs.lastIndex > 600e3) docs.reindex().catch(() => {});
       return docs.search(q, ctx.user, opts).map((d) => ({ ...d, url: docUrl(d.rel) }));
     },
-    'docs:reindex': async () => ({ changed: await docs.reindex(), ...docs.status() }),
-    'docs:templates': () => docs.templates().map((t) => ({ ...t, url: docUrl(t.rel) })),
-    'docs:clientFolder': (_c, clientId) => {
+    'docs:reindex': async () => ({ changed: await docs.reindex(), ...(await docs.status()) }),
+    'docs:templates': async () => (await docs.templates()).map((t) => ({ ...t, url: docUrl(t.rel) })),
+    'docs:clientFolder': async (_c, clientId) => {
       const cl = db.getClient(clientId);
       if (!cl) throw new Error('Cliente não encontrado');
-      const folder = cl.folder && docs.root() && fs.existsSync(docs.abs(cl.folder)) ? cl.folder : null;
-      return { folder, linked: cl.folder || null, suggestion: folder ? null : docs.suggestClientFolder(cl.name) };
+      const folder = cl.folder && await docs.exists(cl.folder) ? cl.folder : null;
+      return { folder, linked: cl.folder || null, suggestion: folder ? null : await docs.suggestClientFolder(cl.name) };
     },
     'docs:linkClient': (_c, clientId, rel) => {
-      if (rel) docs.abs(rel); // confere que fica dentro da pasta do escritório
+      if (rel) rel = safeRel(rel); // confere que fica dentro da pasta do escritório
       db.saveClient({ id: clientId, folder: rel || null });
       clientChanged(clientId);
       return rel || null;
     },
-    'docs:createClientFolder': (_c, clientId) => {
+    'docs:createClientFolder': async (_c, clientId) => {
       const cl = db.getClient(clientId);
       if (!cl) throw new Error('Cliente não encontrado');
-      const rel = docs.createClientFolder(cl.name);
+      const rel = await docs.createClientFolder(cl.name);
       db.saveClient({ id: clientId, folder: rel });
       clientChanged(clientId);
       return rel;
     },
-    'docs:caseFolder': (_c, caseId) => {
+    'docs:caseFolder': async (_c, caseId) => {
       const k = db.getCase(caseId);
       if (!k) throw new Error('Caso não encontrado');
       const cl = db.getClient(k.client_id);
-      const ok = (rel) => rel && docs.root() && fs.existsSync(docs.abs(rel));
-      const client = ok(cl?.folder) ? cl.folder : null;
-      const suggestion = client ? null : docs.suggestClientFolder(cl?.name || k.client_name || '');
+      const client = cl?.folder && await docs.exists(cl.folder) ? cl.folder : null;
+      const suggestion = client ? null : await docs.suggestClientFolder(cl?.name || k.client_name || '');
       // pastas que já existem dentro da pasta do cliente (para ligar uma antiga)
       const where = client || suggestion?.rel;
-      const options = where ? docs.list(where, null).entries.filter((e) => e.dir && e.name !== '_CADASTRO').map((e) => e.rel) : [];
+      const options = where ? (await docs.list(where, null)).entries.filter((e) => e.dir && e.name !== '_CADASTRO').map((e) => e.rel) : [];
       return {
-        folder: ok(k.folder) ? k.folder : null,
+        folder: k.folder && await docs.exists(k.folder) ? k.folder : null,
         linked: k.folder || null,
         clientFolder: client,
         clientSuggestion: suggestion,
@@ -1710,21 +1766,21 @@ export async function createCore({ dataDir, demo = false, version = '', safeStor
         options,
       };
     },
-    'docs:createCaseFolder': (_c, caseId, { clientFolder } = {}) => {
+    'docs:createCaseFolder': async (_c, caseId, { clientFolder } = {}) => {
       const k = db.getCase(caseId);
       if (!k) throw new Error('Caso não encontrado');
       const cl = db.getClient(k.client_id);
       let client = clientFolder || cl?.folder;
-      if (client) docs.mkdir(client);
-      else client = docs.createClientFolder(cl?.name || k.client_name || k.title);
+      if (client) client = await docs.mkdir(client);
+      else client = await docs.createClientFolder(cl?.name || k.client_name || k.title);
       if (cl && client !== cl.folder) { db.saveClient({ id: cl.id, folder: client }); clientChanged(cl.id); }
-      const rel = docs.mkdir(`${client}/${DocsService.caseFolderName(k)}`);
+      const rel = await docs.mkdir(`${client}/${DocsService.caseFolderName(k)}`);
       db.saveCase({ id: caseId, folder: rel });
       send('cases:changed', k.jid);
       return rel;
     },
     'docs:linkCase': (_c, caseId, rel) => {
-      if (rel) docs.abs(rel);
+      if (rel) rel = safeRel(rel);
       db.saveCase({ id: caseId, folder: rel || null });
       // ligou a pasta do caso: a pasta do cliente é a de cima (se ainda não tinha)
       const k = db.getCase(caseId);
@@ -1738,13 +1794,15 @@ export async function createCore({ dataDir, demo = false, version = '', safeStor
      * aberto do cliente, a pasta inteira do cliente; senão só a do processo.
      * Ao reabrir (`back`): o caminho de volta para o 02 CLIENTES.
      */
-    'docs:archivePlan': (_c, caseId, { back = false } = {}) => {
+    'docs:archivePlan': async (_c, caseId, { back = false } = {}) => {
       const k = db.getCase(caseId);
       if (!k) throw new Error('Processo não encontrado');
       const cl = k.client_id ? db.getClient(k.client_id) : null;
-      const exists = (rel) => rel && docs.root() && fs.existsSync(docs.abs(rel));
       const hasFolder = !!(k.folder || cl?.folder);
-      if (!docs.root()) return { can: false, hasFolder, reason: 'A pasta do OneDrive não está ligada a este servidor.' };
+      if (!docs.store()) return { can: false, hasFolder, reason: 'A pasta do OneDrive não está ligada a este servidor.' };
+      const found = new Map();
+      for (const rel of [cl?.folder, k.folder].filter(Boolean)) found.set(rel, await docs.exists(rel));
+      const exists = (rel) => !!rel && !!found.get(rel);
       const [CLI, ARQ] = [FOLDERS.clientes, FOLDERS.arquivo];
       if (!back) {
         const others = cl ? db.listCases({ clientId: cl.id, status: 'aberto' }).filter((x) => x.id !== k.id).length : 0;
@@ -1760,10 +1818,10 @@ export async function createCore({ dataDir, demo = false, version = '', safeStor
       if (exists(k.folder) && k.folder.startsWith(`${ARQ}/`)) return { can: true, mode: 'case', from: k.folder, to: `${CLI}/${k.folder.slice(ARQ.length + 1)}` };
       return { can: false, hasFolder };
     },
-    'docs:archiveFolder': (ctx, caseId, { back = false } = {}) => {
-      const plan = api['docs:archivePlan'](ctx, caseId, { back });
+    'docs:archiveFolder': async (ctx, caseId, { back = false } = {}) => {
+      const plan = await api['docs:archivePlan'](ctx, caseId, { back });
       if (!plan.can) throw new Error(plan.reason || 'Nada para mover.');
-      const to = docs.move(plan.from, plan.to);
+      const to = await docs.move(plan.from, plan.to);
       db.renameFolderPrefix(plan.from, to);
       const k = db.getCase(caseId);
       db.logActivity(k.jid, 'case', `Pasta movida para ${to.split('/')[0]}: ${to.split('/').slice(1).join('/')}`, ctx.user.name);
@@ -1771,10 +1829,10 @@ export async function createCore({ dataDir, demo = false, version = '', safeStor
       caseChanged(db.getCase(caseId));
       return to;
     },
-    'docs:mkdir': (ctx, rel) => { docs.check(rel, ctx.user); return docs.mkdir(rel); },
-    'docs:upload': (ctx, dirRel, tokens) => {
+    'docs:mkdir': (ctx, rel) => docs.mkdir(docs.check(rel, ctx.user)),
+    'docs:upload': async (ctx, dirRel, tokens) => {
       const files = uploads(tokens);
-      const saved = docs.saveFiles(dirRel, files, ctx.user);
+      const saved = await docs.saveFiles(dirRel, files, ctx.user);
       for (const f of files) fs.rmSync(path.dirname(f.path), { recursive: true, force: true });
       return saved;
     },
@@ -1782,16 +1840,16 @@ export async function createCore({ dataDir, demo = false, version = '', safeStor
       const k = caseId ? db.getCase(caseId) : null;
       return templateValues(db.getClient(clientId || k?.client_id), k);
     },
-    'docs:useAsBase': (ctx, srcRel, { caseId, clientId, dirRel, name } = {}) => {
+    'docs:useAsBase': async (ctx, srcRel, { caseId, clientId, dirRel, name } = {}) => {
       const k = caseId ? db.getCase(caseId) : null;
       const cl = db.getClient(clientId || k?.client_id);
       const dest = dirRel || k?.folder || cl?.folder;
       if (!dest) throw new Error('Este caso ainda não tem pasta. Crie ou ligue a pasta do caso primeiro.');
-      const rel = docs.copyAsBase(srcRel, dest, templateValues(cl, k), ctx.user, name);
+      const rel = await docs.copyAsBase(srcRel, dest, templateValues(cl, k), ctx.user, name);
       if (k) db.logActivity(k.jid, 'doc', `Documento criado: ${rel.split('/').pop()}`, ctx.user.name);
-      return { rel, url: docUrl(rel), path: docs.abs(rel) };
+      return { rel, url: docUrl(rel), path: docs.localPath(rel) };
     },
-    'docs:path': (ctx, rel) => ({ path: docs.check(rel || '', ctx.user), url: docUrl(rel || '') }),
+    'docs:path': (ctx, rel) => ({ path: docs.localPath(docs.check(rel || '', ctx.user)), url: docUrl(rel || '') }),
     'cases:deleteDoc': (_c, id) => { const d = db.deleteCaseDoc(id); if (d) send('cases:changed', db.getCase(d.case_id)?.jid); },
 
     // honorários / financeiro
@@ -2128,7 +2186,12 @@ export async function createCore({ dataDir, demo = false, version = '', safeStor
   });
 
   return {
-    events, api, call, dropConn, backupFile, resolveMedia, wa, google, docs, dataDir, demo, lookup, courts,
+    events, api, call, dropConn, backupFile, resolveMedia, wa, google, docs, dataDir, demo, lookup, courts, onedrive,
+    /** Volta do login da Microsoft (rota /onedrive/callback). */
+    async onedriveCallback(code, state) {
+      await onedrive.finish(code, state);
+      send('settings:office', null);
+    },
     /** Roda agora a busca dos tribunais (DJEN + DataJud), como o relógio faria. */
     runCourts: () => Promise.all([checkIntimations(), datajudDaily()]),
     /** Roda agora os avisos periódicos (lembretes, audiências, financeiro…), como o relógio faria. */

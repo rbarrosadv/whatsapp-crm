@@ -310,11 +310,29 @@ export async function startServer({
       try { file = core.resolveMedia(p.slice(7)); } catch { res.writeHead(404); return res.end(); }
       return serveFile(req, res, file, { download: url.searchParams.get('download') || undefined, cache: 'private, max-age=3600', csp: "default-src 'none'; img-src 'self'; media-src 'self'; style-src 'unsafe-inline'; sandbox" });
     }
+    // volta do login da Microsoft (OneDrive do escritório) — só sócio
+    if (p === '/onedrive/callback' && req.method === 'GET') {
+      const back = (q) => { res.writeHead(302, { Location: `/?${q}`, 'Cache-Control': 'no-store' }); res.end(); };
+      if (user.role !== 'socio') return back('onedrive=erro&msg=' + encodeURIComponent('Só um sócio conecta o OneDrive.'));
+      if (url.searchParams.get('error')) return back('onedrive=erro&msg=' + encodeURIComponent(url.searchParams.get('error_description') || url.searchParams.get('error')));
+      try {
+        await core.onedriveCallback(url.searchParams.get('code'), url.searchParams.get('state'));
+        return back('onedrive=ok');
+      } catch (e) { return back('onedrive=erro&msg=' + encodeURIComponent(e.message)); }
+    }
     // arquivos da pasta do escritório (OneDrive), com a mesma regra de quem vê o quê
     if (p.startsWith('/docs/file/') && (req.method === 'GET' || req.method === 'HEAD')) {
-      let file;
-      try { file = core.docs.check(p.slice(11), user); } catch { res.writeHead(404); return res.end(); }
-      return serveFile(req, res, file, { download: url.searchParams.get('download') || undefined, csp: "default-src 'none'; img-src 'self'; media-src 'self'; style-src 'unsafe-inline'; sandbox" });
+      let rel;
+      try { rel = core.docs.check(p.slice(11), user); } catch { res.writeHead(404); return res.end(); }
+      const file = core.docs.localPath(rel);
+      if (file) return serveFile(req, res, file, { download: url.searchParams.get('download') || undefined, csp: "default-src 'none'; img-src 'self'; media-src 'self'; style-src 'unsafe-inline'; sandbox" });
+      // OneDrive pela API: link temporário da Microsoft (o arquivo vem direto de lá)
+      try {
+        const link = await core.docs.store()?.downloadUrl?.(rel);
+        if (!link) { res.writeHead(404); return res.end(); }
+        res.writeHead(302, { Location: link, 'Cache-Control': 'no-store' });
+        return res.end();
+      } catch (e) { return sendJson(res, 502, { error: e.message }); }
     }
     if (p === '/download/backup' && user.role === 'socio') {
       const file = core.backupFile();
