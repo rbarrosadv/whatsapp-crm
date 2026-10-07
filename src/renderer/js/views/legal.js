@@ -158,11 +158,11 @@ export function clientDialog(pre = {}) {
         h('label', { class: 'field' }, h('span', null, 'E-mail'), email)),
       hint,
       folderRow,
-      h('p', { class: 'muted small' }, 'O WhatsApp é opcional: dá para ligar depois, na ficha do cliente.')),
+      h('p', { class: 'muted small' }, 'Aqui é só o cadastro rápido. Ao clicar em Cadastrar, a ficha do cliente abre na aba Dados para completar a qualificação: endereço com CEP, estado civil, profissão, RG — ou, para empresa, a sede e o representante. O WhatsApp é opcional.')),
     actions: [
       { label: 'Cancelar' },
       {
-        label: 'Cadastrar', primary: true,
+        label: 'Cadastrar e qualificar', primary: true,
         onClick: async () => {
           if (!name.value.trim()) { toast('Informe o nome', 'error'); return false; }
           let found = {};
