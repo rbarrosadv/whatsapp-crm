@@ -406,11 +406,11 @@ textarea.input { resize: vertical; }
 .table td { padding: 8px 12px; border-bottom: 1px solid var(--border); vertical-align: middle; }
 .table tbody tr { cursor: pointer; }
 .table tbody tr:hover { background: var(--hover); }
-.task-groups { display: grid; gap: 18px; max-width: 820px; }
+.task-groups { display: grid; gap: 18px; max-width: 1200px; }
 .task-group { display: flex; flex-direction: column; gap: 6px; }
 .task-group h3 { margin: 0 0 4px; font-size: 15px; color: var(--muted); }
 .task-group .task { background: var(--panel); padding: 10px 12px; }
-.stats { display: grid; grid-template-columns: repeat(auto-fill, minmax(180px, 1fr)); gap: 12px; margin-bottom: 18px; }
+.stats { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 12px; margin-bottom: 18px; }
 .stat { background: var(--panel); border-radius: 12px; padding: 16px; }
 .stat.clickable { cursor: pointer; }
 .stat.clickable:hover { background: var(--panel-2); }
@@ -750,7 +750,7 @@ body.login-body { overflow-y: auto; }
 .word-fixed { border: 1px solid var(--border); background: var(--panel); border-radius: 14px; padding: 3px 12px; font-size: 13px; box-shadow: var(--shadow); color: var(--accent); }
 
 /* ---------- Hoje (Meu dia / Minha semana) ---------- */
-.view-today { max-width: 1280px; }
+.view-today { max-width: none; }
 .stat.clickable { cursor: pointer; }
 .stat.clickable:hover { outline: 1px solid var(--accent); }
 .stat-warn .stat-value { color: #f59e0b; }

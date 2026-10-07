@@ -6,7 +6,7 @@
 // - local: liga o servidor neste mesmo computador (dados em
 //   %APPDATA%\BarrosAssociados\dados) e abre ele.
 import {
-  app, BrowserWindow, ipcMain, shell, Tray, Menu, nativeImage, powerMonitor, safeStorage, session, dialog,
+  app, BrowserWindow, ipcMain, shell, Tray, Menu, nativeImage, powerMonitor, safeStorage, session, dialog, screen,
 } from 'electron';
 import path from 'node:path';
 import fs from 'node:fs';
@@ -147,6 +147,11 @@ function createWindow() {
   }, 500);
   win.on('resize', saveBounds);
   win.on('move', saveBounds);
+  const displayCheck = debounce(applyDisplayZoom, 300);
+  win.on('move', displayCheck);
+  win.on('show', displayCheck);
+  win.webContents.on('did-finish-load', () => { zoomDisplay = null; applyDisplayZoom(); });
+  win.webContents.on('zoom-changed', (_e, dir) => zoomBy(dir === 'in' ? 0.5 : -0.5));
   win.on('focus', () => win.flashFrame(false));
   win.on('close', (e) => {
     if (!quitting && config.minimizeToTray !== false && tray) {
@@ -159,6 +164,32 @@ function createWindow() {
       }
     }
   });
+}
+
+// ------------------------------------------------------------ zoom por monitor
+// Notebook com escala 150% + monitor externo a 100%: ao passar a janela de um
+// para o outro, cada um volta com o zoom que a pessoa escolheu nele.
+let zoomDisplay = null;
+const displayOf = () => { try { return String(screen.getDisplayMatching(win.getBounds()).id); } catch { return null; } };
+function rememberZoom() {
+  if (!win || win.isDestroyed() || zoomDisplay == null) return;
+  config.zoomByDisplay = { ...(config.zoomByDisplay || {}), [zoomDisplay]: win.webContents.getZoomLevel() };
+  saveConfig();
+}
+function zoomBy(step) {
+  if (!win || win.isDestroyed()) return;
+  const wc = win.webContents;
+  wc.setZoomLevel(step === 0 ? 0 : Math.max(-3, Math.min(4, wc.getZoomLevel() + step)));
+  zoomDisplay = zoomDisplay ?? displayOf();
+  rememberZoom();
+}
+function applyDisplayZoom() {
+  if (!win || win.isDestroyed()) return;
+  const id = displayOf();
+  if (id == null || id === zoomDisplay) return;
+  zoomDisplay = id;
+  const level = config.zoomByDisplay?.[id];
+  win.webContents.setZoomLevel(typeof level === 'number' ? level : 0);
 }
 
 function showWindow() {
@@ -377,9 +408,10 @@ app.whenReady().then(async () => {
         { label: 'Trocar o servidor do escritório…', click: () => showSetup() },
         { label: 'Ferramentas do desenvolvedor', accelerator: 'F12', click: () => win?.webContents.toggleDevTools() },
         { type: 'separator' },
-        { role: 'zoomIn', label: 'Aumentar zoom' },
-        { role: 'zoomOut', label: 'Diminuir zoom' },
-        { role: 'resetZoom', label: 'Zoom normal' },
+        { label: 'Aumentar zoom', accelerator: 'CmdOrCtrl+=', click: () => zoomBy(0.5) },
+        { label: 'Aumentar zoom', accelerator: 'CmdOrCtrl+Plus', visible: false, click: () => zoomBy(0.5) },
+        { label: 'Diminuir zoom', accelerator: 'CmdOrCtrl+-', click: () => zoomBy(-0.5) },
+        { label: 'Zoom normal', accelerator: 'CmdOrCtrl+0', click: () => zoomBy(0) },
         { type: 'separator' },
         { label: 'Sair', accelerator: 'CmdOrCtrl+Q', click: () => { quitting = true; app.quit(); } },
       ],
