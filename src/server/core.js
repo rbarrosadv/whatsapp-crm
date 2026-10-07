@@ -22,7 +22,9 @@ import { seedDemoDocs, demoCourtsFetch } from '../main/demo.js';
 import { lookupCep, lookupCnpj, demoLookupFetch } from '../main/lookup.js';
 import { reais } from '../main/extenso.js';
 import { readSheet } from '../main/sheet.js';
-import { detectColumns, parseImport, classifyArea, archiveState, suggestPrescription, partiesFromDjen, isGenericTitle } from '../main/importer.js';
+import {
+  detectColumns, parseImport, classifyArea, archiveState, suggestPrescription, partiesFromDjen, isGenericTitle, hearingFromText, CLIENT_WORTHY,
+} from '../main/importer.js';
 import * as leads from '../main/leads.js';
 import * as reports from '../main/reports.js';
 import { receiptPdf, externalSign } from '../main/pdf.js';
@@ -40,7 +42,7 @@ export const USER_KEYS = ['notifications', 'notificationPreview', 'theme', 'last
   'lastFilter', 'agendaHidden', 'agendaView', 'agendaHours', 'discreet', 'discreetMessages', 'spellcheck', 'wordSuggest', 'autocorrect', 'notifyCourts', 'pushKinds'];
 export const OFFICE_KEYS = ['sendReadReceipts', 'forgottenHours', 'chargeTemplate', 'pixKey', 'paymentNoticeDays',
   'staleCaseDays', 'googleSync', 'googleCalendarId', 'signMessages', 'docsRoot', 'docsRequestTemplate', 'datajudKey',
-  'officeName', 'officeDoc', 'officeAddress', 'officeCity', 'proposalTemplate', 'proposalValidDays', 'prescriptionYears',
+  'officeName', 'officeDoc', 'officeAddress', 'officeCity', 'proposalTemplate', 'proposalValidDays', 'prescriptionYears', 'clientUpdateTemplate', 'idleCaseDays',
   'receiptSigner', 'receiptSignMode', 'courtsNotifyAll'];
 
 export const DEFAULT_CHARGE_TEMPLATE = 'Olá, {nome}! Tudo bem? Passando para lembrar da {parcela} dos honorários referentes a {caso}, '
@@ -460,6 +462,7 @@ export async function createCore({ dataDir, demo = false, version = '', safeStor
             }
             if (row.case_id) {
               db.addMove({ case_id: row.case_id, ts: it.date, text: `${it.kind}${it.doc_kind ? ` (${it.doc_kind})` : ''} — ${it.text.slice(0, 600)}`, source: 'djen', ext_id: `djen:${it.ext_id}` });
+              hintsFor(row.case_id, { text: `${it.doc_kind || ''} ${it.text}`, ts: it.date, ref: `djen:${it.ext_id}` });
               touched.add(row.case_id);
             }
           }
@@ -475,7 +478,7 @@ export async function createCore({ dataDir, demo = false, version = '', safeStor
       if (result.new) {
         if (result.new > 10) notify({ kind: 'intimation', title: `${result.new} intimações novas no DJEN`, body: 'Abra Jurídico → Intimações para conferir e criar os prazos.', action: { view: 'legal', tab: 'intimacoes' } });
         send('intimations:changed', null);
-        for (const id of touched) caseChanged(db.getCase(id));
+        for (const id of touched) { organizeCase(id); caseChanged(db.getCase(id)); }
       }
       return result;
     })().finally(() => { checkingIntimations = null; });
@@ -495,7 +498,12 @@ export async function createCore({ dataDir, demo = false, version = '', safeStor
     if (!k.filed_at && p.filed_at) fill.filed_at = p.filed_at;
     if (Object.keys(fill).length) db.saveCase({ id: caseId, ...fill });
     let newMoves = 0;
-    for (const mv of p.moves) if (db.addMove({ case_id: caseId, ts: mv.ts, text: mv.text, source: 'datajud', ext_id: mv.ext_id })) newMoves++;
+    for (const mv of p.moves) {
+      if (!db.addMove({ case_id: caseId, ts: mv.ts, text: mv.text, source: 'datajud', ext_id: mv.ext_id })) continue;
+      newMoves++;
+      // só o que chega depois da 1ª consulta (o histórico não vira sugestão)
+      if (k.datajud_checked_at && mv.ts > Date.now() - 30 * DAY) hintsFor(caseId, { text: mv.text, ts: mv.ts, ref: mv.ext_id });
+    }
     db.markDatajud(caseId, null);
     organizeCase(caseId, { classe: p.classe, assuntos: p.assuntos });
     if (newMoves || Object.keys(fill).length) caseChanged(db.getCase(caseId));
@@ -529,6 +537,52 @@ export async function createCore({ dataDir, demo = false, version = '', safeStor
       if (!st.state) { meta.prescription_at = null; meta.prescription_notified = null; }
     }
     db.setCaseMeta(caseId, meta);
+  }
+
+  /**
+   * Sugestões a partir de um andamento/intimação novo: audiência marcada (pôr
+   * na agenda) e andamento importante (avisar o cliente). Ficam no Hoje e na
+   * ficha até alguém conferir.
+   */
+  function hintsFor(caseId, { text, ts, ref }) {
+    const hear = hearingFromText(text);
+    if (hear) {
+      const dup = db.all("SELECT id FROM tasks WHERE case_id = ? AND kind = 'audiencia' AND ABS(due_at - ?) < 3600000", caseId, hear.ts).length;
+      if (!dup) db.addHint({ case_id: caseId, kind: 'hearing', ts: hear.ts, title: hear.title, text: String(text).slice(0, 400), ref });
+    }
+    if (CLIENT_WORTHY.test(String(text))) {
+      const m = CLIENT_WORTHY.exec(String(text));
+      db.addHint({ case_id: caseId, kind: 'client', ts, title: m ? m[0].replace(/^./, (c) => c.toUpperCase()) : 'Andamento importante', text: String(text).slice(0, 400), ref });
+    }
+  }
+
+  const DEFAULT_CLIENT_UPDATE = 'Olá, {nome}! Passando para dar notícia do seu processo{assunto}: {andamento}\n\nQualquer dúvida, estamos à disposição.';
+  function clientUpdateText(hint) {
+    const k = db.getCase(hint.case_id);
+    const cl = k?.client_id ? db.getClient(k.client_id) : null;
+    const first = String(cl?.name || '').split(/\s+/)[0] || '';
+    const nice = first ? first[0].toUpperCase() + first.slice(1).toLowerCase() : '';
+    const vars = {
+      nome: nice, nome_completo: cl?.name || '', processo: k?.process_number || '', assunto: k?.title ? ` (${k.title})` : '',
+      andamento: explainMove(hint), data: hint.ts ? new Date(hint.ts).toLocaleDateString('pt-BR') : '',
+    };
+    return String(settings.clientUpdateTemplate || DEFAULT_CLIENT_UPDATE).replace(/\{(\w+)\}/g, (m, key) => (key in vars ? vars[key] : m));
+  }
+  /** Andamento em linguagem simples para o cliente (o advogado revisa antes de enviar). */
+  function explainMove(hint) {
+    const t = String(`${hint.title} ${hint.text}`).toLowerCase();
+    if (hint.kind === 'hearing' || /audi[eê]ncia/.test(t)) {
+      const h = hearingFromText(hint.text);
+      return h ? `foi marcada ${h.title.toLowerCase()} para ${new Date(h.ts).toLocaleDateString('pt-BR')}${h.hasTime ? ` às ${new Date(h.ts).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' })}` : ''}. Vamos conversar antes para prepararmos tudo.` : 'foi marcada uma audiência. Em breve passamos os detalhes.';
+    }
+    if (/improcedente/.test(t)) return 'saiu a sentença, e o pedido não foi aceito pelo juiz. Vamos analisar e conversar sobre o recurso.';
+    if (/procedente/.test(t) || /senten/.test(t)) return 'saiu a sentença do processo. Vamos analisar os detalhes e te explicar os próximos passos.';
+    if (/acordo/.test(t)) return 'o acordo foi homologado pelo juiz.';
+    if (/alvar|libera|rpv|precat/.test(t)) return 'houve andamento sobre o pagamento dos valores. Vamos acompanhar a liberação.';
+    if (/tr[aâ]nsito/.test(t)) return 'a decisão transitou em julgado (não cabe mais recurso).';
+    if (/per[ií]cia|laudo/.test(t)) return 'houve andamento sobre a perícia. Em breve passamos os detalhes.';
+    if (/ac[oó]rd|provid|recurso/.test(t)) return 'o tribunal julgou o recurso. Vamos analisar e te explicar.';
+    return `houve um andamento importante (${hint.title.toLowerCase()}).`;
   }
 
   /** Dono (usuário) da OAB que recebeu as intimações do processo, se houver um só. */
@@ -1202,6 +1256,7 @@ export async function createCore({ dataDir, demo = false, version = '', safeStor
         case: forMoney(ctx, k),
         parties: db.listParties(id),
         moves: db.listMoves(id),
+        hints: db.listHints({ caseId: id }),
         flow: flowOf(k, checklist),
         checklist,
         suggested: checklist.length ? null : suggestedChecklist(k),
@@ -1295,6 +1350,44 @@ export async function createCore({ dataDir, demo = false, version = '', safeStor
       return id;
     },
     'cases:datajud': (_c, id) => updateDatajud(id),
+    'hints:list': (ctx, { caseId, scope } = {}) => db.listHints({ caseId, responsible: scope === 'all' || caseId ? null : ctx.user.id }),
+    /** Audiência sugerida → compromisso na agenda do responsável (data conferida pela pessoa). */
+    'hints:hearing': (ctx, id, { due_at, title, assignee_id } = {}) => {
+      const hint = db.getHint(id);
+      if (!hint) throw new Error('Sugestão não encontrada');
+      const k = db.getCase(hint.case_id);
+      const taskId = db.saveTask({
+        jid: k?.jid || null, case_id: hint.case_id, kind: 'audiencia', due_at: Number(due_at || hint.ts),
+        end_at: Number(due_at || hint.ts) + 3600e3, title: title || hint.title, assignee_id: assignee_id ?? k?.responsible_id ?? ctx.user.id,
+      });
+      syncTaskLater(taskId);
+      db.setHint(id, 'feita', ctx.user.name);
+      send('tasks:changed', null);
+      caseChanged(k);
+      return taskId;
+    },
+    'hints:clientText': (_c, id) => {
+      const hint = db.getHint(id);
+      if (!hint) throw new Error('Sugestão não encontrada');
+      const k = db.getCase(hint.case_id);
+      return { text: clientUpdateText(hint), jid: k?.client_jid || null, client_name: k?.client_name || null };
+    },
+    /** Envia a mensagem revisada ao cliente (WhatsApp, se ligado) e marca o retorno. */
+    'hints:sendClient': async (ctx, id, text, { via = 'whatsapp' } = {}) => {
+      const hint = db.getHint(id);
+      if (!hint) throw new Error('Sugestão não encontrada');
+      const k = db.getCase(hint.case_id);
+      if (via === 'whatsapp') {
+        if (!k?.client_jid) throw new Error('O cliente não tem WhatsApp ligado. Copie o texto e envie por outro meio.');
+        await api['messages:sendText'](ctx, k.client_jid, String(text || '').trim());
+      }
+      db.touchCase(hint.case_id);
+      db.setHint(id, 'feita', ctx.user.name);
+      db.logActivity(k.jid, 'case', `${k.title}: cliente avisado do andamento (${hint.title})`, ctx.user.name);
+      caseChanged(db.getCase(hint.case_id));
+      return true;
+    },
+    'hints:dismiss': (ctx, id) => { const hint = db.getHint(id); db.setHint(id, 'ignorada', ctx.user.name); if (hint) caseChanged(db.getCase(hint.case_id)); },
     /** Prévia da planilha: colunas reconhecidas, processos novos/já cadastrados, problemas. */
     'cases:importPreview': (_c, token, map) => {
       const f = readImportFile(token);
@@ -1384,7 +1477,7 @@ export async function createCore({ dataDir, demo = false, version = '', safeStor
     },
     'parties:save': (_c, p) => { const id = db.saveParty(p); caseChanged(db.getCase(p.case_id)); return id; },
     'parties:delete': (_c, id, caseId) => { db.deleteParty(id); caseChanged(db.getCase(caseId)); },
-    'moves:add': (ctx, m) => { const id = db.addMove({ ...m, user_name: ctx.user.name }); caseChanged(db.getCase(m.case_id)); return id; },
+    'moves:add': (ctx, m) => { const id = db.addMove({ ...m, user_name: ctx.user.name }); organizeCase(m.case_id); caseChanged(db.getCase(m.case_id)); return id; },
     'moves:delete': (_c, id, caseId) => { db.deleteMove(id); caseChanged(db.getCase(caseId)); },
     'checklist:add': (_c, caseId, labels) => { const n = db.addChecklistItems(caseId, labels); caseChanged(db.getCase(caseId)); return n; },
     'checklist:delete': (_c, id) => { const i = db.checklistItem(id); db.deleteChecklistItem(id); if (i) caseChanged(db.getCase(i.case_id)); },
@@ -1784,6 +1877,13 @@ export async function createCore({ dataDir, demo = false, version = '', safeStor
         leadsIdle: leads.listLeads({ open: true, responsible: scope === 'all' ? null : ctx.user.id }).filter((l) => !l.next_task)
           .map((l) => ({ id: l.id, name: l.name, subject: l.subject || l.area, stage_label: l.stage_label, jid: l.jid, since: l.last_contact_at || l.created_at })),
         hearings: db.hearingsToFollowUp({ assignee }),
+        hints: db.listHints({ responsible: assignee }),
+        idleCases: Number(settings.idleCaseDays ?? 90) > 0 ? db.idleCases(Number(settings.idleCaseDays ?? 90) * DAY, { responsible: assignee }).slice(0, 30) : [],
+        idleDays: Number(settings.idleCaseDays ?? 90),
+        prescriptions: db.all("SELECT id FROM cases WHERE status = 'aberto' AND archive_state = 'provisorio' AND prescription_at IS NOT NULL AND prescription_at < ?", Date.now() + 90 * DAY)
+          .map((r) => db.getCase(r.id)).filter((k) => !assignee || !k.responsible_id || k.responsible_id === assignee)
+          .sort((a, b) => a.prescription_at - b.prescription_at).slice(0, 30)
+          .map((k) => ({ id: k.id, title: k.title, process_number: k.process_number, client_name: k.client_name, prescription_at: k.prescription_at, archive_since: k.archive_since })),
         intimations: db.listIntimations({ status: 'nova', limit: 50 }).filter((i) => scope === 'all' || !i.responsible_id || i.responsible_id === ctx.user.id),
       };
       if (auth.can(ctx.user.role, 'finance:list')) {

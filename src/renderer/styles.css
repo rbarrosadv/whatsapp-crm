@@ -1222,3 +1222,5 @@ h2, h3 { letter-spacing: -0.01em; }
 .case-banner.danger { border-left-color: var(--danger); background: color-mix(in srgb, var(--danger) 8%, var(--panel)); }
 .case-banner .row { margin-top: 6px; align-items: center; }
 .input-date { width: auto; }
+.case-banner.hint { border-left-color: var(--accent); background: color-mix(in srgb, var(--accent) 8%, var(--panel)); align-items: center; }
+.hint-quote { margin: 0; padding: 8px 12px; border-left: 3px solid var(--border); background: var(--panel-2); border-radius: 6px; font-size: 13px; max-height: 140px; overflow: auto; white-space: pre-wrap; }

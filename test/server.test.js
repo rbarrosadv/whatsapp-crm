@@ -938,3 +938,48 @@ test('tribunais por advogado: cada um cadastra a própria OAB; processo da intim
   await s.call('oabs:save', { ...oab, user_id: null });
   assert.equal((await s.call('oabs:list')).find((o) => o.id === oabId).user_id, null, 'sócio troca o dono');
 });
+
+test('dia a dia: intimação com audiência vira sugestão para a agenda; sentença vira "avisar o cliente"; processos parados no Hoje', async () => {
+  const c = client();
+  await c.req('/auth/login', { body: { login: 'barros', password: 'segredo1' } });
+  const cid = await c.call('clients:save', { name: 'Cliente Aviso Teste' });
+  const caseId = await c.call('cases:save', { client_id: cid, title: 'Indenização' });
+  await c.call('cases:save', { id: caseId, process_number: '1004444-22.2026.8.11.0041' });
+  let oab = (await c.call('oabs:list')).find((o) => o.active);
+  if (!oab) await c.call('oabs:save', { name: 'Rafael Barros', number: '14271', uf: 'MT' });
+  const saved = srv.core.courts.fetch;
+  const day = new Date(Date.now() - 864e5).toISOString().slice(0, 10);
+  srv.core.courts.fetch = async (url) => {
+    const u = new URL(url);
+    const items = u.searchParams.get('pagina') === '1' ? [
+      { id: 'aud-1', data_disponibilizacao: day, siglaTribunal: 'TJMT', tipoComunicacao: 'Intimação', tipoDocumento: 'Despacho', nomeOrgao: '5ª Vara',
+        numeroprocessocommascara: '1004444-22.2026.8.11.0041', texto: 'Designo audiência de conciliação para 20/11/2099, às 14:30, por videoconferência.', destinatarios: [], destinatarioadvogados: [] },
+      { id: 'sent-1', data_disponibilizacao: day, siglaTribunal: 'TJMT', tipoComunicacao: 'Intimação', tipoDocumento: 'Sentença', nomeOrgao: '5ª Vara',
+        numeroprocessocommascara: '1004444-22.2026.8.11.0041', texto: 'Ante o exposto, JULGO PROCEDENTE o pedido inicial.', destinatarios: [], destinatarioadvogados: [] },
+    ] : [];
+    return new Response(JSON.stringify({ count: items.length, items }), { status: 200, headers: { 'Content-Type': 'application/json' } });
+  };
+  try { await c.call('intimations:check', { days: 3 }); } finally { srv.core.courts.fetch = saved; }
+  const full = await c.call('cases:full', caseId);
+  const hear = full.hints.find((x) => x.kind === 'hearing');
+  assert.ok(hear, 'audiência detectada');
+  assert.equal(new Date(hear.ts).getFullYear(), 2099);
+  assert.equal(new Date(hear.ts).getHours(), 14);
+  assert.equal(hear.title, 'Audiência de conciliação');
+  const sent = full.hints.find((x) => x.kind === 'client' && /procedente/i.test(x.text));
+  assert.ok(sent, 'sentença sugere avisar o cliente');
+  const today = await c.call('today:summary', { dayStart: Date.now() - 864e5, dayEnd: Date.now() + 864e5, weekStart: Date.now() - 864e5, weekEnd: Date.now() + 7 * 864e5, scope: 'all' });
+  assert.ok(today.hints.some((x) => x.id === hear.id), 'sugestões aparecem no Hoje');
+  assert.ok(Array.isArray(today.idleCases));
+  // pôr na agenda
+  const taskId = await c.call('hints:hearing', hear.id, {});
+  const t = (await c.call('tasks:list', { caseId })).find((x) => x.id === taskId);
+  assert.equal(t.kind, 'audiencia');
+  // avisar o cliente: texto explicado, sem WhatsApp → copiar e marcar
+  const msg = await c.call('hints:clientText', sent.id);
+  assert.match(msg.text, /^Olá, Cliente! .*saiu a sentença/s);
+  assert.equal(msg.jid, null);
+  await assert.rejects(c.call('hints:sendClient', sent.id, msg.text, { via: 'whatsapp' }), /não tem WhatsApp/);
+  await c.call('hints:sendClient', sent.id, msg.text, { via: 'copy' });
+  assert.equal((await c.call('cases:full', caseId)).hints.length, 0, 'sugestões resolvidas saem da ficha');
+});

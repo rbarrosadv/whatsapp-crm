@@ -10,6 +10,7 @@ import { taskRow, taskDialog } from './crmpanel.js';
 import { caseFolderPanel } from './docs.js';
 import { icon, dataIcon } from '../icons.js';
 import { caseBanners } from './importcases.js';
+import { hintLabel, runHint, dismissHint } from './hints.js';
 
 export const TASK_KINDS = {
   prazo: { icon: '', label: 'Prazo' },
@@ -182,6 +183,14 @@ export async function openCase(id, { tab = 'dados' } = {}) {
           ]),
         }, icon('more', 16))),
       caseBanners(k, { reload }),
+      (full.hints || []).map((hint) => {
+        const l = hintLabel(hint);
+        return h('div', { class: 'case-banner hint' },
+          icon(hint.kind === 'hearing' ? 'calendar' : 'message', 18),
+          h('div', { class: 'grow' }, h('b', null, l.title), h('div', { class: 'muted small' }, l.meta)),
+          h('button', { class: 'btn btn-sm btn-primary', onclick: () => runHint(hint, reload) }, l.action),
+          h('button', { class: 'btn btn-sm', onclick: () => dismissHint(hint, reload) }, 'Dispensar'));
+      }),
       closed || k.no_client ? null : h('div', { class: `case-return ${since > (state.settings.staleCaseDays ?? 15) * 864e5 ? 'late' : ''}` },
         `Último retorno ao cliente: há ${fmtDuration(since)}`,
         h('button', { class: 'btn btn-sm', onclick: () => api('cases:touch', id).then(() => toast('Retorno registrado', 'success')).catch(errToast) }, 'Registrar retorno agora'),

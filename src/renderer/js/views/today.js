@@ -11,6 +11,7 @@ import { openCase, chargeDialog, TASK_KINDS } from './casemodal.js';
 import { avatarEl } from '../components.js';
 import { icon } from '../icons.js';
 import { contactDialog } from './commercial.js';
+import { hintLabel, runHint, dismissHint } from './hints.js';
 
 const DAY = 864e5;
 let root;
@@ -190,6 +191,37 @@ function dayView(sum, events, awaiting) {
         onAction: () => taskDialog({ kind: 'prazo', case_id: t.case_id, jid: t.jid, title: 'Prazo — ' }),
         secondary: { label: 'Feito', onClick: () => api('hearings:followUp', t.id, true).then(render).catch(errToast) },
       })), sum.hearings.length > 6 ? `e mais ${sum.hearings.length - 6}` : null));
+  }
+  if (sum.hints?.length) {
+    groups.unshift(group('Sugestões dos andamentos', 'Audiências marcadas e novidades para avisar o cliente', sum.hints.slice(0, 8).map((hint) => {
+      const l = hintLabel(hint);
+      return actionRow({
+        who: hint.client_name || hint.process_number || hint.case_title, clientId: hint.client_id,
+        text: l.title, meta: `${hint.case_title}${hint.process_number ? ` · ${hint.process_number}` : ''} · ${l.meta}`,
+        action: l.action, onAction: () => runHint(hint, render),
+        secondary: { label: 'Dispensar', onClick: () => dismissHint(hint, render) },
+      });
+    }), sum.hints.length > 8 ? `e mais ${sum.hints.length - 8}` : null));
+  }
+  if (sum.prescriptions?.length) {
+    groups.push(group('Arquivados: conferir a prescrição', 'Arquivamento provisório com data de controle nos próximos 90 dias', sum.prescriptions.slice(0, 6).map((k) => {
+      const days = Math.ceil((k.prescription_at - Date.now()) / DAY);
+      return actionRow({
+        who: k.client_name || k.process_number, text: `${k.title} · ${k.process_number || ''}`,
+        meta: days <= 0 ? `data de controle vencida (${new Date(k.prescription_at).toLocaleDateString('pt-BR')})` : `faltam ${days} dia(s) — ${new Date(k.prescription_at).toLocaleDateString('pt-BR')}`,
+        late: days <= 30, onOpen: () => openCase(k.id),
+        action: 'Abrir processo', onAction: () => openCase(k.id),
+      });
+    }), sum.prescriptions.length > 6 ? h('a', { href: '#', onclick: (e) => { e.preventDefault(); openLegal('processos', { status: 'vigiar' }); } }, `ver todos (${sum.prescriptions.length})`) : null));
+  }
+  if (sum.idleCases?.length) {
+    groups.push(group(`Processos parados há mais de ${sum.idleDays} dias`, 'Sem andamento no tribunal: vale cobrar o cartório ou peticionar', sum.idleCases.slice(0, 6).map((k) => actionRow({
+      who: k.client_name || k.process_number, clientId: k.client_id,
+      text: `${k.title}${k.tribunal ? ` · ${k.tribunal}` : ''}`,
+      meta: `último andamento há ${fmtDuration(Date.now() - k.since)}`,
+      onOpen: () => openCase(k.id),
+      action: 'Abrir processo', onAction: () => openCase(k.id, { tab: 'andamentos' }),
+    })), sum.idleCases.length > 6 ? `e mais ${sum.idleCases.length - 6}` : null));
   }
   if (sum.docRequests?.length) {
     groups.push(group('Documentos pedidos e não recebidos', 'Pedidos há mais de 3 dias', sum.docRequests.slice(0, 6).map((r) => actionRow({

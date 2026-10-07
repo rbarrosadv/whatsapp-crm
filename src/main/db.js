@@ -468,6 +468,17 @@ function migrate() {
   for (const [c, t] of [['archive_state', 'TEXT'], ['archive_since', 'INTEGER'], ['archive_dismissed', 'INTEGER'], ['prescription_at', 'INTEGER'],
     ['prescription_note', 'TEXT'], ['prescription_notified', 'INTEGER'], ['last_move_at', 'INTEGER'], ['parties_found', 'TEXT'],
     ['parties_checked_at', 'INTEGER'], ['import_batch', 'TEXT'], ['classe', 'TEXT']]) addColumn('cases', c, t);
+  // sugestões a partir dos andamentos/intimações: audiência para pôr na agenda,
+  // andamento importante para avisar o cliente (nada é feito sem alguém conferir)
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS case_hints (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      case_id INTEGER NOT NULL REFERENCES cases(id) ON DELETE CASCADE,
+      kind TEXT NOT NULL, ts INTEGER, title TEXT NOT NULL, text TEXT, ref TEXT NOT NULL,
+      status TEXT NOT NULL DEFAULT 'nova', created_at INTEGER NOT NULL, done_at INTEGER, done_by TEXT,
+      UNIQUE (case_id, kind, ref)
+    );
+  `);
 
   const version = Number(get('SELECT value FROM meta WHERE key = ?', 'schema')?.value || 0);
   if (version < 1) seedDefaults();
@@ -1201,6 +1212,39 @@ export function setCaseClient(caseId, clientId, { role } = {}) {
 
 export function casesWithoutClient() {
   return all("SELECT * FROM cases WHERE client_id IS NULL AND jid LIKE 'processo:%' ORDER BY status = 'aberto' DESC, id").map(caseRow);
+}
+
+// ------------------------------------------------------------------ sugestões dos andamentos
+
+export function addHint({ case_id, kind, ts = null, title, text = '', ref }) {
+  const r = run('INSERT OR IGNORE INTO case_hints (case_id, kind, ts, title, text, ref, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)',
+    case_id, kind, ts, title, text, String(ref), now());
+  return r.changes ? Number(r.lastInsertRowid) : null;
+}
+export function listHints({ status = 'nova', caseId, responsible } = {}) {
+  const where = ['h.status = ?'];
+  const args = [status];
+  if (caseId) { where.push('h.case_id = ?'); args.push(caseId); }
+  if (responsible) { where.push('(c.responsible_id = ? OR c.responsible_id IS NULL)'); args.push(responsible); }
+  return all(`SELECT h.*, c.title AS case_title, c.process_number, c.client_id, c.responsible_id, c.jid AS case_jid,
+                (SELECT name FROM clients WHERE id = c.client_id) AS client_name,
+                (SELECT jid FROM clients WHERE id = c.client_id) AS client_jid
+              FROM case_hints h JOIN cases c ON c.id = h.case_id
+              WHERE ${where.join(' AND ')} AND c.status = 'aberto' ORDER BY h.created_at DESC LIMIT 100`, ...args);
+}
+export const getHint = (id) => get('SELECT * FROM case_hints WHERE id = ?', id);
+export function setHint(id, status, by) { run('UPDATE case_hints SET status = ?, done_at = ?, done_by = ? WHERE id = ?', status, now(), by || null, id); }
+
+/** Processos judiciais abertos sem andamento há `ms` (os arquivados provisoriamente ficam de fora: têm o controle próprio). */
+export function idleCases(ms, { responsible } = {}) {
+  const limit = now() - ms;
+  return all(`SELECT * FROM cases WHERE status = 'aberto' AND COALESCE(process_number, '') <> '' AND COALESCE(kind, 'judicial') = 'judicial'
+                AND archive_state IS NULL AND COALESCE(last_move_at, created_at) < ? ${responsible ? 'AND (responsible_id = ? OR responsible_id IS NULL)' : ''}
+              ORDER BY COALESCE(last_move_at, created_at)`, limit, ...(responsible ? [responsible] : [])).map((c) => ({
+    id: c.id, title: c.title, process_number: c.process_number, client_id: c.client_id, tribunal: c.tribunal,
+    client_name: c.client_id ? get('SELECT name FROM clients WHERE id = ?', c.client_id)?.name : null,
+    last_move_at: c.last_move_at, since: c.last_move_at || c.created_at,
+  }));
 }
 
 /** Campos de controle do processo (fora do formulário). */

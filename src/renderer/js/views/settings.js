@@ -20,7 +20,7 @@ export function mountSettings(el) {
 // configurações que valem para o escritório todo (só sócio muda)
 const OFFICE_KEYS = ['courtsNotifyAll', 'sendReadReceipts', 'forgottenHours', 'chargeTemplate', 'pixKey', 'paymentNoticeDays',
   'staleCaseDays', 'googleSync', 'googleCalendarId', 'signMessages', 'docsRequestTemplate', 'datajudKey',
-  'officeName', 'officeDoc', 'officeAddress', 'officeCity'];
+  'officeName', 'officeDoc', 'officeAddress', 'officeCity', 'idleCaseDays', 'prescriptionYears', 'clientUpdateTemplate'];
 
 function toggle(key, label, hint, def = true) {
   const val = state.settings[key] ?? def;
@@ -315,6 +315,27 @@ function render() {
           h('select', { class: 'input select-sm', onchange: (e) => setSetting('staleCaseDays', Number(e.target.value)).catch(errToast) },
             [[0, 'Nunca'], [7, '7 dias'], [15, '15 dias'], [30, '30 dias'], [60, '60 dias']].map(([v, l]) =>
               h('option', { value: v, selected: Number(state.settings.staleCaseDays ?? 15) === v }, l))))),
+
+      section('Processos e tribunais',
+        h('label', { class: 'toggle-row' }, h('div', null, h('div', null, 'Processo parado'), h('div', { class: 'muted small' }, 'Aparece no Hoje quando o processo fica esse tempo sem andamento no tribunal.')),
+          h('select', { class: 'input select-sm', disabled: !state.can.admin, onchange: (e) => setSetting('idleCaseDays', Number(e.target.value)).catch(errToast) },
+            [[0, 'Não mostrar'], [60, '60 dias'], [90, '90 dias'], [120, '120 dias'], [180, '180 dias']].map(([v, l]) =>
+              h('option', { value: v, selected: Number(state.settings.idleCaseDays ?? 90) === v }, l)))),
+        h('div', { class: 'toggle-row' }, h('div', null, h('div', null, 'Arquivado provisoriamente: data para conferir a prescrição'),
+          h('div', { class: 'muted small' }, 'Contada a partir do arquivamento; avisamos 90 e 30 dias antes. É só uma sugestão: cada processo pode ter a sua data.')),
+        h('div', { class: 'row' },
+          ...[['trabalhista', 'Trabalhista', 2, [1, 2]], ['outros', 'Demais', 1, [1, 2, 3, 5]]].map(([k, label, def, opts]) => h('label', { class: 'field' }, h('span', { class: 'small' }, label),
+            h('select', {
+              class: 'input select-sm', disabled: !state.can.admin,
+              onchange: (e) => setSetting('prescriptionYears', { ...(state.settings.prescriptionYears || {}), [k]: Number(e.target.value) }).catch(errToast),
+            }, opts.map((y) => h('option', { value: y, selected: Number(state.settings.prescriptionYears?.[k] ?? def) === y }, `${y} ano${y > 1 ? 's' : ''}`))))))),
+        h('label', { class: 'field' }, h('span', null, 'Mensagem para avisar o cliente de um andamento'),
+          h('textarea', {
+            class: 'input', rows: 4, disabled: !state.can.admin,
+            placeholder: 'Olá, {nome}! Passando para dar notícia do seu processo{assunto}: {andamento}',
+            onchange: (e) => setSetting('clientUpdateTemplate', e.target.value.trim() || null).catch(errToast),
+          }, state.settings.clientUpdateTemplate || '')),
+        h('p', { class: 'muted small' }, 'Campos: {nome} {nome_completo} {processo} {assunto} {andamento} {data}. O {andamento} já vem explicado em linguagem simples (ex.: "saiu a sentença do processo…"); você sempre revisa antes de enviar.')),
 
       state.can.configure && section('Funis e etapas',
         h('p', { class: 'muted small' }, 'Cada funil tem suas etapas (colunas do quadro). Ex.: Atendimento → Novo, Proposta, Fechado.'),
