@@ -759,6 +759,36 @@ export class WhatsAppService extends EventEmitter {
     }
   }
 
+  /**
+   * "Apagar para mim": some daqui e também do seu celular (sincronizado pelo
+   * WhatsApp); o contato continua vendo. Funciona com mensagens recebidas e enviadas.
+   * @returns {{synced: boolean}} synced=false: apagou só neste computador (sem conexão)
+   */
+  async deleteForMe(chatJid, id) {
+    const m = db.getMessage(chatJid, id);
+    if (!m) throw new Error('Mensagem não encontrada.');
+    let synced = false;
+    if (this.sock && this.state.state === 'open') {
+      try {
+        await this.sock.chatModify({
+          deleteForMe: {
+            key: { remoteJid: chatJid, id, fromMe: !!m.from_me, participant: m.sender || undefined },
+            timestamp: Math.floor(m.ts / 1000),
+            deleteMedia: true,
+          },
+        }, chatJid);
+        synced = true;
+      } catch (e) {
+        this.logger.warn({ chatJid, id, err: e?.message }, 'apagar para mim: não sincronizou com o celular');
+      }
+    }
+    db.run('DELETE FROM messages WHERE chat_jid = ? AND id = ?', chatJid, id);
+    this.refreshPreview(chatJid);
+    this.markChanged(chatJid);
+    this.emit('message', { chatJid, id, isNew: false, removed: true });
+    return { synced };
+  }
+
   async onDelete(d) {
     if ('keys' in d) {
       for (const key of d.keys) {

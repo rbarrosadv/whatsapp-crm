@@ -525,7 +525,7 @@ function msgMenu(anchor, m) {
       { icon: '📂', label: 'Mostrar na pasta', onClick: () => api('media:showInFolder', m.media_file) },
     ] : []),
     ...(canEdit(m) ? [{ icon: '✏️', label: 'Editar', onClick: () => startEdit(m) }] : []),
-    ...(m.from_me && !m.deleted ? ['-', { icon: '🗑', label: 'Apagar para todos', danger: true, onClick: () => deleteMsg(m) }] : []),
+    '-', { icon: '🗑', label: 'Apagar…', danger: true, onClick: () => deleteMsg(m) },
   ];
   popupMenu(anchor, items);
 }
@@ -546,9 +546,30 @@ function reactMenu(anchor, m) {
   ]);
 }
 
-async function deleteMsg(m) {
-  if (!await confirmDialog('Apagar esta mensagem para todos na conversa?', { okLabel: 'Apagar', danger: true })) return;
-  api('messages:delete', current.jid, m.id).catch(errToast);
+/** Como no WhatsApp: "Apagar para mim" (qualquer mensagem) ou "para todos" (só as suas). */
+function deleteMsg(m) {
+  const jid = current.jid;
+  const forAll = !!m.from_me && !m.deleted;
+  modal({
+    title: 'Apagar mensagem?',
+    body: h('div', { class: 'form' },
+      h('div', { class: 'quoted forward-preview' }, (m.text || m.media_name || 'Mensagem').slice(0, 140)),
+      h('p', { class: 'muted small' }, forAll
+        ? '“Apagar para mim” tira só da sua conversa (aqui e no seu celular). “Apagar para todos” tira também do contato.'
+        : 'A mensagem some da sua conversa (aqui e no seu celular). O contato continua vendo.')),
+    actions: [
+      { label: 'Cancelar' },
+      {
+        label: 'Apagar para mim', danger: !forAll,
+        onClick: async () => {
+          const r = await api('messages:deleteForMe', jid, m.id);
+          if (r && !r.synced) toast('Apagada neste computador. Sem conexão agora: no celular ela continua.', 'info', 6000);
+          return true;
+        },
+      },
+      ...(forAll ? [{ label: 'Apagar para todos', danger: true, onClick: async () => { await api('messages:delete', jid, m.id); return true; } }] : []),
+    ],
+  });
 }
 
 // ---------------------------------------------------------------- envio

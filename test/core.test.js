@@ -697,3 +697,28 @@ test('encaminhar: texto recebido e mídia; marca "Encaminhada"', async () => {
   wa.sock = null;
   wa.state = { state: 'idle' };
 });
+
+test('apagar para mim: mensagem recebida some e é sincronizada com o celular', async () => {
+  const A = '5511900003333@s.whatsapp.net';
+  await wa.onMessages([
+    { key: { remoteJid: A, fromMe: false, id: 'DM1' }, message: { conversation: 'mensagem a apagar' }, messageTimestamp: 1790000000 },
+    { key: { remoteJid: A, fromMe: false, id: 'DM2' }, message: { conversation: 'fica' }, messageTimestamp: 1790000001 },
+  ], 'notify');
+  const mods = [];
+  wa.sock = { chatModify: async (mod, jid) => { mods.push([mod, jid]); } };
+  wa.state = { state: 'open' };
+  const ev = [];
+  const h = (e) => ev.push(e);
+  wa.on('message', h);
+  assert.deepEqual(await wa.deleteForMe(A, 'DM1'), { synced: true });
+  assert.equal(db.getMessage(A, 'DM1'), undefined);
+  assert.ok(db.getMessage(A, 'DM2'), 'as outras ficam');
+  assert.deepEqual(mods[0], [{ deleteForMe: { key: { remoteJid: A, id: 'DM1', fromMe: false, participant: undefined }, timestamp: 1790000000, deleteMedia: true } }, A]);
+  assert.ok(ev.some((e) => e.id === 'DM1' && e.removed));
+  // sem conexão: apaga só aqui e avisa
+  wa.sock = null;
+  wa.state = { state: 'idle' };
+  assert.deepEqual(await wa.deleteForMe(A, 'DM2'), { synced: false });
+  await assert.rejects(wa.deleteForMe(A, 'DM2'), /não encontrada/);
+  wa.off('message', h);
+});

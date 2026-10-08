@@ -186,6 +186,23 @@ try {
   await page.locator('.chat-row', { hasText: 'Mariana Souza' }).click();
   await page.waitForSelector('.chat-head:has-text("Mariana Souza")');
 
+  // apagar para mim (mensagem recebida) e para todos (mensagem sua)
+  const recv = page.locator('.msg.in', { hasText: 'Queria saber o valor do plano mensal' }).first();
+  await recv.hover();
+  await recv.locator('.msg-menu-btn').click();
+  await page.locator('.popup-item', { hasText: 'Apagar' }).click();
+  check(await page.locator('.modal-actions .btn', { hasText: 'Apagar para todos' }).count() === 0, 'mensagem recebida: só "Apagar para mim"');
+  await page.locator('.modal-actions .btn', { hasText: 'Apagar para mim' }).click();
+  await page.waitForSelector('.msg:has-text("Queria saber o valor do plano mensal")', { state: 'detached' });
+  check(true, '"Apagar para mim" tira a mensagem recebida da conversa');
+  const mine = page.locator('.msg.out', { hasText: 'Sem cartão' }).first();
+  await mine.hover();
+  await mine.locator('.msg-menu-btn').click();
+  await page.locator('.popup-item', { hasText: 'Apagar' }).click();
+  await page.locator('.modal-actions .btn', { hasText: 'Apagar para todos' }).click();
+  await page.waitForSelector('.msg.out .deleted');
+  check(await page.locator('.msg:has-text("Sem cartão")').count() === 0, 'mensagem sua tem também "Apagar para todos"');
+
   // rascunho: fica guardado ao trocar de conversa e aparece na lista
   await page.locator('.chat-row', { hasText: 'Ana Beatriz' }).click();
   await page.waitForSelector('.chat-head:has-text("Ana Beatriz")');

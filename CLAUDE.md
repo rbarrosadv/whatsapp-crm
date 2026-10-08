@@ -192,6 +192,10 @@ Interface (`src/renderer`, JS puro em módulos ES, sem build):
   (`forwardable`). Recebidas com `contextInfo.isForwarded` gravam
   `extra.forwarded` → "↪ Encaminhada" (≥4 = "com frequência"); encaminhar
   mensagem SUA não marca, igual ao WhatsApp.
+- **Apagar**: menu "Apagar…" em qualquer mensagem → "Apagar para mim"
+  (`deleteForMe`: `chatModify({deleteForMe})` sincroniza com o celular e apaga
+  a linha; sem conexão apaga só aqui e avisa) e, nas suas, "Apagar para todos"
+  (`deleteForEveryone`).
 - **Editar mensagem**: só texto seu, até 15 min (`editableCheck`);
   `sendMessage(jid, { text, edit: key })`. No composer, `editing` mostra a
   faixa "Editando" (Esc cancela). Fotos abrem em `views/imageviewer.js`
