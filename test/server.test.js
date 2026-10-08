@@ -1073,7 +1073,8 @@ test('documentos: anexo do WhatsApp vai para a pasta do cliente/processo, recent
   const caseTarget = t.targets.find((x) => x.caseId === k);
   assert.ok(caseTarget, 'pasta do processo aberto');
   const r = await c.call('docs:saveMessage', chat.jid, mid, `${folder}/_CADASTRO`, 'RG');
-  assert.match(r.rel, new RegExp(`^${folder}/_CADASTRO/\\d{4}-\\d{2}-\\d{2} - RG\\.txt$`), 'data no começo e extensão mantida');
+  assert.ok(r.rel.startsWith(`${folder}/_CADASTRO/`));
+  assert.match(r.rel.split('/').pop(), /^\d{4}-\d{2}-\d{2} - RG\.txt$/, 'data no começo e extensão mantida');
   const listed = await c.call('docs:list', `${folder}/_CADASTRO`);
   assert.ok(listed.entries.some((e) => e.rel === r.rel));
   const rec = await c.call('docs:recent');
