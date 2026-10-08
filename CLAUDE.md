@@ -118,6 +118,10 @@ Motor (`src/main`, sem Electron apesar do nome da pasta):
   link de compartilhamento (`/shares/u!…`) ou pela lista `sharedWithMe`.
   `GraphStore` (em `storage.js`) usa caminhos `items/{pasta}:/{rel}:`,
   `children`, `content` (PUT até 200 MB), PATCH para mover, espera em 429.
+  **Cache** no `GraphStore` (listas e itens por 5 min, `forget(rel)` ao criar/
+  enviar/mover; `docs:list(rel, {fresh})` = botão Atualizar; o índice relê tudo
+  a cada 15 min das 6h às 22h e renova o cache). Modelos aceitam qualquer tipo
+  de arquivo (só .docx é preenchido).
   Testado com uma "Microsoft" de mentira (`test/onedrive.test.js`).
 - `workflow.js` — as **10 etapas do caso** (`STEPS`, do documento do projeto)
   e `computeSteps(caso, {manual, checklist, payments})`: etapas que se

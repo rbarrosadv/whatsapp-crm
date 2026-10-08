@@ -451,7 +451,6 @@ export class DocsService {
         if (HIDDEN.test(d.name)) continue;
         const r = `${rel}/${d.name}`;
         if (d.dir) { if (depth < 4) await walk(r, depth + 1); continue; }
-        if (!/\.(docx?|odt|rtf|pdf|xlsx?)$/i.test(d.name)) continue;
         const area = rel.slice(FOLDERS.modelos.length + 1) || 'Geral';
         out.push({ name: d.name, rel: r, area, fillable: /\.docx$/i.test(d.name) });
       }

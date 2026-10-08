@@ -421,7 +421,9 @@ export async function createCore({ dataDir, demo = false, version = '', safeStor
     } catch (e) { console.error(e); }
   };
   const timers = [setInterval(check, 30000), setTimeout(check, 5000),
-    setInterval(() => courtsTick(), 30 * 60e3), setTimeout(() => courtsTick(), demo ? 3000 : 60e3)];
+    setInterval(() => courtsTick(), 30 * 60e3), setTimeout(() => courtsTick(), demo ? 3000 : 60e3),
+    // OneDrive: relê as pastas a cada 15 min (6h–22h) — acha o que mudou por fora e deixa o cache quente
+    setInterval(() => { const hr = new Date().getHours(); if (docs.store()?.kind === 'onedrive' && hr >= 6 && hr < 22) docs.reindex().catch(() => {}); }, 15 * 60e3)];
 
   // ---------------------------------------------------- utilidades da API
   function resolveMedia(rel) {
@@ -1715,7 +1717,8 @@ export async function createCore({ dataDir, demo = false, version = '', safeStor
       return onedrive.status();
     },
     'docs:status': async () => ({ ...(await docs.status()), placeholders: PLACEHOLDERS, structure: FOLDERS }),
-    'docs:list': async (ctx, rel) => {
+    'docs:list': async (ctx, rel, opts = {}) => {
+      if (opts.fresh) docs.store()?.forget?.(rel || '');
       const r = await docs.list(rel || '', ctx.user);
       for (const e of r.entries) if (!e.dir) e.url = docUrl(e.rel);
       return r;

@@ -27,9 +27,10 @@ export function openDocument(d) { openDoc(d).catch(errToast); }
  */
 export function folderBrowser(el, { top, start, caseId, clientId }) {
   let rel = start || top;
-  async function render() {
+  async function render(fresh = false) {
     let r;
-    try { r = await api('docs:list', rel); } catch (e) { fill(el, h('p', { class: 'muted' }, e.message)); return; }
+    if (!el.childElementCount) fill(el, h('p', { class: 'muted small' }, 'Carregando…'));
+    try { r = await api('docs:list', rel, { fresh }); } catch (e) { fill(el, h('p', { class: 'muted' }, e.message)); return; }
     const crumbs = [];
     const parts = rel.slice(top.length).split('/').filter(Boolean);
     crumbs.push(h('button', { class: 'crumb', onclick: () => go(top) }, `${base(top)}`));
@@ -40,7 +41,8 @@ export function folderBrowser(el, { top, start, caseId, clientId }) {
     fill(el,
       h('div', { class: 'docs-toolbar' },
         h('div', { class: 'crumbs grow' }, crumbs),
-        h('button', { class: 'btn btn-sm btn-primary', onclick: () => templatePicker({ caseId, clientId, dirRel: rel, onDone: render }) }, 'Novo do modelo'),
+        h('button', { class: 'icon-btn', title: 'Atualizar (ver o que mudou no OneDrive agora)', onclick: () => render(true) }, icon('refresh', 16)),
+        h('button', { class: 'btn btn-sm btn-primary', onclick: () => templatePicker({ caseId, clientId, dirRel: rel, onDone: () => render() }) }, 'Novo do modelo'),
         h('button', { class: 'btn btn-sm', onclick: () => upload() }, [icon('plus', 15), 'Enviar arquivos']),
         h('button', { class: 'btn btn-sm', title: 'Criar uma subpasta aqui', onclick: () => mkdir() }, [icon('plus', 15), 'Pasta']),
         window.desktop?.openDoc ? h('button', { class: 'btn btn-sm', title: 'Abrir esta pasta no Explorador de Arquivos', onclick: () => openDocument({ rel, dir: true, name: base(rel) }) }, 'Abrir no Windows') : null),
@@ -65,7 +67,7 @@ export function folderBrowser(el, { top, start, caseId, clientId }) {
     try { await api('docs:mkdir', join(rel, name.trim().replace(/[\\/:*?"<>|]/g, '-'))); render(); } catch (e) { errToast(e); }
   }
   render();
-  return { refresh: render };
+  return { refresh: () => render() };
 }
 
 function entryRow(d, { onOpenDir, caseId } = {}) {

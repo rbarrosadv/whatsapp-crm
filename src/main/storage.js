@@ -84,8 +84,35 @@ export class GraphStore {
     this.getToken = getToken;
     this.fetch = f;
     this.kind = 'onedrive';
-    this.ids = new Map(); // caminho → id (cache curto)
+    // cache: cada consulta à Microsoft leva ~0,3–1 s; pastas e itens já vistos
+    // ficam guardados por alguns minutos e são esquecidos quando o sistema muda algo
+    this.cache = new Map(); // 'L:caminho' (lista) | 'I:caminho' (item) → { at, v }
+    this.ttl = 5 * 60e3;
+    this.okAt = 0;
   }
+
+  cached(key, load) {
+    const c = this.cache.get(key);
+    if (c && Date.now() - c.at < this.ttl) return c.v;
+    const v = load().then((r) => r, (e) => { this.cache.delete(key); throw e; });
+    this.cache.set(key, { at: Date.now(), v });
+    if (this.cache.size > 5000) for (const k of [...this.cache.keys()].slice(0, 1000)) this.cache.delete(k);
+    return v;
+  }
+
+  /** Esquece o caminho, o que está dentro dele e a lista da pasta de cima. */
+  forget(rel) {
+    const p = posix(rel);
+    const parent = p.split('/').slice(0, -1).join('/');
+    for (const k of [...this.cache.keys()]) {
+      const kp = k.slice(2);
+      if (kp === p || kp.startsWith(`${p}/`) || (k[0] === 'L' && kp === parent)) this.cache.delete(k);
+    }
+    if (!p) this.cache.clear();
+  }
+
+  /** Limpa tudo (botão "Atualizar" ou depois de reler o índice). */
+  refresh() { this.cache.clear(); }
 
   base() { return `${GRAPH}/drives/${encodeURIComponent(this.driveId)}/items/${encodeURIComponent(this.itemId)}`; }
   itemUrl(rel) {
@@ -117,10 +144,20 @@ export class GraphStore {
   }
 
   async ok() {
-    try { const it = await this.req(this.base()); return !!it?.folder; } catch { return false; }
+    if (Date.now() - this.okAt < this.ttl) return true;
+    try {
+      const it = await this.req(this.base());
+      if (it?.folder) this.okAt = Date.now();
+      return !!it?.folder;
+    } catch { return false; }
   }
 
-  async item(rel) { return this.req(this.itemUrl(rel), {}, { allow404: true }); }
+  async item(rel) {
+    const p = posix(rel);
+    const it = await this.cached(`I:${p}`, () => this.req(this.itemUrl(p), {}, { allow404: true }));
+    if (!it) this.cache.delete(`I:${p}`); // não existe ainda: pode ser criado por fora
+    return it;
+  }
   async exists(rel) { return !!(await this.item(rel)); }
   async stat(rel) {
     const it = await this.item(rel);
@@ -129,6 +166,12 @@ export class GraphStore {
 
   async list(rel) {
     const p = posix(rel);
+    const out = await this.cached(`L:${p}`, () => this.listNow(p));
+    if (!out) this.cache.delete(`L:${p}`);
+    return out && out.map((e) => ({ ...e }));
+  }
+
+  async listNow(p) {
     let url = `${p ? this.itemUrl(p) : this.base()}/children?$top=999&$select=id,name,size,lastModifiedDateTime,folder,file`;
     const out = [];
     while (url) {
@@ -157,6 +200,7 @@ export class GraphStore {
             body: JSON.stringify({ name, folder: {}, '@microsoft.graph.conflictBehavior': 'fail' }),
           });
         } catch (e) { if (e.status !== 409) throw e; }
+        this.forget(next);
       }
       cur = next;
     }
@@ -172,6 +216,7 @@ export class GraphStore {
     if (dir) await this.mkdir(dir);
     if (buf.length > 200 * 1024 * 1024) throw new Error('Arquivo grande demais para enviar ao OneDrive pelo sistema (limite 200 MB).');
     await this.req(`${this.itemUrl(rel)}/content`, { method: 'PUT', headers: { 'Content-Type': 'application/octet-stream' }, body: buf });
+    this.forget(rel);
   }
 
   async copyIn(rel, srcPath) { await this.write(rel, fs.readFileSync(srcPath)); }
@@ -188,6 +233,8 @@ export class GraphStore {
       method: 'PATCH', headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ parentReference: { id: parent.id }, name }),
     });
+    this.forget(from);
+    this.forget(to);
   }
 
   /** Link temporário (pré-autorizado) para baixar/abrir o arquivo. */
@@ -201,7 +248,10 @@ export class GraphStore {
     let n = 0;
     while (stack.length) {
       const rel = stack.pop();
-      const list = await this.list(rel).catch(() => null);
+      // relê da Microsoft (o índice é o que descobre mudanças feitas por fora) e renova o cache
+      const p = posix(rel);
+      const list = await this.listNow(p).catch(() => null);
+      if (list) this.cache.set(`L:${p}`, { at: Date.now(), v: Promise.resolve(list) });
       for (const e of list || []) {
         const r = posix(`${rel}/${e.name}`);
         if (e.dir) { stack.push(r); continue; }

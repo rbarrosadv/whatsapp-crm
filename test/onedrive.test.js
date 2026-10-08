@@ -181,6 +181,17 @@ test('OneDrive pela API: conectar, pasta compartilhada, pastas, modelo, busca, a
   assert.ok((await c.call('docs:search', 'outorgante fulana')).every((d) => d.rel.startsWith('03 ARQUIVO MORTO/')), 'busca acompanha');
   assert.ok(ms.calls.some((x) => x.startsWith('PATCH')));
 
+  // cache: a mesma pasta de novo não consulta a Microsoft; "Atualizar" (fresh) consulta
+  await c.call('docs:list', '04 MODELOS');
+  const n0 = ms.calls.length;
+  await c.call('docs:list', '04 MODELOS');
+  assert.equal(ms.calls.length, n0, 'pasta repetida vem do cache');
+  await c.call('docs:list', '04 MODELOS', { fresh: true });
+  assert.ok(ms.calls.length > n0, 'Atualizar consulta de novo');
+  // pasta criada pelo sistema aparece na hora (o cache é esquecido)
+  await c.call('docs:mkdir', '04 MODELOS/Nova área');
+  assert.ok((await c.call('docs:list', '04 MODELOS')).entries.some((e) => e.name === 'Nova área'));
+
   // desligar volta para a pasta deste computador
   await c.call('onedrive:disconnect');
   assert.equal((await c.call('docs:status')).mode, 'local');
