@@ -381,6 +381,9 @@ export async function seedDemoDocs(root) {
     '{NOME} vem propor AÇÃO DE INDENIZAÇÃO POR DANOS MORAIS em face de {parte_contraria}, pelo atraso de voo superior a 4 horas.',
   ]);
   put('02 CLIENTES/CARLOS PEREIRA/_CADASTRO/2026-09-02 - RG e CPF.txt', 'Documento de identificação (exemplo da demonstração).');
+  // PDF escaneado (só imagem): a busca acha pelo conteúdo depois do OCR
+  const scan = new URL('../../assets/demo/conta-escaneada.pdf', import.meta.url);
+  if (fs.existsSync(scan)) put('02 CLIENTES/CARLOS PEREIRA/_CADASTRO/2026-09-02 - Comprovante de residência.pdf', fs.readFileSync(scan));
   put('02 CLIENTES/CARLOS PEREIRA/RECLAMAÇÃO TRABALHISTA x TRANSPORTES RÁPIDO LTDA/2026-09-10 - Petição inicial.docx', [
     'EXCELENTÍSSIMO SENHOR JUIZ DA 3ª VARA DO TRABALHO DE CUIABÁ-MT',
     'CARLOS PEREIRA, brasileiro, motorista, vem propor RECLAMAÇÃO TRABALHISTA em face de TRANSPORTES RÁPIDO LTDA.',

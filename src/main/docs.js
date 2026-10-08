@@ -31,6 +31,8 @@ const PREVIEW_KIND = [
   [/^\.docx$/, 'docx'], [/^\.(xlsx|csv)$/, 'sheet'], [/^\.(txt|md|rtf|log)$/, 'text'], [/^\.pdf$/, 'pdf'],
   [/^\.(png|jpe?g|gif|webp)$/, 'image'], [/^\.(mp3|ogg|oga|opus|m4a|wav)$/, 'audio'], [/^\.(mp4|webm)$/, 'video'],
 ];
+const OCR_MAX_BYTES = 40e6; // PDFs maiores ficam só com o nome
+const OCR_MAX_PAGES = 40;
 const TEXT_EXT = new Set(['.docx', '.txt', '.pdf', '.md', '.rtf']);
 const MAX_TEXT = 200000;
 
@@ -281,11 +283,15 @@ export class DocsService {
    *           describe?: () => object }} opts
    * `getStore` = onde está a pasta (disco deste computador ou OneDrive pela API).
    */
-  constructor({ getStore, describe }) {
+  constructor({ getStore, describe, ocrEnabled }) {
     this.getStore = getStore;
     this.describe = describe || (() => ({}));
+    this.ocrEnabled = ocrEnabled || (() => false);
     this.indexing = null;
     this.lastIndex = 0;
+    this.ocrRunning = null;
+    this.ocrReader = null;
+    this.stopped = false;
   }
 
   /** A pasta do escritório configurada (não confere se está acessível). */
@@ -304,6 +310,7 @@ export class DocsService {
       ...extra, ok: true, mode: st.kind, root: st.kind === 'local' ? st.root : null,
       folders: present, missing: Object.values(FOLDERS).filter((f) => !present.includes(f)),
       indexed: n, indexing: !!this.indexing, lastIndex: this.lastIndex,
+      ocr: { enabled: !!this.ocrEnabled(), done: db.get("SELECT COUNT(*) AS n FROM doc_ocr WHERE status = 'ok'")?.n || 0, pending: this.ocrPendingCount(), running: !!this.ocrRunning },
     };
   }
 
@@ -546,6 +553,8 @@ export class DocsService {
       const text = readable ? bufferText(buf || await st.read(rel), ext) : '';
       db.run('INSERT OR REPLACE INTO doc_index (rel, name, mtime, size, text, fold) VALUES (?, ?, ?, ?, ?, ?)',
         rel, name, Math.floor(info.mtime || Date.now()), info.size || 0, text, fold(`${name}\n${text}`));
+      // PDF sem texto (escaneado): entra na fila do OCR
+      if (ext === '.pdf' && !text && !this.indexing) setTimeout(() => this.ocrRun().catch(() => {}), 1000).unref?.();
     } catch { /* arquivo sumiu ou está aberto */ }
   }
 
@@ -571,8 +580,75 @@ export class DocsService {
       for (const rel of known.keys()) if (!seen.has(rel)) { db.run('DELETE FROM doc_index WHERE rel = ?', rel); changed++; }
       this.lastIndex = Date.now();
       return changed;
-    })().finally(() => { this.indexing = null; });
+    })().finally(() => {
+      this.indexing = null;
+      // depois de reler as pastas, lê os PDFs escaneados novos (em segundo plano)
+      if (!this.stopped) setTimeout(() => this.ocrRun().catch(() => {}), 3000).unref?.();
+    });
     return this.indexing;
+  }
+
+  // -------------------------------------------------------- OCR (PDF escaneado)
+
+  /** PDFs sem texto ainda não lidos por OCR nesta versão do arquivo (mais novos primeiro). */
+  ocrQueueSql(limit) {
+    return `SELECT i.rel, i.name, i.mtime, i.size FROM doc_index i
+      WHERE lower(i.name) LIKE '%.pdf' AND COALESCE(i.text, '') = '' AND i.size <= ${OCR_MAX_BYTES}
+        AND NOT EXISTS (SELECT 1 FROM doc_ocr o WHERE o.rel = i.rel AND o.mtime = i.mtime)
+      ORDER BY i.mtime DESC LIMIT ${limit}`;
+  }
+
+  ocrPendingCount() {
+    try { return db.get(`SELECT COUNT(*) AS n FROM (${this.ocrQueueSql(100000)})`)?.n || 0; } catch { return 0; }
+  }
+
+  /** Lê por OCR um PDF do índice e guarda o texto (a busca passa a achar pelo conteúdo). */
+  async ocrOne(row) {
+    const st = this.requireStore();
+    let status = 'erro';
+    let pages = 0;
+    try {
+      if (!this.ocrReader) { const { OcrReader } = await import('./ocr.js'); this.ocrReader = new OcrReader(); }
+      const r = await this.ocrReader.readPdf(await st.read(row.rel), { maxPages: OCR_MAX_PAGES });
+      pages = r.pages;
+      if (r.text && r.text.replace(/\s/g, '').length > 20) {
+        const text = r.text.slice(0, MAX_TEXT);
+        db.run('UPDATE doc_index SET text = ?, fold = ? WHERE rel = ? AND mtime = ?', text, fold(`${row.name}\n${text}`), row.rel, row.mtime);
+        status = 'ok';
+      } else status = r.encrypted ? 'protegido' : pages ? 'vazio' : 'sem-imagem';
+    } catch (e) {
+      status = 'erro';
+      console.error('OCR:', row.rel, e.message);
+    }
+    if (this.stopped) return status;
+    db.run('INSERT OR REPLACE INTO doc_ocr (rel, mtime, status, pages, at) VALUES (?, ?, ?, ?, ?)', row.rel, row.mtime, status, pages, Date.now());
+    return status;
+  }
+
+  /**
+   * Fila do OCR: um PDF por vez, com pausa entre eles (o servidor continua
+   * livre para a equipe). Chamado depois de reler as pastas e ao enviar arquivos.
+   */
+  ocrRun({ pause = 2000, limit = Infinity } = {}) {
+    if (this.ocrRunning || this.stopped || !this.ocrEnabled() || !this.store()) return this.ocrRunning || Promise.resolve(0);
+    this.ocrRunning = (async () => {
+      let n = 0;
+      while (n < limit && !this.stopped && this.ocrEnabled()) {
+        const row = db.get(this.ocrQueueSql(1));
+        if (!row) break;
+        await this.ocrOne(row);
+        n++;
+        if (pause) await new Promise((res) => { const t = setTimeout(res, pause); t.unref?.(); });
+      }
+      return n;
+    })().finally(() => { this.ocrRunning = null; });
+    return this.ocrRunning;
+  }
+
+  async stop() {
+    this.stopped = true;
+    await this.ocrRunning?.catch(() => {});
+    await this.ocrReader?.stop();
   }
 
   /**

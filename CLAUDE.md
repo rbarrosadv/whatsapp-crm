@@ -134,6 +134,14 @@ Motor (`src/main`, sem Electron apesar do nome da pasta):
   Arrastar arquivos para a pasta aberta (`folderBrowser`). **Anexo do WhatsApp →
   pasta** (`docs:messageTargets/saveMessage`: pasta do cliente, `_CADASTRO` ou do
   processo aberto, com a data no nome).
+  **OCR** (`ocr.js`): PDF sem texto → `pdfImages` tira as imagens das páginas
+  (JPEG, Flate cinza/cor/1 bit com Predictor, CCITT G3/G4 embrulhado em TIFF;
+  JBIG2/paleta não) e o `OcrReader` lê com **tesseract.js** + `@tesseract.js-data/por`
+  (offline, thread à parte, fecha após 5 min parado). Fila em `DocsService.ocrRun`
+  (um por vez, 2 s entre eles, mais novos primeiro, ≤ 40 MB/40 páginas; `doc_ocr`
+  guarda status por versão do arquivo) depois de cada releitura e a cada 30 min;
+  texto vai para `doc_index`. Opção do escritório `docsOcr` (padrão ligado),
+  `docs:ocrNow` (sócio). Demo: `assets/demo/conta-escaneada.pdf`.
   Testado com uma "Microsoft" de mentira (`test/onedrive.test.js`).
 - `workflow.js` — as **10 etapas do caso** (`STEPS`, do documento do projeto)
   e `computeSteps(caso, {manual, checklist, payments})`: etapas que se

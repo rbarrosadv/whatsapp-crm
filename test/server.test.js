@@ -1093,3 +1093,20 @@ test('documentos: anexo do WhatsApp vai para a pasta do cliente/processo, recent
   await c.call('docs:forgetRecent', r.rel);
   assert.ok(!(await c.call('docs:recent')).some((x) => x.rel === r.rel));
 });
+
+test('OCR: PDF escaneado (só imagem) passa a ser achado pelo conteúdo', async () => {
+  const c = client();
+  await c.req('/auth/login', { body: { login: 'barros', password: 'segredo1' } });
+  await c.call('docs:reindex');
+  const before = await c.call('docs:search', 'energisa kwh');
+  assert.ok(!before.some((d) => /Comprovante de residência/.test(d.name)), 'antes do OCR o PDF não tem texto');
+  const r = await c.call('docs:ocrNow');
+  assert.ok(r.read >= 1 && r.done >= 1);
+  assert.equal(r.pending, 0);
+  const hits = await c.call('docs:search', 'energisa kwh');
+  const hit = hits.find((d) => /Comprovante de residência/.test(d.name));
+  assert.ok(hit, 'achado pelo texto lido da imagem');
+  assert.match(hit.snippet, /ENERGISA/i);
+  // não lê de novo o que já leu (mesma versão do arquivo)
+  assert.equal((await c.call('docs:ocrNow')).read, 0);
+});

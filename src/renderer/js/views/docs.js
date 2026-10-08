@@ -342,7 +342,7 @@ function renderSearch(el, st) {
     lastQuery = input.value.trim();
     if (lastQuery.length < 2) {
       fill(results, h('div', { class: 'muted small docs-hint' },
-        `Busca nos nomes e no conteúdo de documentos Word, PDF (com texto) e .txt da pasta do escritório${st.indexed ? ` — ${st.indexed} arquivo(s) lidos` : ''}. `,
+        `Busca nos nomes e no conteúdo de documentos Word, PDF e .txt da pasta do escritório${st.indexed ? ` — ${st.indexed} arquivo(s) lidos` : ''}${st.ocr?.enabled ? `; PDFs escaneados lidos por OCR: ${st.ocr.done}${st.ocr.pending ? ` (${st.ocr.pending} na fila)` : ''}` : ''}. `,
         'Achou uma peça parecida? Clique em “Usar como base” para levar uma cópia para a pasta do caso.'));
       return;
     }

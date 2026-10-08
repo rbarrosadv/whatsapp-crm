@@ -29,7 +29,7 @@ export function mountSettings(el) {
 // configurações que valem para o escritório todo (só sócio muda)
 const OFFICE_KEYS = ['courtsNotifyAll', 'sendReadReceipts', 'forgottenHours', 'chargeTemplate', 'pixKey', 'paymentNoticeDays',
   'staleCaseDays', 'googleSync', 'googleCalendarId', 'signMessages', 'docsRequestTemplate', 'datajudKey',
-  'officeName', 'officeDoc', 'officeAddress', 'officeCity', 'idleCaseDays', 'prescriptionYears', 'clientUpdateTemplate', 'waSaveContacts'];
+  'officeName', 'officeDoc', 'officeAddress', 'officeCity', 'idleCaseDays', 'prescriptionYears', 'clientUpdateTemplate', 'waSaveContacts', 'docsOcr'];
 
 function toggle(key, label, hint, def = true) {
   const val = state.settings[key] ?? def;
@@ -186,7 +186,13 @@ function docsSection() {
     const modeSeg = state.can.admin ? h('div', { class: 'segmented' }, [['local', 'Pasta neste computador'], ['onedrive', 'OneDrive pela internet (servidor)']].map(([v, l]) => h('button', {
       class: `seg ${mode === v ? 'active' : ''}`, type: 'button', onclick: () => { docsModeChoice = v; draw(); },
     }, l))) : null;
-    fill(box, statusLine, modeSeg, mode === 'onedrive' ? oneDriveSetup(st, draw) : localSetup(st, draw));
+    const ocr = st.ok && st.ocr ? h('div', { class: 'stack' },
+      toggle('docsOcr', 'Ler PDFs escaneados (OCR)', `A busca passa a achar pelo conteúdo de PDFs que são só imagem (RG, comprovantes, autos digitalizados). Lê um por vez, no próprio servidor. ${st.ocr.done} lido(s)${st.ocr.pending ? `, ${st.ocr.pending} na fila` : ''}.`, true),
+      state.can.admin && st.ocr.pending && st.ocr.enabled ? h('div', null, h('button', {
+        class: 'btn btn-sm', type: 'button', disabled: st.ocr.running,
+        onclick: (e) => { e.target.disabled = true; toast('Lendo os PDFs escaneados… pode levar alguns minutos.'); api('docs:ocrNow').then((r) => { toast(`${r.read} PDF(s) lidos`, 'success'); draw(); }).catch(errToast); },
+      }, st.ocr.running ? 'Lendo…' : 'Ler agora')) : null) : null;
+    fill(box, statusLine, modeSeg, mode === 'onedrive' ? oneDriveSetup(st, draw) : localSetup(st, draw), ocr);
   };
   draw();
   return section('Documentos (OneDrive)', box);

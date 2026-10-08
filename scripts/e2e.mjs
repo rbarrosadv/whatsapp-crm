@@ -548,6 +548,18 @@ try {
   await page.waitForSelector('.search-hit mark', { timeout: 15000 });
   check((await page.locator('.search-hit').first().innerText()).includes('Guarulhos'), 'busca encontra pelo conteúdo do documento');
   await shot(page, '05d-docs-busca');
+  // PDF escaneado: depois do OCR a busca acha pelo texto da imagem; "Ver" abre o PDF na tela
+  await page.evaluate(() => window.api.call('docs:ocrNow'));
+  await page.fill('.docs-search', 'energisa consumo kwh');
+  await page.waitForSelector('.search-hit:has-text("Comprovante de residência")', { timeout: 15000 });
+  check(true, 'busca acha o PDF escaneado pelo conteúdo (OCR)');
+  await page.locator('.search-hit:has-text("Comprovante de residência") button:has-text("Ver")').click();
+  await page.waitForSelector('.modal-preview iframe.doc-frame');
+  const pdfOk = await page.evaluate(async () => { const f = document.querySelector('.modal-preview iframe.doc-frame'); const r = await fetch(f.src); return r.status === 200 && r.headers.get('content-type') === 'application/pdf'; });
+  check(pdfOk, 'PDF abre dentro do sistema (sem baixar)');
+  await page.waitForTimeout(2500);
+  await shot(page, '05d2-ver-pdf');
+  await page.keyboard.press('Escape');
   await page.click('.view-docs .seg:has-text("Modelos")');
   await page.waitForSelector('.placeholder-grid');
   check(await page.locator('.view-docs .doc-row').count() >= 4, 'modelos listados por área');

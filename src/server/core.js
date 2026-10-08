@@ -46,7 +46,7 @@ export const USER_KEYS = ['notifications', 'notificationPreview', 'theme', 'last
 export const OFFICE_KEYS = ['sendReadReceipts', 'forgottenHours', 'chargeTemplate', 'pixKey', 'paymentNoticeDays',
   'staleCaseDays', 'googleSync', 'googleCalendarId', 'signMessages', 'docsRoot', 'docsRequestTemplate', 'datajudKey',
   'officeName', 'officeDoc', 'officeAddress', 'officeCity', 'proposalTemplate', 'proposalValidDays', 'prescriptionYears', 'clientUpdateTemplate', 'idleCaseDays', 'waSaveContacts', 'docsMode',
-  'receiptSigner', 'receiptSignMode', 'courtsNotifyAll'];
+  'receiptSigner', 'receiptSignMode', 'courtsNotifyAll', 'docsOcr'];
 
 export const DEFAULT_CHARGE_TEMPLATE = 'Olá, {nome}! Tudo bem? Passando para lembrar da {parcela} dos honorários referentes a {caso}, '
   + 'no valor de {valor}, com vencimento em {vencimento}.{pix_linha}\nQualquer dúvida, estou à disposição.';
@@ -179,6 +179,7 @@ export async function createCore({ dataDir, demo = false, version = '', safeStor
   };
   const docs = new DocsService({
     getStore,
+    ocrEnabled: () => settings.docsOcr !== false,
     describe: () => ({ configured: settings.docsRoot || null, docsMode: settings.docsMode || 'local', onedrive: onedrive.status() }),
   });
   const docUrl = (rel) => `/docs/file/${rel.split('/').map(encodeURIComponent).join('/')}`;
@@ -423,7 +424,9 @@ export async function createCore({ dataDir, demo = false, version = '', safeStor
   const timers = [setInterval(check, 30000), setTimeout(check, 5000),
     setInterval(() => courtsTick(), 30 * 60e3), setTimeout(() => courtsTick(), demo ? 3000 : 60e3),
     // OneDrive: relê as pastas a cada 15 min (6h–22h) — acha o que mudou por fora e deixa o cache quente
-    setInterval(() => { const hr = new Date().getHours(); if (docs.store()?.kind === 'onedrive' && hr >= 6 && hr < 22) docs.reindex().catch(() => {}); }, 15 * 60e3)];
+    setInterval(() => { const hr = new Date().getHours(); if (docs.store()?.kind === 'onedrive' && hr >= 6 && hr < 22) docs.reindex().catch(() => {}); }, 15 * 60e3),
+    // PDFs escaneados que ficaram na fila (ex.: o servidor reiniciou no meio)
+    setInterval(() => docs.ocrRun().catch(() => {}), 30 * 60e3)];
 
   // ---------------------------------------------------- utilidades da API
   function resolveMedia(rel) {
@@ -1767,6 +1770,12 @@ export async function createCore({ dataDir, demo = false, version = '', safeStor
     'docs:recent': (ctx) => db.recentDocs(ctx.user.id).filter((r) => docs.allowed(r.rel, ctx.user))
       .map((r) => ({ ...r, name: r.rel.split('/').pop(), folder: r.rel.split('/').slice(0, -1).join('/'), url: docUrl(r.rel) })),
     'docs:forgetRecent': (ctx, rel) => { db.forgetRecentDoc(ctx.user.id, rel); return true; },
+    // OCR na hora (botão "Ler agora" nos Ajustes; testes): espera terminar a fila
+    'docs:ocrNow': async () => {
+      if (docs.ocrRunning) await docs.ocrRunning;
+      const n = await docs.ocrRun({ pause: 0 });
+      return { read: n, ...(await docs.status()).ocr };
+    },
     'docs:reindex': async () => ({ changed: await docs.reindex(), ...(await docs.status()) }),
     'docs:templates': async () => (await docs.templates()).map((t) => ({ ...t, url: docUrl(t.rel) })),
     'docs:clientFolder': async (_c, clientId) => {
@@ -2246,6 +2255,7 @@ export async function createCore({ dataDir, demo = false, version = '', safeStor
     logFile: path.join(dataDir, 'logs', 'whatsapp.log'),
     async stop() {
       importJob.stopped = true;
+      await docs.stop();
       timers.forEach((t) => clearInterval(t));
       await wa.stop();
       // nada mais pode tocar no banco depois de fechado (avisos atrasados do WhatsApp)
