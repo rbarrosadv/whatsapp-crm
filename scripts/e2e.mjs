@@ -149,6 +149,26 @@ try {
   await page.keyboard.press('Escape');
   check(await page.locator('.iv-overlay').count() === 0, 'Esc fecha o visualizador');
 
+  // pré-visualização de links: aparece ao escrever, vai junto no envio, ✕ tira
+  await page.fill('.composer-input', 'Veja a notícia https://exemplo.com.br/noticia');
+  await page.waitForSelector('.link-compose:not(.hidden) .link-card-title:has-text("Notícia de exemplo")', { timeout: 8000 });
+  check(await page.locator('.link-compose img.link-card-img').count() === 1, 'ao escrever um link aparece a prévia com imagem e título');
+  await page.keyboard.press('End');
+  await page.keyboard.press('Enter');
+  const linkMsg = page.locator('.msg.out', { hasText: 'Veja a notícia' }).last();
+  await linkMsg.locator('.link-card img.link-card-img').waitFor();
+  check((await linkMsg.locator('.link-card-site').textContent()) === 'exemplo.com.br', 'mensagem enviada mostra o cartão do link (imagem, título e site)');
+  await page.evaluate(() => [...document.querySelectorAll('.link-card')].pop()?.scrollIntoView({ block: 'center' }));
+  await page.waitForTimeout(300);
+  await shot(page, '03e-cartao-link');
+  await page.fill('.composer-input', 'Sem cartão https://exemplo.com.br/outra');
+  await page.waitForSelector('.link-compose:not(.hidden)', { timeout: 8000 });
+  await page.click('.link-compose .icon-btn');
+  await page.keyboard.press('End');
+  await page.keyboard.press('Enter');
+  await page.waitForSelector('.msg.out:has-text("Sem cartão")');
+  check(await page.locator('.msg.out:has-text("Sem cartão") .link-card').count() === 0, '✕ envia o link sem a pré-visualização');
+
   // rascunho: fica guardado ao trocar de conversa e aparece na lista
   await page.locator('.chat-row', { hasText: 'Ana Beatriz' }).click();
   await page.waitForSelector('.chat-head:has-text("Ana Beatriz")');

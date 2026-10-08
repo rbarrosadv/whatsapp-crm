@@ -14,6 +14,8 @@ import { CalendarSync } from './calendar-sync.js';
 import { webmToOgg } from './ogg.js';
 import { importLegacy, legacyStateFile } from './legacy.js';
 import { diagnoseConnection } from './diag.js';
+import { LinkPreviewService } from './linkpreview.js';
+import { siteOf } from '../renderer/js/links.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const ROOT = path.join(__dirname, '..', '..');
@@ -368,6 +370,23 @@ function chatOrThrow(jid) {
   return jid;
 }
 
+// Pré-visualização de links (cartão com imagem/título). A imagem é reduzida
+// para um JPEG pequeno, como o WhatsApp manda.
+function linkThumbnail(buf) {
+  const img = nativeImage.createFromBuffer(buf);
+  if (img.isEmpty()) return null;
+  const { width, height } = img.getSize();
+  const k = Math.min(1, 320 / Math.max(width, height));
+  return (k < 1 ? img.resize({ width: Math.round(width * k), height: Math.round(height * k), quality: 'good' }) : img).toJPEG(75);
+}
+// no modo demonstração não há internet de verdade: devolve uma página de exemplo
+const demoFetch = async (url) => (/\.(png|jpe?g)$/i.test(url)
+  ? new Response(fs.readFileSync(path.join(ROOT, 'assets', 'icon.png')), { headers: { 'content-type': 'image/png' } })
+  : new Response(`<html><head><title>Exemplo</title><meta property="og:title" content="Notícia de exemplo: STJ decide sobre honorários">
+      <meta property="og:description" content="Resumo da página que apareceria no cartão do link.">
+      <meta property="og:image" content="https://exemplo.com.br/imagem.png"></head></html>`, { headers: { 'content-type': 'text/html' } }));
+const linkPreviews = new LinkPreviewService({ thumbnail: linkThumbnail, ...(DEMO ? { fetch: demoFetch } : {}) });
+
 const api = {
   // estado geral
   bootstrap: () => ({
@@ -430,7 +449,21 @@ const api = {
   // mensagens
   'messages:list': (jid, opts) => db.listMessages(chatOrThrow(jid), opts || {}),
   'messages:search': (q) => db.searchMessages(String(q || '')),
-  'messages:sendText': (jid, text, quotedId) => wa.sendText(chatOrThrow(jid), text, quotedId),
+  'messages:sendText': async (jid, text, quotedId, opts = {}) => {
+    // previewUrl: link cujo cartão foi mostrado na hora de escrever; false = você tirou o cartão
+    let linkPreview;
+    if (opts.previewUrl === false) linkPreview = null;
+    else if (opts.previewUrl) linkPreview = await linkPreviews.get(opts.previewUrl);
+    return wa.sendText(chatOrThrow(jid), text, quotedId, { linkPreview });
+  },
+  'links:preview': async (url) => {
+    const p = await linkPreviews.get(url);
+    if (!p) return null;
+    return {
+      url: p.url, title: p.title, description: p.description, site: siteOf(p.canonical || p.url),
+      image: p.thumb ? `data:image/jpeg;base64,${p.thumb.toString('base64')}` : null,
+    };
+  },
   'messages:sendFiles': async (jid, files, caption, quotedId) => {
     const ids = [];
     for (let i = 0; i < files.length; i++) {

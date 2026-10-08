@@ -149,7 +149,10 @@ export function parseMessage(msg, { chatJid, senderJid, senderName, keepRaw }) {
   } else if (type === 'extendedTextMessage') {
     row.text = inner.text || '';
     if (inner.matchedText || inner.title) {
-      row.extra = JSON.stringify({ link: { url: inner.matchedText, title: inner.title, description: inner.description } });
+      // cartão de pré-visualização do link (imagem pequena vem junto na mensagem)
+      row.extra = JSON.stringify({ link: { url: inner.canonicalUrl || inner.matchedText, title: inner.title, description: inner.description } });
+      const thumb = b64(inner.jpegThumbnail);
+      if (thumb) row.thumb = `data:image/jpeg;base64,${thumb}`;
     }
   } else if (type === 'locationMessage' || type === 'liveLocationMessage') {
     row.type = 'location';

@@ -179,6 +179,13 @@ Interface (`src/renderer`, JS puro em módulos ES, sem build):
   `body[data-msgfont]` → `--msg-fs`/`--composer-fs`; Ctrl + roda ou
   Ctrl +/−/0. `uiZoom` (0,9–1,5) → `app:setZoom` (`setZoomFactor`); Ctrl +
   Shift +/−/0. Os papéis zoomIn/zoomOut do menu foram tirados para não brigar.
+- **Pré-visualização de links**: recebida = `extendedTextMessage` (title,
+  description, jpegThumbnail → `messages.thumb`, `extra.link`) → `linkCard`
+  na conversa. Enviada: o composer mostra a prévia (`links:preview`, ✕ tira)
+  e `messages:sendText(..., {previewUrl})` manda `linkPreview` (`toUrlInfo`)
+  — o Baileys não gera sozinho (sem `link-preview-js`). `main/linkpreview.js`
+  busca og:/twitter:/<title> da página e a imagem (reduzida a JPEG ≤320 px
+  com `nativeImage`); no demo usa uma página de exemplo (sem internet).
 - **Editar mensagem**: só texto seu, até 15 min (`editableCheck`);
   `sendMessage(jid, { text, edit: key })`. No composer, `editing` mostra a
   faixa "Editando" (Esc cancela). Fotos abrem em `views/imageviewer.js`

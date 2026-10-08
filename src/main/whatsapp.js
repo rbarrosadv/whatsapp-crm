@@ -778,7 +778,11 @@ export class WhatsAppService extends EventEmitter {
 
   // ------------------------------------------------------------ ações
 
-  async sendText(chatJid, text, quotedId) {
+  /**
+   * @param {{linkPreview?: {url, canonical, title, description, thumb}|null}} [opts]
+   *   linkPreview: cartão do link (null = enviar sem cartão)
+   */
+  async sendText(chatJid, text, quotedId, { linkPreview } = {}) {
     const sock = this.requireSock();
     const opts = {};
     if (quotedId) {
@@ -789,7 +793,9 @@ export class WhatsAppService extends EventEmitter {
         message: { conversation: q?.text || '' },
       };
     }
-    const sent = await sock.sendMessage(chatJid, { text }, opts);
+    const content = { text };
+    if (linkPreview !== undefined) content.linkPreview = toUrlInfo(text, linkPreview);
+    const sent = await sock.sendMessage(chatJid, content, opts);
     if (sent) await this.onMessages([sent], 'append');
     return sent?.key?.id;
   }
@@ -1027,6 +1033,19 @@ export class WhatsAppService extends EventEmitter {
     if (!r?.exists) return null;
     return jidNormalizedUser(r.jid);
   }
+}
+
+/** Cartão do link no formato que o Baileys espera (WAUrlInfo). */
+export function toUrlInfo(text, p) {
+  if (!p) return null;
+  const matched = (text || '').match(/\bhttps?:\/\/\S+|\bwww\.\S+/i)?.[0]?.replace(/[.,;:!?)\]}'"»]+$/, '') || p.url;
+  return {
+    'canonical-url': p.canonical || p.url,
+    'matched-text': matched,
+    title: p.title || '',
+    description: p.description || '',
+    jpegThumbnail: p.thumb || undefined,
+  };
 }
 
 export const EDIT_WINDOW_MS = 15 * 60 * 1000;

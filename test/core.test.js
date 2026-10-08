@@ -618,3 +618,51 @@ test('balão da lista: mensagem curta inteira; longa cortada no fim de uma palav
   assert.ok(corpo.length <= TIP_MAX && longa.startsWith(corpo), 'corta sem quebrar palavra');
   assert.ok(/[a-zíú]$/.test(corpo));
 });
+
+test('links: cartão que chega é gravado com imagem; pré-visualização lê a página', async () => {
+  const { firstUrl, siteOf } = await import('../src/renderer/js/links.js');
+  const { LinkPreviewService, parseMeta } = await import('../src/main/linkpreview.js');
+  const { toUrlInfo } = await import('../src/main/whatsapp.js');
+  assert.equal(firstUrl('veja www.stj.jus.br/noticia.'), 'https://www.stj.jus.br/noticia');
+  assert.equal(firstUrl('link: https://g1.globo.com/a?b=1).'), 'https://g1.globo.com/a?b=1');
+  assert.equal(firstUrl('sem link'), null);
+  assert.equal(siteOf('https://www.g1.globo.com/x'), 'g1.globo.com');
+
+  // mensagem recebida com cartão
+  const J = '5511922221111@s.whatsapp.net';
+  await wa.onMessages([{
+    key: { remoteJid: J, fromMe: false, id: 'LNK1' },
+    message: { extendedTextMessage: { text: 'olha https://g1.globo.com/x', matchedText: 'https://g1.globo.com/x', title: 'Título', description: 'Resumo', jpegThumbnail: Buffer.from([1, 2, 3]) } },
+    messageTimestamp: now(),
+  }], 'notify');
+  const m = db.getMessage(J, 'LNK1');
+  assert.deepEqual(JSON.parse(m.extra).link, { url: 'https://g1.globo.com/x', title: 'Título', description: 'Resumo' });
+  assert.equal(m.thumb, 'data:image/jpeg;base64,AQID');
+
+  // leitura das etiquetas da página
+  const meta = parseMeta(`<html><head><title>Fallback</title>
+    <meta property="og:title" content="Decisão do STJ &amp; honorários">
+    <meta name="description" content='Resumo &quot;curto&quot;'>
+    <meta property="og:image" content="/img/capa.jpg"></head>`, 'https://site.com.br/noticia');
+  assert.deepEqual(meta, { title: 'Decisão do STJ & honorários', description: 'Resumo "curto"', image: 'https://site.com.br/img/capa.jpg', canonical: 'https://site.com.br/noticia' });
+
+  const pedidos = [];
+  const fakeFetch = async (url) => {
+    pedidos.push(url);
+    if (url.endsWith('.jpg')) return new Response(Buffer.from([9, 9]), { headers: { 'content-type': 'image/jpeg' } });
+    return new Response('<meta property="og:title" content="Notícia"><meta property="og:image" content="https://s.com/a.jpg">', { headers: { 'content-type': 'text/html' } });
+  };
+  const svc = new LinkPreviewService({ fetch: fakeFetch, thumbnail: (b) => Buffer.concat([Buffer.from([0xff]), b]) });
+  const p = await svc.get('https://s.com/n');
+  assert.equal(p.title, 'Notícia');
+  assert.deepEqual([...p.thumb], [0xff, 9, 9]);
+  await svc.get('https://s.com/n');
+  assert.equal(pedidos.length, 2, 'guarda em cache');
+  assert.equal(await svc.get('ftp://x'), null);
+
+  // formato enviado ao WhatsApp
+  const info = toUrlInfo('segue https://s.com/n.', p);
+  assert.equal(info['matched-text'], 'https://s.com/n');
+  assert.equal(info.title, 'Notícia');
+  assert.equal(toUrlInfo('x', null), null);
+});

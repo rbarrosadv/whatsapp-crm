@@ -1,6 +1,7 @@
 // Conversa aberta: cabeçalho, mensagens e caixa de envio.
 import { openImageViewer } from './imageviewer.js';
 import { getDraft, setDraft, clearDraft } from '../drafts.js';
+import { firstUrl, siteOf } from '../links.js';
 import { suggestWords, applyWord, learnWords } from '../wordsuggest.js';
 import { autocorrectBefore, correctWord } from '../autocorrect.js';
 
@@ -284,6 +285,19 @@ function upsertMessage(m, fromLive) {
   else if (fromLive) c.newBtn.classList.remove('hidden');
 }
 
+/** Cartão de pré-visualização do link (imagem, título, resumo e site). */
+function linkCard(m) {
+  const link = parseJson(m.extra, {}).link;
+  if (!link || !(link.title || link.description || m.thumb)) return null;
+  const url = link.url && /^https?:/i.test(link.url) ? link.url : firstUrl(m.text);
+  return h('a', { class: `link-card ${m.thumb ? '' : 'no-img'}`, href: url || '#', target: '_blank', rel: 'noopener', title: url || '' },
+    m.thumb ? h('img', { class: 'link-card-img', src: m.thumb, alt: '' }) : null,
+    h('div', { class: 'link-card-body' },
+      link.title ? h('div', { class: 'link-card-title' }, link.title) : null,
+      link.description ? h('div', { class: 'link-card-desc' }, link.description) : null,
+      url ? h('div', { class: 'link-card-site' }, siteOf(url)) : null));
+}
+
 function msgEl(m) {
   const chat = state.chats.get(current.jid) || {};
   if (m.type === 'system' || m.type === 'call') {
@@ -314,6 +328,8 @@ function msgEl(m) {
   } else {
     const media = mediaBlock(m);
     if (media) body.append(media);
+    const card = m.type === 'text' ? linkCard(m) : null;
+    if (card) body.append(card);
     if (m.text && !['contact', 'location', 'poll'].includes(m.type)) {
       body.append(h('div', { class: 'text', html: formatWhatsApp(m.text) }));
     }
@@ -516,6 +532,32 @@ function renderComposer() {
   const c = current;
   const chat = state.chats.get(c.jid);
   const saveDraft = () => { if (!editing) setDraft(c.jid, ta.value); };
+  // prévia do cartão do link enquanto escreve (✕ tira: o link vai sem cartão)
+  const linkBar = h('div', { class: 'link-compose hidden' });
+  let linkUrl = null; // link do cartão mostrado
+  let linkOff = null; // link cujo cartão você tirou
+  let linkTimer = null;
+  const updateLink = () => {
+    clearTimeout(linkTimer);
+    linkTimer = setTimeout(async () => {
+      const url = editing ? null : firstUrl(ta.value);
+      if (url === linkUrl) return;
+      linkUrl = null;
+      linkBar.classList.add('hidden');
+      if (!url || url === linkOff) return;
+      const p = await api('links:preview', url).catch(() => null);
+      if (!p || firstUrl(ta.value) !== url) return;
+      linkUrl = url;
+      fill(linkBar,
+        p.image ? h('img', { class: 'link-card-img', src: p.image, alt: '' }) : null,
+        h('div', { class: 'link-card-body' },
+          h('div', { class: 'link-card-title' }, p.title || p.site),
+          p.description ? h('div', { class: 'link-card-desc' }, p.description) : null,
+          h('div', { class: 'link-card-site' }, p.site)),
+        h('button', { class: 'icon-btn', title: 'Enviar sem a pré-visualização', onclick: () => { linkOff = url; linkUrl = null; linkBar.classList.add('hidden'); ta.focus(); } }, '✕'));
+      linkBar.classList.remove('hidden');
+    }, 600);
+  };
   const ta = h('textarea', {
     class: 'composer-input', rows: 1, placeholder: 'Digite uma mensagem  ( / para respostas rápidas )',
     value: editing ? '' : getDraft(c.jid),
@@ -605,6 +647,10 @@ function renderComposer() {
       return;
     }
     const quoted = replyTo?.id;
+    const sentUrl = firstUrl(text);
+    const linkOpts = !sentUrl ? {} : sentUrl === linkOff ? { previewUrl: false } : { previewUrl: sentUrl };
+    linkUrl = null; linkOff = null;
+    linkBar.classList.add('hidden');
     if (vocab) learnWords(vocab, text);
     ta.value = '';
     updateWords();
@@ -613,7 +659,7 @@ function renderComposer() {
     replyTo = null;
     c.composerEl.querySelector('.reply-bar')?.remove();
     try {
-      await api('messages:sendText', c.jid, text, quoted);
+      await api('messages:sendText', c.jid, text, quoted, linkOpts);
     } catch (e) {
       errToast(e);
       ta.value = text;
@@ -651,6 +697,7 @@ function renderComposer() {
     saveDraft();
     updateSuggest();
     if (!lastFix) updateWords(); // se acabou de corrigir, a faixa mostra a correção
+    updateLink();
     if (Date.now() - lastTyping > 4000) { lastTyping = Date.now(); api('chats:presence', c.jid, 'composing').catch(() => {}); }
     clearTimeout(typingTimer);
     typingTimer = setTimeout(() => api('chats:presence', c.jid, 'paused').catch(() => {}), 3000);
@@ -732,7 +779,8 @@ function renderComposer() {
   const offline = h('div', { class: `offline-banner ${state.status.state === 'open' ? 'hidden' : ''}` },
     '⚠ WhatsApp desconectado no momento — as mensagens salvas continuam disponíveis, mas não é possível enviar até reconectar.');
 
-  fill(c.composerEl, offline, replyBar, editBar, bar);
+  fill(c.composerEl, offline, replyBar, editBar, linkBar, bar);
+  if (ta.value) updateLink();
   setTimeout(() => { autosize(); ta.focus(); }, 0);
 }
 
