@@ -696,6 +696,26 @@ try {
   await page.waitForFunction(() => document.querySelectorAll('.cases-table tbody tr').length === 1);
   check((await page.locator('.cases-table tbody tr').innerText()).includes('Joana Lima'), 'busca de processos pela parte contrária');
   await shot(page, '05i-juridico-processos');
+  // cadastros repetidos: marcados na lista; "Juntar" deixa um só, com o processo
+  await page.evaluate(async () => {
+    const id1 = await window.api.call('clients:save', { name: 'Elvira Maria Palma', cpf: '293.355.071-72' });
+    const id2 = await window.api.call('clients:save', { name: 'ELVIRA MARIA PALMA', cpf: '293.355.071-72' });
+    await window.api.call('cases:save', { client_id: id2, title: 'Revisão de aposentadoria' });
+    return [id1, id2];
+  });
+  await page.click('.view-legal .seg:has-text("Clientes")');
+  await page.fill('.legal-search', 'elvira');
+  await page.waitForFunction(() => document.querySelectorAll('.clients-table tbody tr .dup-pill').length === 2);
+  check(true, 'cadastros repetidos aparecem marcados');
+  await page.locator('.clients-table tbody tr').first().locator('.dup-btn').click();
+  await page.waitForSelector('.modal .radio-row');
+  await shot(page, '05k-juntar-cadastros');
+  await page.click('.modal button:text-is("Juntar")');
+  await page.click('.modal button:text-is("Juntar") >> nth=-1');
+  await page.waitForSelector('.view-legal .client-head:has-text("ELVIRA MARIA PALMA")');
+  const elvira = await page.evaluate(() => window.api.call('clients:list', { q: 'elvira' }));
+  check(elvira.length === 1 && elvira[0].cases_open === 1, 'juntar deixa um cadastro só, com o processo');
+  await page.click('.view-legal .back-btn');
 
   // 7d) intimações: cadastrar OAB, buscar no DJEN (simulado), criar prazo, cadastrar processo encontrado
   await page.click('.view-legal .seg:has-text("Intimações")');

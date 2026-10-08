@@ -1329,3 +1329,5 @@ mark.found { background: rgba(255, 196, 0, .55); color: inherit; border-radius: 
 .radio-row:has(input:checked) { border-color: var(--accent); background: color-mix(in srgb, var(--accent) 6%, transparent); }
 .radio-row input { margin-top: 3px; }
 .radio-row > div { min-width: 0; }
+.clients-table .dup-pill { margin-left: 8px; font-size: 11px; vertical-align: 2px; }
+.clients-table .dup-btn { margin-left: 6px; vertical-align: 1px; padding: 1px 8px; }

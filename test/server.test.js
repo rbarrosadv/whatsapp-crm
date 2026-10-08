@@ -1098,10 +1098,9 @@ test('OCR: PDF escaneado (só imagem) passa a ser achado pelo conteúdo', async 
   const c = client();
   await c.req('/auth/login', { body: { login: 'barros', password: 'segredo1' } });
   await c.call('docs:reindex');
-  const before = await c.call('docs:search', 'energisa kwh');
-  assert.ok(!before.some((d) => /Comprovante de residência/.test(d.name)), 'antes do OCR o PDF não tem texto');
+  // (a fila também roda sozinha depois da releitura; "Ler agora" espera ela terminar)
   const r = await c.call('docs:ocrNow');
-  assert.ok(r.read >= 1 && r.done >= 1);
+  assert.ok(r.done >= 1, 'PDF escaneado lido');
   assert.equal(r.pending, 0);
   const hits = await c.call('docs:search', 'energisa kwh');
   const hit = hits.find((d) => /Comprovante de residência/.test(d.name));
@@ -1109,4 +1108,34 @@ test('OCR: PDF escaneado (só imagem) passa a ser achado pelo conteúdo', async 
   assert.match(hit.snippet, /ENERGISA/i);
   // não lê de novo o que já leu (mesma versão do arquivo)
   assert.equal((await c.call('docs:ocrNow')).read, 0);
+});
+
+test('cadastros repetidos: aparecem marcados, juntar leva processos/prazos/notas, excluir só sem processos', async () => {
+  const c = client();
+  await c.req('/auth/login', { body: { login: 'barros', password: 'segredo1' } });
+  const a = await c.call('clients:save', { name: 'Elvira Maria Palma de Arruda Costa', cpf: '293.355.071-72' });
+  const b = await c.call('clients:save', { name: 'ELVIRA MARIA PALMA DE ARRUDA COSTA', cpf: '293.355.071-72', email: 'elvira@exemplo.com' });
+  const k = await c.call('cases:save', { client_id: b, title: 'Revisão de aposentadoria' });
+  await c.call('tasks:save', { jid: `cliente:${b}`, case_id: k, title: 'Prazo da réplica', kind: 'prazo', due_at: Date.now() + 86400e3 });
+  await c.call('notes:add', `cliente:${a}`, 'Nota do primeiro cadastro');
+  const list = await c.call('clients:list', { q: 'elvira' });
+  assert.equal(list.length, 2);
+  assert.ok(list.every((x) => x.dup_ids?.length === 1), 'os dois marcados como repetidos');
+  // excluir: o que tem processo não pode (pede para juntar)
+  await assert.rejects(c.call('clients:delete', b), /Juntar/);
+  // juntar o vazio (a) no que tem processo (b)
+  await c.call('clients:merge', a, b);
+  const after = await c.call('clients:list', { q: 'elvira' });
+  assert.equal(after.length, 1);
+  assert.equal(after[0].id, b);
+  assert.ok(!after[0].dup_ids, 'não é mais repetido');
+  assert.equal(after[0].cases_open, 1);
+  const full = await c.call('clients:get', b);
+  assert.equal(full.email, 'elvira@exemplo.com');
+  const notes = await c.call('notes:list', `cliente:${b}`);
+  assert.ok(notes.some((n) => /primeiro cadastro/.test(n.text)), 'nota do cadastro apagado veio junto');
+  // excluir cadastro vazio
+  const e = await c.call('clients:save', { name: 'Cadastro por engano' });
+  await c.call('clients:delete', e);
+  assert.ok(!(await c.call('clients:list', { q: 'engano' })).length);
 });

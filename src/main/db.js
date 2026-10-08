@@ -1180,6 +1180,86 @@ export function linkClientChat(id, jid) {
   });
 }
 
+/**
+ * Junta um cadastro repetido (`fromId`) no que fica (`intoId`): processos,
+ * tarefas, notas, histórico, atendimentos, receitas e interessados passam para
+ * ele; campos vazios do que fica são completados; o repetido é apagado.
+ */
+export function mergeClients(fromId, intoId, userName) {
+  return tx(() => {
+    const a = getClientRaw(fromId);
+    const b = getClientRaw(intoId);
+    if (!a || !b) throw new Error('Cliente não encontrado');
+    if (a.id === b.id) throw new Error('Escolha outro cadastro para juntar.');
+    const keyA = clientKey(a);
+    const keyBOld = clientKey(b);
+    // o WhatsApp do repetido vem junto se o que fica não tem
+    const jid = b.jid || a.jid || null;
+    if (!b.jid && a.jid) run('UPDATE clients SET jid = NULL WHERE id = ?', a.id);
+    const keyB = jid || `cliente:${b.id}`;
+    // campos vazios do que fica: completa com os do repetido
+    for (const f of CLIENT_COLS) {
+      if (['name', 'status'].includes(f)) continue;
+      if ((b[f] == null || String(b[f]).trim() === '') && a[f] != null && String(a[f]).trim() !== '') run(`UPDATE clients SET ${f} = ? WHERE id = ?`, a[f], b.id);
+    }
+    if (b.status !== 'ativo' && a.status === 'ativo') run("UPDATE clients SET status = 'ativo' WHERE id = ?", b.id);
+    run('UPDATE clients SET jid = ?, updated_at = ? WHERE id = ?', jid, now(), b.id);
+    run('UPDATE cases SET client_id = ?, jid = ? WHERE client_id IN (?, ?)', b.id, keyB, a.id, b.id);
+    for (const t of ['notes', 'tasks', 'activity']) run(`UPDATE ${t} SET jid = ? WHERE jid IN (?, ?)`, keyB, keyA, keyBOld);
+    for (const t of ['incomes', 'leads', 'lead_contacts']) run(`UPDATE ${t} SET client_id = ? WHERE client_id = ?`, b.id, a.id);
+    run('DELETE FROM clients WHERE id = ?', a.id);
+    logActivity(keyB, 'client', `Cadastro repetido juntado a este: ${a.name}${a.cpf ? ` (${a.cpf})` : ''}`, userName || null);
+    return { key: keyB, folderLeft: a.folder && b.folder && a.folder !== b.folder ? a.folder : null };
+  });
+}
+
+/** O que impede excluir o cadastro (processos, receitas…); vazio = pode excluir. */
+export function clientUsage(id) {
+  const c = getClientRaw(id);
+  if (!c) return null;
+  return {
+    cases: get('SELECT COUNT(*) AS n FROM cases WHERE client_id = ?', id)?.n || 0,
+    incomes: get('SELECT COUNT(*) AS n FROM incomes WHERE client_id = ?', id)?.n || 0,
+    tasks: get('SELECT COUNT(*) AS n FROM tasks WHERE jid = ? AND done = 0', `cliente:${id}`)?.n || 0,
+  };
+}
+
+/** Apaga um cadastro sem processos nem receitas (notas e tarefas dele vão junto). */
+export function deleteClient(id) {
+  return tx(() => {
+    const c = getClientRaw(id);
+    if (!c) throw new Error('Cliente não encontrado');
+    const u = clientUsage(id);
+    if (u.cases || u.incomes) throw new Error('Este cadastro tem processos ou receitas. Use "Juntar com outro cadastro" para não perder nada.');
+    // a conversa do WhatsApp (se ligada) continua com as notas dela; só o que era do cadastro sai
+    for (const t of ['notes', 'tasks', 'activity']) run(`DELETE FROM ${t} WHERE jid = ?`, `cliente:${id}`);
+    run('UPDATE leads SET client_id = NULL WHERE client_id = ?', id);
+    run('DELETE FROM lead_contacts WHERE client_id = ? AND lead_id IS NULL', id);
+    run('DELETE FROM clients WHERE id = ?', id);
+    return c.jid || null;
+  });
+}
+
+/** Grupos de cadastros que parecem o mesmo cliente (CPF/CNPJ igual ou mesmo nome). */
+export function duplicateClients() {
+  const rows = all('SELECT id, name, cpf FROM clients');
+  const norm = (x) => String(x || '').normalize('NFD').replace(/\p{M}/gu, '').toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim();
+  const groups = new Map();
+  for (const c of rows) {
+    const d = String(c.cpf || '').replace(/\D/g, '');
+    for (const key of [d.length >= 11 ? `doc:${d}` : null, norm(c.name).length >= 5 ? `nome:${norm(c.name)}` : null].filter(Boolean)) {
+      if (!groups.has(key)) groups.set(key, new Set());
+      groups.get(key).add(c.id);
+    }
+  }
+  const dup = new Map(); // id → ids do mesmo grupo
+  for (const ids of groups.values()) {
+    if (ids.size < 2) continue;
+    for (const id of ids) dup.set(id, [...new Set([...(dup.get(id) || []), ...ids])].filter((x) => x !== id));
+  }
+  return dup;
+}
+
 /** Cliente da conversa; cria um com os dados do contato se ainda não houver. */
 export function ensureClientForChat(jid, userName) {
   const have = clientByJid(jid);

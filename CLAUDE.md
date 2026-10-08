@@ -280,6 +280,12 @@ Motor (`src/main`, sem Electron apesar do nome da pasta):
   telefone ou nome); opção do escritório `waSaveContacts` salva o contato no
   WhatsApp (`wa.saveContact` → `addOrEditContact`, em fila com 5 s, nunca em
   lote). Cliente novo pode já criar a pasta no OneDrive.
+  **Repetidos**: `duplicateClients` (mesmo CPF/CNPJ ou nome) → `dup_ids` em
+  `clients:list/get` (selo "Repetido" + "Juntar"); `clients:merge(de, para)`
+  (`mergeClients`: processos, tarefas, notas, histórico, receitas, interessados e
+  atendimentos vão para o que fica, campos vazios completados, WhatsApp vem junto
+  se o que fica não tem; estagiário não); `clients:delete` só sócio e só sem
+  processos/receitas (`clientUsage`).
 - `importer.js` + `sheet.js` — **Importar processos** (LinkLei e afins; `.xlsx`
   lido sem dependência, ou `.csv`): `detectColumns` (nº pelo conteúdo),
   `parseImport` (repetidos uma vez, problemas à parte, partes do título "A x B"),

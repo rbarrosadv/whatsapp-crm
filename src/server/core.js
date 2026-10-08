@@ -1178,12 +1178,33 @@ export async function createCore({ dataDir, demo = false, version = '', safeStor
 
     // casos
     // clientes (o centro do sistema; o WhatsApp é um canal ligado a eles)
-    'clients:list': (_c, opts) => db.listClients(opts || {}),
+    'clients:list': (_c, opts) => {
+      const dup = db.duplicateClients();
+      return db.listClients(opts || {}).map((c) => (dup.has(c.id) ? { ...c, dup_ids: dup.get(c.id) } : c));
+    },
+    'clients:usage': (_c, id) => db.clientUsage(id),
+    // cadastro repetido: tudo passa para o que fica
+    'clients:merge': (ctx, fromId, intoId) => {
+      const before = db.getClient(fromId);
+      const r = db.mergeClients(fromId, intoId, ctx.user.name);
+      if (before?.jid) wa.markChanged(before.jid);
+      clientChanged(intoId);
+      send('clients:changed', fromId);
+      send('cases:changed', r.key);
+      return r;
+    },
+    'clients:delete': (_c, id) => {
+      const jid = db.deleteClient(id);
+      if (jid) wa.markChanged(jid);
+      send('clients:changed', id);
+      return true;
+    },
     'clients:get': (_c, id) => {
       const cl = db.getClient(id);
       if (!cl) throw new Error('Cliente não encontrado');
       const chat = cl.jid ? db.getChat(cl.jid) : null;
-      return { ...cl, chat: chat ? { jid: chat.jid, display_name: chat.display_name, unread: chat.unread, last_ts: chat.last_ts, last_preview: chat.last_preview } : null };
+      const dup = db.duplicateClients().get(cl.id);
+      return { ...cl, dup_ids: dup || [], chat: chat ? { jid: chat.jid, display_name: chat.display_name, unread: chat.unread, last_ts: chat.last_ts, last_preview: chat.last_preview } : null };
     },
     'clients:lookupCep': async (_c, cep) => {
       const d = String(cep || '').replace(/\D/g, '');

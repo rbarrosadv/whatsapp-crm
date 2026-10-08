@@ -3,7 +3,7 @@
 // do cliente reúne processos, dados, documentos, financeiro e histórico; o
 // WhatsApp aparece só como um canal ligado a ele.
 import {
-  h, fill, modal, toast, errToast, confirmDialog, fmtMoney, fmtDateTime, fmtDue, formatPhone, normalize, debounce,
+  h, fill, modal, toast, errToast, confirmDialog, fmtMoney, fmtDateTime, fmtDue, formatPhone, normalize, debounce, popupMenu,
 } from '../util.js';
 import { state, on, api, openChat, setView, stageById, openClient } from '../store.js';
 import { avatarEl } from '../components.js';
@@ -103,7 +103,13 @@ async function drawClients(el, my) {
   fill(el, h('table', { class: 'table clients-table' },
     h('thead', null, h('tr', null, ['Cliente', 'Telefone', 'Processos', 'Próximo prazo', ''].map((t) => h('th', null, t)))),
     h('tbody', null, list.map((c) => h('tr', { class: 'clickable', onclick: () => { clientId = c.id; clientTab = 'processos'; render(); } },
-      h('td', null, h('b', null, c.name), c.cpf ? h('div', { class: 'muted small mono' }, c.cpf) : null),
+      h('td', null, h('b', null, c.name),
+        c.dup_ids?.length ? h('span', { class: 'status-pill warn dup-pill', title: 'Há outro cadastro com o mesmo nome ou CPF/CNPJ' }, 'Repetido') : null,
+        c.cpf ? h('div', { class: 'muted small mono' }, c.cpf) : null,
+        c.dup_ids?.length && state.me?.role !== 'estagiario' ? h('button', {
+          class: 'btn btn-sm dup-btn', title: 'Juntar os cadastros repetidos num só (processos, prazos, notas e financeiro vão juntos)',
+          onclick: (e) => { e.stopPropagation(); mergeDialog(c, list); },
+        }, 'Juntar') : null),
       h('td', null, c.phone ? formatPhone(String(c.phone).replace(/\D/g, '')) : h('span', { class: 'muted' }, '—')),
       h('td', null, c.cases_open ? `${c.cases_open} em andamento` : h('span', { class: 'muted' }, c.cases_total ? 'encerrados' : '—')),
       h('td', { class: c.next_due && c.next_due < Date.now() ? 'bad-text' : '' }, c.next_due ? fmtDue(c.next_due) : ''),
@@ -111,6 +117,87 @@ async function drawClients(el, my) {
         c.overdue_payments && state.can.finance ? h('span', { class: 'bad-text small' }, `${c.overdue_payments} parcela(s)`) : null,
         c.jid ? h('span', { title: 'WhatsApp ligado' }, icon('message', 16)) : null,
         c.folder ? h('span', { title: 'Pasta no OneDrive' }, icon('folder', 16)) : null))))));
+}
+
+const caseCount = (c) => (c.cases_total ? `${c.cases_total} processo(s)${c.cases_open ? `, ${c.cases_open} em andamento` : ''}` : 'sem processos');
+
+/**
+ * Juntar cadastros repetidos: escolhe qual fica; o outro passa tudo para ele
+ * (processos, prazos, notas, histórico, atendimentos, receitas) e é apagado.
+ */
+export async function mergeDialog(c, known = []) {
+  let all = known.length ? known : await api('clients:list', { status: 'todos' }).catch(() => []);
+  if (!all.some((x) => x.id === c.id)) all = [c, ...all];
+  const byId = new Map(all.map((x) => [x.id, x]));
+  const candidates = (c.dup_ids || []).map((id) => byId.get(id)).filter(Boolean);
+  let other = candidates[0] || null;
+  let keep = null;
+  const search = h('input', { class: 'input', type: 'search', placeholder: 'Buscar o outro cadastro pelo nome ou CPF…' });
+  const results = h('div', { class: 'stack' });
+  const pair = h('div', { class: 'stack' });
+  const row = (x) => h('div', null, h('b', null, x.name), h('div', { class: 'muted small' },
+    [x.cpf, x.phone ? formatPhone(String(x.phone).replace(/\D/g, '')) : null, x.jid ? 'WhatsApp ligado' : null, caseCount(x), x.folder ? 'com pasta' : null].filter(Boolean).join(' · ')));
+  const drawPair = () => {
+    if (!other) { fill(pair, h('p', { class: 'muted small' }, 'Escolha abaixo o outro cadastro.')); return; }
+    // por padrão fica o que tem mais processos (ou o mais completo)
+    if (!keep || ![c.id, other.id].includes(keep)) keep = (other.cases_total || 0) > (c.cases_total || 0) ? other.id : c.id;
+    fill(pair, h('p', { class: 'small' }, 'Qual cadastro fica? O outro é apagado e tudo dele passa para este (processos, prazos, notas, histórico, atendimentos e receitas). Dados que faltarem no que fica são completados com os do outro.'),
+      [c, other].map((x) => h('label', { class: 'radio-row' },
+        h('input', { type: 'radio', name: 'keep', checked: keep === x.id, onchange: () => { keep = x.id; } }), row(x))));
+  };
+  const drawResults = () => {
+    const q = normalize(search.value.trim());
+    const digits = search.value.replace(/\D/g, '');
+    const list = q.length < 2 ? candidates : all.filter((x) => x.id !== c.id
+      && (normalize(x.name).includes(q) || (digits.length >= 3 && String(x.cpf || '').replace(/\D/g, '').includes(digits)))).slice(0, 8);
+    fill(results, list.filter((x) => x.id !== other?.id).map((x) => h('button', {
+      class: 'btn btn-sm', type: 'button', onclick: () => { other = x; keep = null; drawPair(); drawResults(); },
+    }, `${x.name}${x.cpf ? ` (${x.cpf})` : ''}`)));
+  };
+  search.addEventListener('input', drawResults);
+  drawPair();
+  drawResults();
+  modal({
+    title: 'Juntar cadastros repetidos',
+    wide: true,
+    body: h('div', { class: 'form' }, pair, h('div', { class: 'field' }, h('span', null, candidates.length ? 'Ou escolha outro cadastro' : 'Outro cadastro'), search, results)),
+    actions: [
+      { label: 'Cancelar' },
+      {
+        label: 'Juntar', primary: true,
+        onClick: async () => {
+          if (!other) { toast('Escolha o outro cadastro', 'error'); return false; }
+          const from = keep === c.id ? other : c;
+          const into = keep === c.id ? c : other;
+          if (!await confirmDialog(`Apagar o cadastro "${from.name}" e passar tudo dele para "${into.name}"? Isso não pode ser desfeito.`, { okLabel: 'Juntar' })) return false;
+          const r = await api('clients:merge', from.id, into.id);
+          toast('Cadastros juntados', 'success');
+          if (r.folderLeft) toast(`A pasta "${r.folderLeft}" do cadastro apagado continua no OneDrive: mova os arquivos para a pasta do cliente.`, 'info', 9000);
+          clientId = into.id;
+          clientTab = 'processos';
+          render();
+          return true;
+        },
+      },
+    ],
+  });
+}
+
+/** Excluir cadastro (só sem processos nem receitas; com eles, juntar). */
+async function deleteClientFlow(c) {
+  const u = await api('clients:usage', c.id).catch(() => null);
+  if (u && (u.cases || u.incomes)) {
+    toast('Este cadastro tem processos ou receitas: use "Juntar com outro cadastro" para não perder nada.', 'info', 7000);
+    mergeDialog(c);
+    return;
+  }
+  if (!await confirmDialog(`Excluir o cadastro "${c.name}"?${u?.tasks ? ` ${u.tasks} tarefa(s) dele também serão apagadas.` : ''} A conversa do WhatsApp (se houver) continua.`, { okLabel: 'Excluir', danger: true })) return;
+  try {
+    await api('clients:delete', c.id);
+    toast('Cadastro excluído', 'success');
+    clientId = null;
+    render();
+  } catch (e) { errToast(e); }
 }
 
 /** Cadastro rápido de cliente (nome e contato); o resto fica na ficha. */
@@ -227,7 +314,16 @@ async function renderClient(my) {
           class: 'btn', title: 'Salva o nome do cadastro na lista de contatos do WhatsApp do escritório',
           onclick: () => api('clients:saveContact', c.id).then(() => toast('Contato salvo no WhatsApp', 'success')).catch(errToast),
         }, 'Salvar contato') : null,
-        h('button', { class: 'btn btn-primary', onclick: () => newCaseDialog(null, { clientId: c.id }) }, [icon('plus', 15), 'Processo']))),
+        h('button', { class: 'btn btn-primary', onclick: () => newCaseDialog(null, { clientId: c.id }) }, [icon('plus', 15), 'Processo']),
+        state.me?.role !== 'estagiario' ? h('button', {
+          class: 'icon-btn', title: 'Mais opções',
+          onclick: (e) => popupMenu(e.currentTarget, [
+            { icon: icon('users', 15), label: 'Juntar com outro cadastro…', onClick: () => mergeDialog(c) },
+            ...(state.can.admin ? ['-', { icon: icon('trash', 15), label: 'Excluir cadastro', danger: true, onClick: () => deleteClientFlow(c) }] : []),
+          ]),
+        }, icon('more', 18)) : null)),
+    c.dup_ids?.length ? h('div', { class: 'chat-hint' }, icon('alert', 16), h('span', null, 'Há outro cadastro com o mesmo nome ou CPF/CNPJ.'),
+      h('button', { class: 'btn btn-sm', onclick: () => mergeDialog(c) }, 'Juntar os cadastros')) : null,
     chatHint,
     h('div', { class: 'tabs' }, tabs.map(([id, label]) => h('button', {
       class: `tab ${clientTab === id ? 'active' : ''}`, onclick: () => { clientTab = id; render(); },
