@@ -11,6 +11,7 @@ import os from 'node:os';
 import path from 'node:path';
 import zlib from 'node:zlib';
 import { readZip, writeZip } from './zip.js';
+import { readSheet } from './sheet.js';
 import * as db from './db.js';
 import { qualification, fullAddress, fmtDoc, fmtCep, nationalityText, maritalText, parseRep } from '../renderer/js/qualify.js';
 
@@ -26,6 +27,10 @@ export const FOLDERS = {
 };
 const PARTNERS_ONLY = [FOLDERS.financeiro, FOLDERS.administrativo];
 const HIDDEN = /^(~\$|\.|desktop\.ini$|thumbs\.db$)/i;
+const PREVIEW_KIND = [
+  [/^\.docx$/, 'docx'], [/^\.(xlsx|csv)$/, 'sheet'], [/^\.(txt|md|rtf|log)$/, 'text'], [/^\.pdf$/, 'pdf'],
+  [/^\.(png|jpe?g|gif|webp)$/, 'image'], [/^\.(mp3|ogg|oga|opus|m4a|wav)$/, 'audio'], [/^\.(mp4|webm)$/, 'video'],
+];
 const TEXT_EXT = new Set(['.docx', '.txt', '.pdf', '.md', '.rtf']);
 const MAX_TEXT = 200000;
 
@@ -70,6 +75,40 @@ export function docxText(buf) {
   return parts.map((n) => unxml(files.get(n).toString('utf8')
     .replace(/<w:tab\/>/g, '\t').replace(/<w:br[^>]*\/>/g, '\n').replace(/<\/w:p>/g, '\n').replace(/<[^>]+>/g, '')))
     .join('\n').replace(/\n{3,}/g, '\n\n').trim();
+}
+
+/**
+ * .docx em blocos simples para ver dentro do sistema (sem baixar): parágrafos
+ * com negrito/itálico/sublinhado, alinhamento, títulos e tabelas. Não é o
+ * layout exato do Word; para isso há "Editar no Word".
+ */
+export function docxBlocks(buf, max = 3000) {
+  const xml = readZip(buf).get('word/document.xml')?.toString('utf8') || '';
+  const on = (r, tag) => new RegExp(`<w:${tag}(?: w:val="(?:1|true|on)")?\\/>`).test(r);
+  const runs = (p) => [...p.matchAll(/<w:r[ >][\s\S]*?<\/w:r>/g)].map(([r]) => {
+    const text = unxml([...r.matchAll(/<w:t(?: [^>]*)?>([\s\S]*?)<\/w:t>|<w:(tab)\/>|<w:(br)[^>]*\/>/g)]
+      .map((m) => (m[2] ? '\t' : m[3] ? '\n' : m[1])).join(''));
+    return { text, b: on(r, 'b'), i: on(r, 'i'), u: /<w:u w:val="(?!none)/.test(r) };
+  }).filter((x) => x.text);
+  const para = (p) => {
+    const jc = /<w:jc w:val="(\w+)"/.exec(p)?.[1];
+    const style = /<w:pStyle w:val="([^"]+)"/.exec(p)?.[1] || '';
+    return {
+      t: 'p', runs: runs(p),
+      align: { center: 'center', right: 'right', end: 'right', both: 'justify', distribute: 'justify' }[jc] || null,
+      heading: /^(heading|t[ií]tulo|ttulo)\s*\d/i.test(style) || /^title$/i.test(style),
+    };
+  };
+  const out = [];
+  for (const [blk] of xml.matchAll(/<w:tbl>[\s\S]*?<\/w:tbl>|<w:p[ >][\s\S]*?<\/w:p>|<w:p\/>/g)) {
+    if (out.length >= max) break;
+    if (blk.startsWith('<w:tbl>')) {
+      const rows = [...blk.matchAll(/<w:tr[ >][\s\S]*?<\/w:tr>/g)].map(([tr]) => [...tr.matchAll(/<w:tc>[\s\S]*?<\/w:tc>/g)]
+        .map(([tc]) => [...tc.matchAll(/<w:p[ >][\s\S]*?<\/w:p>/g)].map(([p]) => runs(p).map((r) => r.text).join('')).join('\n')));
+      out.push({ t: 'table', rows });
+    } else out.push(blk === '<w:p/>' ? { t: 'p', runs: [] } : para(blk));
+  }
+  return out;
 }
 
 /**
@@ -272,6 +311,36 @@ export class DocsService {
     const st = this.store();
     if (!st) throw new Error('A pasta do escritório no OneDrive não está configurada. Veja em Ajustes → Documentos.');
     return st;
+  }
+
+  /**
+   * O que mostrar ao "ver" um arquivo dentro do sistema: blocos do Word,
+   * linhas da planilha, texto; PDF/imagem/áudio/vídeo a página abre direto
+   * pelo link (?inline=1).
+   */
+  async preview(rel, user) {
+    const r = this.check(rel, user);
+    const st = this.requireStore();
+    const info = await st.stat(r);
+    if (!info || info.dir) throw new Error('Arquivo não encontrado.');
+    const ext = path.extname(r).toLowerCase();
+    const base = { rel: r, name: baseOf(r), size: info.size, mtime: info.mtime, ext };
+    const kind = PREVIEW_KIND.find(([re]) => re.test(ext))?.[1] || 'none';
+    if (kind === 'docx' && info.size < 15e6) return { ...base, kind, blocks: docxBlocks(await st.read(r)) };
+    if (kind === 'sheet' && info.size < 10e6) {
+      try { return { ...base, kind, rows: readSheet(await st.read(r), r).slice(0, 300) }; } catch (e) { return { ...base, kind: 'none', note: e.message }; }
+    }
+    if (kind === 'text' && info.size < 5e6) return { ...base, kind, text: bufferText(await st.read(r), ext).slice(0, 200000) };
+    if (['pdf', 'image', 'audio', 'video'].includes(kind)) return { ...base, kind };
+    return { ...base, kind: 'none' };
+  }
+
+  /** Links para editar no Office direto no OneDrive (só no modo OneDrive). */
+  async editLinks(rel, user) {
+    const r = this.check(rel, user);
+    const st = this.requireStore();
+    if (!st.editInfo) return null;
+    return st.editInfo(r);
   }
 
   /** Caminho no disco (só no modo local: abrir no Word/Explorador). */

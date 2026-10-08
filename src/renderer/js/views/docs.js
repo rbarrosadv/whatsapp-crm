@@ -6,6 +6,7 @@ import {
 } from '../util.js';
 import { state, on, api, openChat } from '../store.js';
 import { icon } from '../icons.js';
+import { previewDoc, editDoc, touchDoc, OFFICE_RE } from './docviewer.js';
 
 const KINDS = [
   [/\.(docx?|odt|rtf)$/i, 'doc'], [/\.pdf$/i, 'pdf'], [/\.(xlsx?|csv|ods)$/i, 'sheet'], [/\.(pptx?)$/i, 'slides'],
@@ -17,7 +18,15 @@ const base = (rel) => String(rel || '').split('/').pop() || 'BARROS ADVOGADOS';
 const join = (...p) => p.filter(Boolean).join('/');
 
 /** Abre o documento (Word no app de desktop; cópia no navegador). */
-export function openDocument(d) { openDoc(d).catch(errToast); }
+/**
+ * Abrir: no app de desktop com a pasta neste computador abre o arquivo de
+ * verdade; senão mostra dentro do sistema (sem baixar cópia).
+ */
+export async function openDocument(d) {
+  if (d.dir) return openDoc(d).catch(errToast);
+  if (window.desktop?.openDoc && await window.desktop.openDoc(d.rel).catch(() => false)) { touchDoc(d, 'open'); return; }
+  return previewDoc(d);
+}
 
 // ------------------------------------------------------------ navegador de pastas
 
@@ -43,16 +52,35 @@ export function folderBrowser(el, { top, start, caseId, clientId }) {
         h('div', { class: 'crumbs grow' }, crumbs),
         h('button', { class: 'icon-btn', title: 'Atualizar (ver o que mudou no OneDrive agora)', onclick: () => render(true) }, icon('refresh', 16)),
         h('button', { class: 'btn btn-sm btn-primary', onclick: () => templatePicker({ caseId, clientId, dirRel: rel, onDone: () => render() }) }, 'Novo do modelo'),
-        h('button', { class: 'btn btn-sm', onclick: () => upload() }, [icon('plus', 15), 'Enviar arquivos']),
+        h('button', { class: 'btn btn-sm', title: 'Ou arraste os arquivos do computador para cá', onclick: () => upload() }, [icon('plus', 15), 'Enviar arquivos']),
         h('button', { class: 'btn btn-sm', title: 'Criar uma subpasta aqui', onclick: () => mkdir() }, [icon('plus', 15), 'Pasta']),
         window.desktop?.openDoc ? h('button', { class: 'btn btn-sm', title: 'Abrir esta pasta no Explorador de Arquivos', onclick: () => openDocument({ rel, dir: true, name: base(rel) }) }, 'Abrir no Windows') : null),
       !r.exists ? h('p', { class: 'muted small' }, 'Esta pasta não existe mais no OneDrive.')
         : r.entries.length ? h('div', { class: 'doc-list' }, r.entries.map((d) => entryRow(d, { onOpenDir: () => go(d.rel), caseId })))
-          : h('p', { class: 'muted small' }, 'Pasta vazia. Envie arquivos ou crie um documento a partir de um modelo.'));
+          : h('p', { class: 'muted small' }, 'Pasta vazia. Arraste arquivos para cá, envie ou crie um documento a partir de um modelo.'));
   }
   const go = (to) => { rel = to; render(); };
-  async function upload() {
-    const files = await pickFiles();
+  // arrastar arquivos do computador para a pasta aberta (um ouvinte só por elemento,
+  // mesmo que a pasta seja redesenhada várias vezes)
+  el.__dropTo = (files) => upload(files);
+  if (!el.__dropBound) {
+    el.__dropBound = true;
+    let depth = 0;
+    const hasFiles = (e) => [...(e.dataTransfer?.types || [])].includes('Files');
+    el.addEventListener('dragenter', (e) => { if (!hasFiles(e)) return; e.preventDefault(); depth++; el.classList.add('drop-target'); });
+    el.addEventListener('dragover', (e) => { if (hasFiles(e)) { e.preventDefault(); e.dataTransfer.dropEffect = 'copy'; } });
+    el.addEventListener('dragleave', () => { if (--depth <= 0) { depth = 0; el.classList.remove('drop-target'); } });
+    el.addEventListener('drop', (e) => {
+      if (!hasFiles(e)) return;
+      e.preventDefault();
+      depth = 0;
+      el.classList.remove('drop-target');
+      const files = [...e.dataTransfer.files].filter((f) => f.size > 0 || f.type);
+      if (files.length) el.__dropTo(files);
+    });
+  }
+  async function upload(dropped) {
+    const files = dropped || await pickFiles();
     if (!files.length) return;
     try {
       toast('Enviando…');
@@ -78,7 +106,8 @@ function entryRow(d, { onOpenDir, caseId } = {}) {
       h('div', { class: 'muted small' }, [d.mtime ? fmtDateTime(d.mtime) : null, d.size != null ? fmtSize(d.size) : null].filter(Boolean).join(' · '))),
     d.dir ? h('button', { class: 'btn btn-sm', onclick: onOpenDir }, 'Entrar')
       : [
-        h('button', { class: 'btn btn-sm', onclick: () => openDocument(d) }, 'Abrir'),
+        h('button', { class: 'btn btn-sm', onclick: () => openDocument(d) }, 'Ver'),
+        OFFICE_RE.test(d.name) ? h('button', { class: 'btn btn-sm', title: 'Abrir no Word/Excel direto do OneDrive: o que salvar vai para a pasta do escritório', onclick: () => editDoc(d) }, 'Editar') : null,
         /\.docx$/i.test(d.name) ? h('button', { class: 'btn btn-sm', title: 'Fazer uma cópia deste documento na pasta de um caso', onclick: () => useAsBaseDialog(d, { caseId }) }, 'Usar como base') : null,
         h('button', { class: 'icon-btn small', title: window.desktop?.showDoc ? 'Mostrar na pasta' : 'Baixar uma cópia', onclick: () => showDoc(d).catch(errToast) }, window.desktop?.showDoc ? icon('folder', 16) : icon('download', 16)),
       ]);
@@ -123,7 +152,9 @@ export async function templatePicker({ caseId, clientId, dirRel, onDone } = {}) 
       m.close?.();
       toast(`Criado: ${base(r.rel)}`, 'success', 5000);
       onDone?.();
-      openDocument({ rel: r.rel, url: r.url, name: base(r.rel) });
+      const nd = { rel: r.rel, url: r.url, name: base(r.rel) };
+      touchDoc(nd, 'create');
+      (OFFICE_RE.test(nd.name) ? editDoc(nd) : openDocument(nd));
     } catch (e) { errToast(e); }
   }
 }
@@ -158,7 +189,9 @@ export async function useAsBaseDialog(d, { caseId } = {}) {
       if (!info.folder) await api('docs:createCaseFolder', id, { clientFolder: info.clientFolder || info.clientSuggestion?.rel });
       const r = await api('docs:useAsBase', d.rel, { caseId: id });
       toast(`Cópia criada: ${base(r.rel)}`, 'success', 5000);
-      openDocument({ rel: r.rel, url: r.url, name: base(r.rel) });
+      const nd = { rel: r.rel, url: r.url, name: base(r.rel) };
+      touchDoc(nd, 'create');
+      (OFFICE_RE.test(nd.name) ? editDoc(nd) : openDocument(nd));
     } catch (e) { errToast(e); }
   }
 }
@@ -254,14 +287,14 @@ async function render() {
   let st;
   try { st = await api('docs:status'); } catch (e) { errToast(e); return; }
   const tabs = h('div', { class: 'segmented' },
-    [['busca', 'Buscar'], ['modelos', 'Modelos'], ['pastas', 'Pastas']].map(([id, label]) => h('button', {
+    [['busca', 'Buscar'], ['recentes', 'Recentes'], ['modelos', 'Modelos'], ['pastas', 'Pastas']].map(([id, label]) => h('button', {
       class: `seg ${tab === id ? 'active' : ''}`, onclick: () => { tab = id; render(); },
     }, label)));
   const body = h('div', { class: 'docs-body' });
   fill(root,
     h('div', { class: 'page-head' },
       h('div', null, h('h2', null, 'Documentos'),
-        h('div', { class: 'muted small' }, st.ok ? `Pasta do escritório: ${st.root}` : 'Pasta do escritório não configurada')),
+        h('div', { class: 'muted small' }, st.ok ? `Pasta do escritório: ${st.mode === 'onedrive' ? `${st.onedrive?.folder?.name || 'BARROS ADVOGADOS'} (OneDrive)` : st.root}` : 'Pasta do escritório não configurada')),
       st.ok ? tabs : null),
     st.ok ? body : h('div', { class: 'panel' },
       h('p', null, 'O sistema precisa saber onde está a pasta ', h('b', null, 'BARROS ADVOGADOS'), ' do OneDrive.'),
@@ -270,8 +303,33 @@ async function render() {
         : h('p', { class: 'muted' }, 'Peça a um sócio para configurar em Ajustes → Documentos.')));
   if (!st.ok) return;
   if (tab === 'busca') renderSearch(body, st);
+  else if (tab === 'recentes') renderRecent(body);
   else if (tab === 'modelos') renderTemplates(body);
   else folderBrowser(body, { top: '', start: st.folders.includes('02 CLIENTES') ? '02 CLIENTES' : '' });
+}
+
+const ACTION_LABEL = { open: 'aberto', edit: 'editado', create: 'criado', upload: 'enviado', save: 'salvo do WhatsApp' };
+
+/** Os arquivos que você abriu, editou ou criou por último. */
+async function renderRecent(el) {
+  fill(el, h('p', { class: 'muted small' }, 'Carregando…'));
+  let list;
+  try { list = await api('docs:recent'); } catch (e) { fill(el, h('p', { class: 'muted' }, e.message)); return; }
+  if (!list.length) {
+    fill(el, h('p', { class: 'muted' }, 'Os arquivos que você abrir, editar ou criar aparecem aqui, para voltar a eles rápido.'));
+    return;
+  }
+  fill(el, h('div', { class: 'doc-list recent-list' }, list.map((d) => h('div', { class: 'doc-row' },
+    h('span', { class: 'doc-icon' }, docIcon(d)),
+    h('div', { class: 'grow doc-main', ondblclick: () => openDocument(d) },
+      h('div', { class: 'ellipsis' }, d.name),
+      h('div', { class: 'muted small ellipsis' }, `${d.folder || 'BARROS ADVOGADOS'} · ${ACTION_LABEL[d.action] || 'aberto'} ${fmtDateTime(d.at)}`)),
+    h('button', { class: 'btn btn-sm', onclick: () => openDocument(d) }, 'Ver'),
+    OFFICE_RE.test(d.name) ? h('button', { class: 'btn btn-sm', onclick: () => editDoc(d) }, 'Editar') : null,
+    h('button', {
+      class: 'icon-btn small', title: 'Tirar da lista',
+      onclick: () => api('docs:forgetRecent', d.rel).then(() => renderRecent(el)).catch(errToast),
+    }, icon('x', 14))))));
 }
 
 function renderSearch(el, st) {
@@ -298,7 +356,8 @@ function renderSearch(el, st) {
           h('div', { class: 'ellipsis' }, highlight(d.name, lastQuery)),
           h('div', { class: 'muted small ellipsis' }, `${d.folder} · ${fmtDateTime(d.mtime)}`),
           d.snippet ? h('div', { class: 'snippet small' }, highlight(d.snippet, lastQuery)) : null),
-        h('button', { class: 'btn btn-sm', onclick: () => openDocument(d) }, 'Abrir'),
+        h('button', { class: 'btn btn-sm', onclick: () => openDocument(d) }, 'Ver'),
+        OFFICE_RE.test(d.name) ? h('button', { class: 'btn btn-sm', onclick: () => editDoc(d) }, 'Editar') : null,
         /\.docx$/i.test(d.name) ? h('button', { class: 'btn btn-sm', onclick: () => useAsBaseDialog(d) }, 'Usar como base') : null,
         h('button', { class: 'icon-btn small', title: window.desktop?.showDoc ? 'Mostrar na pasta' : 'Baixar', onclick: () => showDoc(d).catch(errToast) }, window.desktop?.showDoc ? icon('folder', 16) : icon('download', 16))))
         : h('p', { class: 'muted' }, 'Nada encontrado. Tente menos palavras ou sem o nome completo.'));

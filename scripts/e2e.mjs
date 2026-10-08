@@ -588,11 +588,26 @@ try {
   await page.click('.tpl-item:has-text("PROCURAÇÃO AD JUDICIA")');
   await page.waitForSelector('.modal-case .doc-row:has-text("PROCURAÇÃO AD JUDICIA")', { timeout: 8000 });
   check(true, 'cria a procuração do modelo na pasta do caso');
+  // abre para ver dentro do sistema (sem baixar), já preenchida
+  await page.waitForSelector('.modal-preview .doc-page:has-text("CARLOS PEREIRA")', { timeout: 8000 });
+  check(true, 'documento novo aparece dentro do sistema, sem baixar');
+  await shot(page, '05g2-ver-documento');
+  await page.click('.modal-preview .modal-actions button:has-text("Fechar")');
   await shot(page, '05g-caso-pasta');
   const made = await page.evaluate(() => window.api.call('docs:search', 'procuracao 123.456.789-00'));
   check(made.some((d) => /PROCURAÇÃO AD JUDICIA/.test(d.name)), 'procuração preenchida com o CPF da ficha');
   await page.keyboard.press('Escape');
   await page.keyboard.press('Escape');
+  // Documentos → Recentes mostra o que acabou de ser criado
+  await page.click('.rail-btn[title="Documentos"]');
+  await page.click('.view-docs .seg:has-text("Recentes")');
+  await page.waitForSelector('.view-docs .recent-list .doc-row:has-text("PROCURAÇÃO AD JUDICIA")');
+  const firstRecent = await page.locator('.view-docs .recent-list .doc-row').first().innerText();
+  check(firstRecent.includes('criado'), `Recentes: o documento criado aparece primeiro (${firstRecent.replace(/\s+/g, ' ')})`);
+  await page.locator('.view-docs .recent-list .doc-row').first().locator('button:has-text("Ver")').click();
+  await page.waitForSelector('.modal-preview .doc-page');
+  await page.keyboard.press('Escape');
+  await page.click('.view-docs .seg:has-text("Buscar")');
 
   // 7c) cliente sem WhatsApp: cadastro, processo, busca no Jurídico
   await page.click('.rail-btn[title="Jurídico"]');

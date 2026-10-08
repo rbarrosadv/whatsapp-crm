@@ -83,8 +83,8 @@ Motor (`src/main`, sem Electron apesar do nome da pasta):
   `meta`, `contact_types`, `chat_filters`, `cases`,
   `payments`, `case_docs`, `users`, `sessions`, `doc_index`, `clients`,
   `case_parties`, `case_moves`, `case_steps`, `case_checklist`, `oabs`,
-  `intimations`, `expenses`, `incomes`, `leads`, `lead_contacts`, `push_subs`, `case_hints` (migrações por versão em
-  `migrate()`; `meta.schema` guarda a versão atual — v19).
+  `intimations`, `expenses`, `incomes`, `leads`, `lead_contacts`, `push_subs`, `case_hints`, `doc_recent`, `doc_ocr` (migrações por versão em
+  `migrate()`; `meta.schema` guarda a versão atual — v20).
 - `docs.js` — `DocsService`: pasta "BARROS ADVOGADOS" do escritório, sempre
   por caminho relativo (`clients.folder`, `cases.folder`, conferido por
   `safeRel` — sem `..`), sobre um **armazenamento** (`storage.js`):
@@ -122,6 +122,18 @@ Motor (`src/main`, sem Electron apesar do nome da pasta):
   enviar/mover; `docs:list(rel, {fresh})` = botão Atualizar; o índice relê tudo
   a cada 15 min das 6h às 22h e renova o cache). Modelos aceitam qualquer tipo
   de arquivo (só .docx é preenchido).
+  **Ver e editar** (`views/docviewer.js`): "Ver" abre por cima (`docs:preview`:
+  Word em blocos via `docxBlocks`, planilha em linhas, texto; PDF/foto/áudio/vídeo
+  pela rota `/docs/file/<rel>?inline=1` — só `INLINE_EXT`, `X-Frame-Options
+  SAMEORIGIN`; no OneDrive o servidor repassa o arquivo). "Editar" (`docs:editLinks`
+  → `GraphStore.editInfo`): Word/Excel do computador no próprio arquivo do OneDrive
+  (`ms-word:ofe|u|https://d.docs.live.net/<drive>/<caminho>`, app de desktop
+  `openOffice`) ou Word online (`webUrl`); salvar = salvar no OneDrive. Modo local:
+  `desktop.openDoc` abre o arquivo de verdade. **Recentes** (`doc_recent`, v20,
+  `docs:touch/recent/forgetRecent`; "abrir" não apaga criado/editado/salvo).
+  Arrastar arquivos para a pasta aberta (`folderBrowser`). **Anexo do WhatsApp →
+  pasta** (`docs:messageTargets/saveMessage`: pasta do cliente, `_CADASTRO` ou do
+  processo aberto, com a data no nome).
   Testado com uma "Microsoft" de mentira (`test/onedrive.test.js`).
 - `workflow.js` — as **10 etapas do caso** (`STEPS`, do documento do projeto)
   e `computeSteps(caso, {manual, checklist, payments})`: etapas que se

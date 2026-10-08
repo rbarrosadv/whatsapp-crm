@@ -37,7 +37,7 @@ function client() {
     const text = await r.text();
     let json = null;
     try { json = JSON.parse(text); } catch { /* não é JSON */ }
-    return { status: r.status, json, text };
+    return { status: r.status, json, text, headers: r.headers };
   };
   const call = async (method, ...args) => {
     const r = await req(`/api/${method}`, { body: { args } });
@@ -1051,4 +1051,44 @@ test('INSS administrativo: situação gera prazos e aviso ao cliente, conferênc
   const imp = (await c.call('cases:list', {})).filter((x) => x.import_batch === st.batch);
   assert.ok(imp.every((x) => x.kind === 'inss' && x.inss_status === 'analise' && x.client_id), 'protocolos com o segurado como cliente');
   assert.ok(imp.some((x) => x.inss_benefit === 'BPC/LOAS'));
+});
+
+test('documentos: anexo do WhatsApp vai para a pasta do cliente/processo, recentes, ver sem baixar', async () => {
+  const c = client();
+  await c.req('/auth/login', { body: { login: 'barros', password: 'segredo1' } });
+  const chats = (await c.call('chats:list')).filter((x) => !x.is_group && x.jid.endsWith('@s.whatsapp.net'));
+  const linked = new Set((await c.call('clients:list', { status: 'todos' })).map((x) => x.jid).filter(Boolean));
+  const free = chats.find((x) => !linked.has(x.jid));
+  if (free) assert.equal((await c.call('docs:messageTargets', free.jid)).client, null, 'sem cliente: nada a oferecer');
+  const chat = free || chats[0];
+  const up = await c.req('/upload', { raw: Buffer.from('RG frente e verso'), headers: { 'X-File-Name': encodeURIComponent('rg.txt') } });
+  const [mid] = await c.call('messages:sendFiles', chat.jid, [up.json.token]);
+  await wait(150);
+  const cid = (await c.call('clients:list', { status: 'todos' })).find((x) => x.jid === chat.jid)?.id || await c.call('clients:fromChat', chat.jid);
+  const folder = await c.call('docs:createClientFolder', cid);
+  const k = await c.call('cases:save', { client_id: cid, title: 'Aposentadoria' });
+  await c.call('docs:createCaseFolder', k);
+  const t = await c.call('docs:messageTargets', chat.jid);
+  assert.deepEqual(t.targets.slice(0, 2).map((x) => x.rel), [folder, `${folder}/_CADASTRO`]);
+  const caseTarget = t.targets.find((x) => x.caseId === k);
+  assert.ok(caseTarget, 'pasta do processo aberto');
+  const r = await c.call('docs:saveMessage', chat.jid, mid, `${folder}/_CADASTRO`, 'RG');
+  assert.match(r.rel, new RegExp(`^${folder}/_CADASTRO/\\d{4}-\\d{2}-\\d{2} - RG\\.txt$`), 'data no começo e extensão mantida');
+  const listed = await c.call('docs:list', `${folder}/_CADASTRO`);
+  assert.ok(listed.entries.some((e) => e.rel === r.rel));
+  const rec = await c.call('docs:recent');
+  assert.equal(rec[0].rel, r.rel);
+  assert.equal(rec[0].action, 'save');
+  // ver dentro do sistema: texto e Word
+  const pv = await c.call('docs:preview', r.rel);
+  assert.equal(pv.kind, 'text');
+  assert.equal(pv.text, 'RG frente e verso');
+  const inl = await c.req(`${pv.url}?inline=1`);
+  assert.equal(inl.status, 200);
+  assert.equal(inl.headers.get('x-frame-options'), 'SAMEORIGIN', 'pode aparecer dentro do sistema');
+  assert.equal((await c.req(`${pv.url}`)).headers.get('x-frame-options'), 'DENY', 'sem inline continua bloqueado');
+  // pasta local (demonstração): não há link do OneDrive, edita no programa do computador
+  assert.equal(await c.call('docs:editLinks', r.rel), null);
+  await c.call('docs:forgetRecent', r.rel);
+  assert.ok(!(await c.call('docs:recent')).some((x) => x.rel === r.rel));
 });

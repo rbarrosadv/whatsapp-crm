@@ -268,6 +268,8 @@ ipcMain.handle('desktop', async (_e, action, ...args) => {
     case 'openUrl': openFromServer(args[0], 'open', args[1]); return null;
     case 'saveUrl': openFromServer(args[0], 'save', args[1]); return null;
     case 'openExternal': if (/^https?:/i.test(args[0])) shell.openExternal(args[0]); return null;
+    // Word/Excel/PowerPoint do computador abrindo o arquivo do próprio OneDrive (salva lá)
+    case 'openOffice': if (/^ms-(word|excel|powerpoint):ofe\|u\|https:\/\/[^\s"]+$/i.test(String(args[0]))) { await shell.openExternal(args[0]); return true; } return false;
     // documento da pasta do escritório: no modo "neste computador" abre o
     // arquivo de verdade (no Word, no Explorador), para editar e salvar no OneDrive
     case 'openDoc': {

@@ -71,6 +71,7 @@ export class LocalStore {
 
 // ------------------------------------------------------------ OneDrive (Microsoft Graph)
 
+const OFFICE_APP = [[/\.(docx?|docm|dotx|rtf|odt)$/i, 'word'], [/\.(xlsx?|xlsm|csv|ods)$/i, 'excel'], [/\.(pptx?|ppsx|odp)$/i, 'powerpoint']];
 export const GRAPH = 'https://graph.microsoft.com/v1.0';
 
 /**
@@ -235,6 +236,27 @@ export class GraphStore {
     });
     this.forget(from);
     this.forget(to);
+  }
+
+  /**
+   * Para editar no Office sem baixar cópia: o Word/Excel do computador abre o
+   * arquivo do próprio OneDrive (ms-word:ofe|u|https://d.docs.live.net/…) e o
+   * Word online pelo webUrl. Salvar = salvar no OneDrive.
+   */
+  async editInfo(rel) {
+    const it = await this.req(`${this.itemUrl(rel)}?$select=id,name,webUrl,parentReference`, {}, { allow404: true });
+    if (!it) throw new Error('Arquivo não encontrado no OneDrive.');
+    this.forget(rel); // vai mudar por fora: a próxima lista busca de novo
+    const app = OFFICE_APP.find(([re]) => re.test(it.name))?.[1] || null;
+    const ref = it.parentReference || {};
+    const at = ref.path ? String(ref.path).indexOf('root:') : -1;
+    let live = null;
+    if (at >= 0) {
+      const parts = decodeURIComponent(String(ref.path).slice(at + 5)).split('/').filter(Boolean);
+      live = `https://d.docs.live.net/${encodeURIComponent(ref.driveId || this.driveId)}/${[...parts, it.name].map(encodeURIComponent).join('/')}`;
+    }
+    const target = live || it.webUrl || null;
+    return { app, webUrl: it.webUrl || null, desktopUrl: app && target ? `ms-${app}:ofe|u|${target}` : null };
   }
 
   /** Link temporário (pré-autorizado) para baixar/abrir o arquivo. */

@@ -37,14 +37,24 @@ function fakeMicrosoft() {
     id: x.id, name: x.name, lastModifiedDateTime: new Date(x.mtime).toISOString(),
     ...(x.folder ? { folder: { childCount: children(x.id).length } } : { file: {}, size: x.content.length }),
     '@microsoft.graph.downloadUrl': x.folder ? undefined : `https://download.example/${x.id}`,
-    parentReference: { driveId: 'DRIVE1' },
+    parentReference: { driveId: 'DRIVE1', path: `/drives/DRIVE1/root:${pathOf(x.parent)}` },
+    webUrl: `https://onedrive.live.com/edit?id=${x.id}`,
   });
+  const pathOf = (id) => {
+    const parts = [];
+    for (let cur = items.get(id); cur; cur = items.get(cur.parent)) parts.unshift(cur.name);
+    return parts.length ? `/${parts.map(encodeURIComponent).join('/')}` : '';
+  };
   const json = (o, status = 200) => new Response(JSON.stringify(o), { status, headers: { 'Content-Type': 'application/json' } });
   const calls = [];
   const fetch = async (url, init = {}) => {
     const u = new URL(url);
     const method = init.method || 'GET';
     calls.push(`${method} ${u.pathname}`);
+    if (u.host === 'download.example') { // link pré-autorizado: sem token
+      const it = items.get(u.pathname.slice(1));
+      return it ? new Response(it.content, { status: 200 }) : new Response('', { status: 404 });
+    }
     if (u.host === 'login.microsoftonline.com') {
       const body = new URLSearchParams(String(init.body));
       if (!['authorization_code', 'refresh_token'].includes(body.get('grant_type'))) return json({ error: 'invalid_request' }, 400);
@@ -173,6 +183,31 @@ test('OneDrive pela API: conectar, pasta compartilhada, pastas, modelo, busca, a
   const list = await c.call('docs:list', kf);
   assert.ok(list.entries.some((e) => e.name === made.rel.split('/').pop()));
 
+  // ver sem baixar: Word em blocos; PDF/imagem pelo servidor (?inline=1)
+  const pv = await c.call('docs:preview', made.rel);
+  assert.equal(pv.kind, 'docx');
+  assert.ok(pv.blocks.some((b) => b.runs?.some((r) => /FULANA DE TAL/.test(r.text))));
+  const docxUrl = (await c.call('docs:list', kf)).entries.find((e) => e.rel === made.rel).url;
+  const asDownload = await c.req(`${docxUrl}?inline=1`, { redirect: 'manual' });
+  assert.equal(asDownload.status, 302, 'Word não abre inline: vai para o link de baixar');
+  const pdfDir = ms.byPath(kf);
+  ms.items.set('PDF1', { id: 'PDF1', name: 'peticao.pdf', parent: pdfDir.id, folder: false, content: Buffer.from('%PDF-1.4 teste'), mtime: Date.now() });
+  const inl = await c.req(`/docs/file/${kf.split('/').map(encodeURIComponent).join('/')}/peticao.pdf?inline=1`);
+  assert.equal(inl.status, 200, 'PDF passa pelo servidor para ver na tela');
+  assert.equal(inl.headers.get('content-type'), 'application/pdf');
+  assert.equal(inl.headers.get('x-frame-options'), 'SAMEORIGIN');
+  assert.equal(await inl.text(), '%PDF-1.4 teste');
+  // editar no Word: abre o arquivo do próprio OneDrive (d.docs.live.net), não uma cópia
+  const ed = await c.call('docs:editLinks', made.rel);
+  assert.equal(ed.app, 'word');
+  assert.match(ed.desktopUrl, /^ms-word:ofe\|u\|https:\/\/d\.docs\.live\.net\/DRIVE1\/BARROS%20ADVOGADOS\/02%20CLIENTES\//);
+  assert.match(ed.webUrl, /^https:\/\/onedrive\.live\.com\//);
+  // recentes
+  await c.call('docs:touch', made.rel, 'edit');
+  const rec = await c.call('docs:recent');
+  assert.equal(rec[0].rel, made.rel);
+  assert.equal(rec[0].action, 'edit');
+
   // encerrar → pasta do cliente vai para o arquivo morto (move na Microsoft)
   await c.call('cases:archive', k, { action: 'close' });
   const to = await c.call('docs:archiveFolder', k);
@@ -180,6 +215,7 @@ test('OneDrive pela API: conectar, pasta compartilhada, pastas, modelo, busca, a
   assert.ok(ms.byPath(to) && !ms.byPath(cf), 'movida no OneDrive');
   assert.ok((await c.call('docs:search', 'outorgante fulana')).every((d) => d.rel.startsWith('03 ARQUIVO MORTO/')), 'busca acompanha');
   assert.ok(ms.calls.some((x) => x.startsWith('PATCH')));
+  assert.ok((await c.call('docs:recent'))[0].rel.startsWith('03 ARQUIVO MORTO/'), 'recentes acompanham o arquivo morto');
 
   // cache: a mesma pasta de novo não consulta a Microsoft; "Atualizar" (fresh) consulta
   await c.call('docs:list', '04 MODELOS');

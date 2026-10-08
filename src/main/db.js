@@ -9,7 +9,7 @@ import { fullAddress, sameName } from '../renderer/js/qualify.js';
 
 let db;
 
-const SCHEMA_VERSION = 19;
+const SCHEMA_VERSION = 20;
 
 // Tipos de contato (editáveis). `personal` = não conta como trabalho
 // (fica fora de "Aguardando resposta" e dos avisos de conversa esquecida).
@@ -479,6 +479,18 @@ function migrate() {
       kind TEXT NOT NULL, ts INTEGER, title TEXT NOT NULL, text TEXT, ref TEXT NOT NULL,
       status TEXT NOT NULL DEFAULT 'nova', created_at INTEGER NOT NULL, done_at INTEGER, done_by TEXT,
       UNIQUE (case_id, kind, ref)
+    );
+  `);
+
+  // v20: arquivos que cada pessoa abriu/criou (Documentos → Recentes) e a leitura
+  // por OCR dos PDFs escaneados (feita aos poucos, uma vez por versão do arquivo)
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS doc_recent (
+      user_id INTEGER NOT NULL, rel TEXT NOT NULL, action TEXT, at INTEGER NOT NULL,
+      PRIMARY KEY (user_id, rel)
+    );
+    CREATE TABLE IF NOT EXISTS doc_ocr (
+      rel TEXT PRIMARY KEY, mtime INTEGER NOT NULL, status TEXT NOT NULL, pages INTEGER, at INTEGER NOT NULL
     );
   `);
 
@@ -1278,7 +1290,27 @@ export function renameFolderPrefix(from, to) {
   for (const t of ['clients', 'cases']) {
     run(`UPDATE ${t} SET folder = ? || substr(folder, ?) WHERE folder = ? OR folder LIKE ? || '/%'`, to, String(from).length + 1, from, from);
   }
+  run("UPDATE OR REPLACE doc_recent SET rel = ? || substr(rel, ?) WHERE rel LIKE ? || '/%'", to, String(from).length + 1, from);
 }
+
+// ------------------------------------------------------------ documentos recentes
+
+/** Arquivo aberto/criado/editado por alguém (guarda os 60 últimos de cada pessoa). */
+export function touchDoc(userId, rel, action = 'open') {
+  if (!userId || !rel) return;
+  // só "abrir" não apaga o que foi feito antes (criado, editado, salvo do WhatsApp…)
+  run(`INSERT INTO doc_recent (user_id, rel, action, at) VALUES (?, ?, ?, ?)
+    ON CONFLICT (user_id, rel) DO UPDATE SET at = excluded.at,
+      action = CASE WHEN excluded.action = 'open' THEN doc_recent.action ELSE excluded.action END`, userId, rel, action, now());
+  run('DELETE FROM doc_recent WHERE user_id = ? AND rel NOT IN (SELECT rel FROM doc_recent WHERE user_id = ? ORDER BY at DESC LIMIT 60)', userId, userId);
+}
+
+export function recentDocs(userId, limit = 40) {
+  return all(`SELECT r.rel, r.action, r.at, i.size, i.mtime FROM doc_recent r LEFT JOIN doc_index i ON i.rel = r.rel
+    WHERE r.user_id = ? ORDER BY r.at DESC LIMIT ?`, userId, limit);
+}
+
+export function forgetRecentDoc(userId, rel) { run('DELETE FROM doc_recent WHERE user_id = ? AND rel = ?', userId, rel); }
 
 /** Campos de controle do processo (fora do formulário). */
 export function setCaseMeta(id, fields) {

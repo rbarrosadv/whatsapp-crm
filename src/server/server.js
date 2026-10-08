@@ -7,6 +7,7 @@
 import http from 'node:http';
 import path from 'node:path';
 import fs from 'node:fs';
+import { Readable } from 'node:stream';
 import crypto from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import { WebSocketServer } from 'ws';
@@ -32,6 +33,9 @@ const MIME = {
   '.xls': 'application/vnd.ms-excel', '.xlsx': 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
 };
 
+// o que dá para ver dentro do sistema sem baixar (nunca HTML/SVG: poderiam rodar código)
+const INLINE_EXT = /^\.(pdf|png|jpe?g|gif|webp|txt|mp3|ogg|oga|opus|m4a|wav|mp4|webm)$/;
+const PREVIEW_CSP = "default-src 'none'; img-src 'self' data: blob:; media-src 'self'; style-src 'unsafe-inline'; frame-ancestors 'self'";
 const CSP = "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; "
   + "media-src 'self' data: blob:; connect-src 'self'; frame-ancestors 'none'; base-uri 'self'; form-action 'self'";
 
@@ -76,7 +80,7 @@ async function readJson(req) {
 }
 
 /** Serve um arquivo (com suporte a Range, para áudio e vídeo poderem avançar). */
-function serveFile(req, res, file, { download, cache = 'no-cache', csp } = {}) {
+function serveFile(req, res, file, { download, cache = 'no-cache', csp, headers: extra } = {}) {
   let st;
   try { st = fs.statSync(file); } catch { res.writeHead(404); res.end('não encontrado'); return; }
   if (!st.isFile()) { res.writeHead(404); res.end('não encontrado'); return; }
@@ -95,6 +99,7 @@ function serveFile(req, res, file, { download, cache = 'no-cache', csp } = {}) {
     'Accept-Ranges': 'bytes',
   };
   if (csp) headers['Content-Security-Policy'] = csp;
+  if (extra) Object.assign(headers, extra);
   if (download) headers['Content-Disposition'] = `attachment; filename*=UTF-8''${encodeURIComponent(download)}`;
   const range = /^bytes=(\d*)-(\d*)$/.exec(req.headers.range || '');
   if (range && (range[1] || range[2])) {
@@ -349,11 +354,33 @@ export async function startServer({
         return back('onedrive=ok');
       } catch (e) { return back('onedrive=erro&msg=' + encodeURIComponent(e.message)); }
     }
-    // arquivos da pasta do escritório (OneDrive), com a mesma regra de quem vê o quê
+    // arquivos da pasta do escritório (OneDrive), com a mesma regra de quem vê o quê.
+    // ?inline=1 = para ver dentro do sistema (PDF, imagem, áudio/vídeo, texto),
+    // só nesses tipos; o resto sempre baixa.
     if (p.startsWith('/docs/file/') && (req.method === 'GET' || req.method === 'HEAD')) {
       let rel;
       try { rel = core.docs.check(p.slice(11), user); } catch { res.writeHead(404); return res.end(); }
+      const ext = path.extname(rel).toLowerCase();
+      const inline = url.searchParams.get('inline') === '1' && INLINE_EXT.test(ext);
       const file = core.docs.localPath(rel);
+      if (inline) {
+        const extra = { 'X-Frame-Options': 'SAMEORIGIN', 'Content-Security-Policy': PREVIEW_CSP, 'Content-Disposition': 'inline' };
+        if (file) return serveFile(req, res, file, { cache: 'private, no-cache', headers: extra });
+        // OneDrive: o servidor busca e repassa (o link da Microsoft manda baixar e é de outro endereço)
+        try {
+          const st = core.docs.store();
+          const link = await st?.downloadUrl?.(rel);
+          if (!link) { res.writeHead(404); return res.end(); }
+          const r = await (st.fetch || fetch)(link);
+          if (!r.ok || !r.body) { res.writeHead(502); return res.end(); }
+          res.writeHead(200, {
+            'Content-Type': MIME[ext] || 'application/octet-stream', 'Cache-Control': 'private, no-cache', 'X-Content-Type-Options': 'nosniff',
+            ...(r.headers.get('content-length') ? { 'Content-Length': r.headers.get('content-length') } : {}), ...extra,
+          });
+          if (req.method === 'HEAD') return res.end();
+          return Readable.fromWeb(r.body).pipe(res);
+        } catch (e) { return sendJson(res, 502, { error: e.message }); }
+      }
       if (file) return serveFile(req, res, file, { download: url.searchParams.get('download') || undefined, csp: "default-src 'none'; img-src 'self'; media-src 'self'; style-src 'unsafe-inline'; sandbox" });
       // OneDrive pela API: link temporário da Microsoft (o arquivo vem direto de lá)
       try {

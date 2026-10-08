@@ -1730,6 +1730,43 @@ export async function createCore({ dataDir, demo = false, version = '', safeStor
       else if (Date.now() - docs.lastIndex > 600e3) docs.reindex().catch(() => {});
       return docs.search(q, ctx.user, opts).map((d) => ({ ...d, url: docUrl(d.rel) }));
     },
+    'docs:preview': async (ctx, rel) => {
+      const p = await docs.preview(rel, ctx.user);
+      return { ...p, url: docUrl(p.rel) };
+    },
+    'docs:editLinks': (ctx, rel) => docs.editLinks(rel, ctx.user),
+    // anexo do WhatsApp → pasta do cliente/processo no OneDrive
+    'docs:messageTargets': async (ctx, chatJid) => {
+      const cl = db.clientByJid(chatJid);
+      if (!cl) return { client: null, targets: [] };
+      const targets = [];
+      const clientFolder = cl.folder && await docs.exists(cl.folder) ? cl.folder : null;
+      if (clientFolder) {
+        targets.push({ rel: clientFolder, label: 'Pasta do cliente' });
+        targets.push({ rel: `${clientFolder}/_CADASTRO`, label: 'Documentos pessoais (_CADASTRO)' });
+      }
+      for (const k of db.listCases({ clientId: cl.id, includeClosed: false })) {
+        if (k.folder && docs.allowed(k.folder, ctx.user)) targets.push({ rel: k.folder, label: `Processo: ${k.title}${k.process_number ? ` (${k.process_number})` : ''}`, caseId: k.id });
+      }
+      return { client: { id: cl.id, name: cl.name, folder: clientFolder }, targets: targets.filter((t) => docs.allowed(t.rel, ctx.user)) };
+    },
+    'docs:saveMessage': async (ctx, chatJid, msgId, dirRel, newName) => {
+      const m = db.getMessage(chatJid, msgId);
+      if (!m) throw new Error('Mensagem não encontrada');
+      // clique de uma pessoa: pode pedir o arquivo ao WhatsApp (nunca em lote)
+      const rel = m.media_file && fs.existsSync(resolveMedia(m.media_file)) ? m.media_file : await wa.downloadMedia(chatJid, msgId);
+      const ext = path.extname(m.media_name || rel);
+      let name = String(newName || '').trim() || m.media_name
+        || `${{ image: 'foto', video: 'video', audio: 'audio', ptt: 'audio', sticker: 'figurinha' }[m.type] || 'arquivo'} do WhatsApp${ext}`;
+      if (ext && !name.toLowerCase().endsWith(ext.toLowerCase())) name += ext;
+      const [saved] = await docs.saveFiles(dirRel, [{ path: resolveMedia(rel), name }], ctx.user);
+      db.touchDoc(ctx.user.id, saved, 'save');
+      return { rel: saved, url: docUrl(saved) };
+    },
+    'docs:touch': (ctx, rel, action) => { db.touchDoc(ctx.user.id, docs.check(rel || '', ctx.user), ['open', 'edit', 'create', 'upload', 'save'].includes(action) ? action : 'open'); return true; },
+    'docs:recent': (ctx) => db.recentDocs(ctx.user.id).filter((r) => docs.allowed(r.rel, ctx.user))
+      .map((r) => ({ ...r, name: r.rel.split('/').pop(), folder: r.rel.split('/').slice(0, -1).join('/'), url: docUrl(r.rel) })),
+    'docs:forgetRecent': (ctx, rel) => { db.forgetRecentDoc(ctx.user.id, rel); return true; },
     'docs:reindex': async () => ({ changed: await docs.reindex(), ...(await docs.status()) }),
     'docs:templates': async () => (await docs.templates()).map((t) => ({ ...t, url: docUrl(t.rel) })),
     'docs:clientFolder': async (_c, clientId) => {
@@ -1838,6 +1875,7 @@ export async function createCore({ dataDir, demo = false, version = '', safeStor
       const files = uploads(tokens);
       const saved = await docs.saveFiles(dirRel, files, ctx.user);
       for (const f of files) fs.rmSync(path.dirname(f.path), { recursive: true, force: true });
+      for (const rel of saved) db.touchDoc(ctx.user.id, rel, 'upload');
       return saved;
     },
     'docs:values': (_c, { clientId, caseId } = {}) => {

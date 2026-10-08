@@ -1305,3 +1305,27 @@ h2, h3 { letter-spacing: -0.01em; }
 
 /* palavra encontrada pela busca, dentro da mensagem */
 mark.found { background: rgba(255, 196, 0, .55); color: inherit; border-radius: 3px; padding: 0 1px; }
+
+/* ver arquivo sem baixar */
+.modal.modal-preview { width: min(980px, 96vw); max-height: 94vh; }
+.modal-preview .modal-body { display: flex; flex-direction: column; gap: 8px; }
+.doc-preview { display: flex; flex-direction: column; gap: 8px; min-height: 0; }
+.doc-frame { width: 100%; height: 72vh; border: 1px solid var(--border); border-radius: 8px; background: #fff; }
+.doc-media { width: 100%; max-height: 70vh; }
+.doc-page { background: #fff; color: #1d1d1f; border: 1px solid var(--border); border-radius: 8px; padding: 32px 40px; max-height: 70vh; overflow: auto; font-family: Cambria, Georgia, 'Times New Roman', serif; font-size: 15px; line-height: 1.5; }
+.doc-page p { margin: 0 0 8px; white-space: pre-wrap; }
+.doc-page h4 { margin: 12px 0 8px; font-size: 17px; }
+.doc-table { border-collapse: collapse; margin: 8px 0; width: 100%; }
+.doc-table td { border: 1px solid #c8c8cc; padding: 4px 8px; vertical-align: top; white-space: pre-wrap; }
+.doc-text { white-space: pre-wrap; max-height: 70vh; overflow: auto; background: var(--bg-soft, var(--panel)); border: 1px solid var(--border); border-radius: 8px; padding: 12px; font-size: 13px; }
+.doc-sheet { max-height: 70vh; overflow: auto; }
+.doc-none { display: flex; flex-direction: column; align-items: center; gap: 6px; padding: 32px 0; text-align: center; color: var(--muted); }
+@media (max-width: 760px) {
+  .doc-frame { height: 64dvh; }
+  .doc-page { padding: 16px; font-size: 14px; }
+}
+.drop-target { outline: 2px dashed var(--accent); outline-offset: 4px; border-radius: 10px; background: color-mix(in srgb, var(--accent) 6%, transparent); }
+.radio-row { display: flex; gap: 10px; align-items: flex-start; padding: 8px 10px; border: 1px solid var(--border); border-radius: 8px; cursor: pointer; }
+.radio-row:has(input:checked) { border-color: var(--accent); background: color-mix(in srgb, var(--accent) 6%, transparent); }
+.radio-row input { margin-top: 3px; }
+.radio-row > div { min-width: 0; }

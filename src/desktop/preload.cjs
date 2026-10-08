@@ -11,6 +11,7 @@ contextBridge.exposeInMainWorld('desktop', {
   saveUrl: (url, name) => call('saveUrl', url, name),
   openExternal: (url) => call('openExternal', url),
   openDoc: (rel) => call('openDoc', rel),
+  openOffice: (url) => call('openOffice', url),
   showDoc: (rel) => call('showDoc', rel),
   focus: () => call('focus'),
   flash: () => call('flash'),

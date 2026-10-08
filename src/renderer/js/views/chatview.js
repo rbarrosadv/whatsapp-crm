@@ -165,6 +165,48 @@ async function attachToCase(anchor, m) {
   popupMenu(anchor, list.map((k) => ({ icon: icon('folder', 15), label: k.title, onClick: () => attach(k.id) })));
 }
 
+/** Anexo da mensagem → pasta do cliente ou do processo no OneDrive (com a data no nome). */
+async function saveToFolder(m) {
+  const jid = current.jid;
+  let info;
+  try { info = await api('docs:messageTargets', jid); } catch (e) { errToast(e); return; }
+  if (!info.client) { toast('Esta conversa ainda não está ligada a um cliente. Cadastre ou ligue o cliente na ficha ao lado.', 'info', 6000); return; }
+  if (!info.targets.length) {
+    if (await confirmDialog(`${info.client.name} ainda não tem pasta no OneDrive. Criar a pasta do cliente agora?`, { okLabel: 'Criar pasta' })) {
+      try { await api('docs:createClientFolder', info.client.id); } catch (e) { errToast(e); return; }
+      saveToFolder(m);
+    }
+    return;
+  }
+  const ext = (m.media_name || '').match(/\.[^.]+$/)?.[0] || '';
+  const name = h('input', { class: 'input', value: (m.media_name || '').replace(/\.[^.]+$/, ''), placeholder: 'ex.: RG, comprovante de residência, contracheque' });
+  let chosen = info.targets.find((t) => t.caseId) || info.targets[0];
+  const list = h('div', { class: 'stack' });
+  const drawList = () => fill(list, info.targets.map((t) => h('label', { class: 'radio-row' },
+    h('input', { type: 'radio', name: 'dest', checked: t === chosen, onchange: () => { chosen = t; } }),
+    h('div', null, h('div', null, t.label), h('div', { class: 'muted small ellipsis' }, t.rel)))));
+  drawList();
+  modal({
+    title: `Salvar na pasta de ${info.client.name}`,
+    body: h('div', { class: 'form' },
+      h('label', { class: 'field' }, h('span', null, `Nome do arquivo${ext ? ` (${ext})` : ''}`), name),
+      h('p', { class: 'muted small' }, 'A data de hoje entra no começo do nome (AAAA-MM-DD - …).'),
+      h('div', { class: 'field' }, h('span', null, 'Onde salvar'), list)),
+    actions: [
+      { label: 'Cancelar' },
+      {
+        label: 'Salvar na pasta', primary: true,
+        onClick: async () => {
+          toast('Salvando no OneDrive…');
+          const r = await api('docs:saveMessage', jid, m.id, chosen.rel, name.value.trim());
+          toast(`Salvo: ${r.rel.split('/').pop()}`, 'success', 5000);
+          return true;
+        },
+      },
+    ],
+  });
+}
+
 // ---------------------------------------------------------------- mensagens
 
 function renderMessages() {
@@ -548,6 +590,7 @@ function viewImage(url, m) {
   openImageViewer(items, index, {
     actions: (x) => [
       { label: icon('paperclip', 18), title: 'Anexar ao caso', onClick: (e) => attachToCase(e.currentTarget, x) },
+      { label: icon('folder', 18), title: 'Salvar na pasta do cliente', onClick: () => saveToFolder(x) },
       { label: icon('save', 18), title: 'Salvar como…', onClick: () => saveMedia(x.media_file, x.media_name || `imagem-${x.id}.jpg`) },
       { label: icon('open', 18), title: 'Abrir em outro programa', onClick: () => openMedia(x.media_file, x.media_name || `imagem-${x.id}.jpg`).catch(errToast) },
     ],
@@ -562,7 +605,8 @@ function msgMenu(anchor, m) {
     ...(m.text ? [{ icon: icon('note', 15), label: 'Salvar como nota do contato', onClick: () => saveAsNote(m) }] : []),
     ...(m.text ? [{ icon: icon('bell', 15), label: 'Criar tarefa a partir desta mensagem', onClick: () => import('./crmpanel.js').then((x) => x.taskDialog({ jid: current.jid, title: m.text.slice(0, 120) })) }] : []),
     ...(['image', 'video', 'audio', 'ptt', 'document', 'sticker'].includes(m.type) && !m.deleted
-      ? [{ icon: icon('paperclip', 15), label: 'Anexar ao caso…', onClick: () => attachToCase(anchor, m) }] : []),
+      ? [{ icon: icon('paperclip', 15), label: 'Anexar ao caso…', onClick: () => attachToCase(anchor, m) },
+        { icon: icon('folder', 15), label: 'Salvar na pasta do cliente…', onClick: () => saveToFolder(m) }] : []),
     ...(m.media_file ? [
       { icon: icon('save', 15), label: 'Salvar arquivo como…', onClick: () => saveMedia(m.media_file, m.media_name) },
     ] : []),
