@@ -229,6 +229,12 @@ export class DemoWhatsAppService extends WhatsAppService {
     this.applyReaction(chatJid, id, { from: 'me', text: emoji });
   }
 
+  // no demo não há celular para sincronizar: apaga daqui e finge que sincronizou
+  async deleteForMe(chatJid, id) {
+    await super.deleteForMe(chatJid, id);
+    return { synced: true };
+  }
+
   async forwardMessage(chatJid, id, targets) {
     this.requireSock();
     const { m, msg } = this.forwardable(chatJid, id);

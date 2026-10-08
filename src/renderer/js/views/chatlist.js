@@ -109,7 +109,7 @@ export function mountChatList(root) {
         if (!c) continue;
         frag.append(h('div', {
           class: 'chat-row search-hit',
-          onclick: () => openChat(c.jid),
+          onclick: () => openChat(c.jid, { focusId: m.id, query: filters.q }),
         },
         h('div', { class: 'chat-main' },
           h('div', { class: 'chat-top' }, h('span', { class: 'chat-name' }, c.display_name), h('span', { class: 'chat-time' }, fmtListTime(m.ts))),

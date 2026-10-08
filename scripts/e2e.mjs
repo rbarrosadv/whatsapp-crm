@@ -203,6 +203,41 @@ try {
   await page.waitForSelector('.msg.out .deleted');
   check(await page.locator('.msg:has-text("Sem cartão")').count() === 0, 'mensagem sua tem também "Apagar para todos"');
 
+  // busca dentro das mensagens: clicar no resultado abre a conversa no ponto da mensagem
+  await page.locator('.chat-row', { hasText: 'Ana Beatriz' }).click();
+  await page.waitForSelector('.chat-head:has-text("Ana Beatriz")');
+  await page.fill('input.search', 'anúncio');
+  await page.locator('.chat-row.search-hit', { hasText: 'Mariana Souza' }).first().click();
+  await page.waitForSelector('.chat-head:has-text("Mariana Souza")');
+  const found = page.locator('.msg', { hasText: 'Vi o anúncio de vocês' });
+  await found.locator('mark.found').waitFor({ timeout: 5000 });
+  const inView = await found.evaluate((el) => {
+    const r = el.getBoundingClientRect();
+    const box = document.querySelector('.messages').getBoundingClientRect();
+    return r.top >= box.top && r.bottom <= box.bottom;
+  });
+  check(inView, 'resultado da busca abre a conversa na mensagem encontrada (com a palavra destacada)');
+  await shot(page, '03g-busca-mensagem');
+  await page.fill('input.search', '');
+  await page.waitForTimeout(300);
+
+  // conversa longa: mensagem antiga encontrada → abre lá e oferece voltar às mais recentes
+  await page.evaluate(async () => {
+    await window.api.call('demo:incoming', '5511977776666', 'Protocolo XPTO-4471 do pedido', 'Cliente Antigo');
+    for (let i = 1; i <= 130; i++) await window.api.call('demo:incoming', '5511977776666', `atualização número ${i}`, 'Cliente Antigo');
+  });
+  await page.fill('input.search', 'XPTO-4471');
+  await page.locator('.chat-row.search-hit', { hasText: 'Cliente Antigo' }).first().click();
+  await page.locator('.msg', { hasText: 'Protocolo XPTO-4471' }).locator('mark.found').waitFor({ timeout: 5000 });
+  check(await page.locator('.msg:has-text("atualização número 130")').count() === 0, 'mensagem antiga: abre lá, sem carregar a conversa inteira');
+  await page.waitForSelector('.new-msgs-btn:not(.hidden):has-text("mais recentes")');
+  await page.click('.new-msgs-btn');
+  await page.waitForSelector('.msg:has-text("atualização número 130")');
+  check(true, '"Ir para as mensagens mais recentes" volta ao fim da conversa');
+  await page.fill('input.search', '');
+  await page.locator('.chat-row', { hasText: 'Mariana Souza' }).click();
+  await page.waitForSelector('.chat-head:has-text("Mariana Souza")');
+
   // rascunho: fica guardado ao trocar de conversa e aparece na lista
   await page.locator('.chat-row', { hasText: 'Ana Beatriz' }).click();
   await page.waitForSelector('.chat-head:has-text("Ana Beatriz")');

@@ -90,7 +90,10 @@ export function setView(view) {
   emit('view', view);
 }
 
-export function openChat(jid) {
+/** Abre a conversa; com `focusId`, rola até essa mensagem e a destaca (resultado da busca). */
+export function openChat(jid, { focusId = null, query = '' } = {}) {
+  state.focus = focusId ? { jid, id: focusId, query } : null;
+  if (focusId && state.activeJid === jid) { emit('focus-message', state.focus); return; }
   state.activeJid = jid;
   if (state.view !== 'inbox') { state.view = 'inbox'; emit('view', 'inbox'); }
   emit('active', jid);

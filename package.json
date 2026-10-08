@@ -1,7 +1,7 @@
 {
   "name": "whatsapp-crm",
   "productName": "WhatsApp CRM",
-  "version": "4.10.0",
+  "version": "4.11.0",
   "description": "CRM de desktop com WhatsApp integrado (conexão por QR code, sessão salva e conversas armazenadas localmente)",
   "main": "src/main/index.js",
   "type": "module",

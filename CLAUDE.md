@@ -196,6 +196,13 @@ Interface (`src/renderer`, JS puro em módulos ES, sem build):
   (`deleteForMe`: `chatModify({deleteForMe})` sincroniza com o celular e apaga
   a linha; sem conexão apaga só aqui e avisa) e, nas suas, "Apagar para todos"
   (`deleteForEveryone`).
+- **Busca → mensagem**: clicar num resultado "Mensagens" chama
+  `openChat(jid, {focusId, query})`; o chatview carrega `messages:around`
+  (`db.messagesAround`: 40 antes/40 depois), rola até ela, `flash` e
+  `mark.found` na palavra. Se há mais novas fora da tela, `current.detached`:
+  rolar para baixo carrega (`loadNewer`), o botão "Ir para as mensagens mais
+  recentes" volta ao fim (`reloadLatest`), mensagens novas não são coladas
+  no fim (e ao enviar volta ao fim).
 - **Editar mensagem**: só texto seu, até 15 min (`editableCheck`);
   `sendMessage(jid, { text, edit: key })`. No composer, `editing` mostra a
   faixa "Editando" (Esc cancela). Fotos abrem em `views/imageviewer.js`

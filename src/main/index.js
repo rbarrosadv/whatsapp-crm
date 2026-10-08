@@ -448,6 +448,7 @@ const api = {
 
   // mensagens
   'messages:list': (jid, opts) => db.listMessages(chatOrThrow(jid), opts || {}),
+  'messages:around': (jid, id) => db.messagesAround(chatOrThrow(jid), id),
   'messages:search': (q) => db.searchMessages(String(q || '')),
   'messages:sendText': async (jid, text, quotedId, opts = {}) => {
     // previewUrl: link cujo cartão foi mostrado na hora de escrever; false = você tirou o cartão

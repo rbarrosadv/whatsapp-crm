@@ -770,3 +770,6 @@ body.discreet-msgs .link-card:hover { filter: none; }
 .forwarded { font-size: 12px; font-style: italic; color: var(--muted); }
 .pick-check { font-size: 17px; width: 20px; text-align: center; color: var(--accent); }
 .forward-preview { max-height: 64px; overflow: hidden; }
+
+/* palavra encontrada pela busca, dentro da mensagem */
+mark.found { background: rgba(255, 196, 0, .55); color: inherit; border-radius: 3px; padding: 0 1px; }
