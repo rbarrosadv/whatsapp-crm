@@ -1302,3 +1302,6 @@ h2, h3 { letter-spacing: -0.01em; }
   body.chat-open[data-view="inbox"] .crm-panel:not(.hidden) { bottom: 0; }
   .chatview .composer { padding-bottom: max(8px, env(safe-area-inset-bottom)); }
 }
+
+/* palavra encontrada pela busca, dentro da mensagem */
+mark.found { background: rgba(255, 196, 0, .55); color: inherit; border-radius: 3px; padding: 0 1px; }

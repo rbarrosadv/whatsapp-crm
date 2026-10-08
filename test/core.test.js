@@ -623,3 +623,18 @@ test('fotos de perfil: uma consulta por vez ao WhatsApp, sem repetir a mesma', a
   assert.equal(max, 1, 'nunca duas consultas ao mesmo tempo');
   assert.equal(calls, 2, 'a mesma foto pedida duas vezes = uma consulta');
 });
+
+test('busca: abrir a conversa no ponto da mensagem encontrada', () => {
+  const J = '5511988887777@s.whatsapp.net';
+  db.upsertChat({ jid: J });
+  for (let i = 0; i < 120; i++) {
+    db.saveMessage({ chat_jid: J, id: `AR${i}`, from_me: 0, ts: 1700000000000 + i * 1000, type: 'text', text: i === 30 ? 'número do processo 123' : `msg ${i}` });
+  }
+  const r = db.messagesAround(J, 'AR30');
+  assert.equal(r.messages.length, 30 + 1 + 40, 'até 40 antes, a encontrada e 40 depois');
+  assert.equal(r.messages[30].id, 'AR30');
+  assert.equal(r.messages[0].id, 'AR0');
+  assert.equal(r.hasNewer, true, 'há mais novas para carregar ao rolar');
+  assert.equal(db.messagesAround(J, 'AR100').hasNewer, false);
+  assert.deepEqual(db.messagesAround(J, 'NAO'), { messages: [], hasNewer: false });
+});

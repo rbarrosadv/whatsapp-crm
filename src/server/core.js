@@ -1106,6 +1106,7 @@ export async function createCore({ dataDir, demo = false, version = '', safeStor
 
     // mensagens
     'messages:list': (_c, jid, opts) => db.listMessages(chatOrThrow(jid), opts || {}),
+    'messages:around': (_c, jid, id) => db.messagesAround(chatOrThrow(jid), id),
     'messages:search': (_c, q) => db.searchMessages(String(q || '')),
     'messages:sendText': (ctx, jid, text, quotedId) => wa.sendText(chatOrThrow(jid), sign(ctx, text), quotedId),
     /** Arquivos já enviados ao servidor por /upload (cada um vira um token). */

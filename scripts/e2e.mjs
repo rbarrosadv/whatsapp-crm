@@ -165,6 +165,32 @@ try {
   await page.keyboard.press('Escape');
   await page.mouse.click(5, 5);
 
+  // busca dentro das mensagens: clicar no resultado abre a conversa no ponto da mensagem
+  await page.locator('.chat-row', { hasText: 'Ana Beatriz' }).click();
+  await page.waitForSelector('.chat-head:has-text("Ana Beatriz")');
+  await page.fill('input.search', 'anúncio');
+  await page.locator('.chat-row.search-hit', { hasText: 'Mariana Souza' }).first().click();
+  await page.waitForSelector('.chat-head:has-text("Mariana Souza")');
+  await page.locator('.msg', { hasText: 'Vi o anúncio de vocês' }).locator('mark.found').waitFor({ timeout: 5000 });
+  check(true, 'resultado da busca abre a conversa na mensagem encontrada (com a palavra destacada)');
+  // conversa longa: mensagem antiga encontrada → abre lá e oferece voltar às mais recentes
+  await page.evaluate(async () => {
+    await window.api.call('demo:incoming', '5511977776666', 'Protocolo XPTO-4471 do pedido', 'Cliente Antigo');
+    for (let i = 1; i <= 130; i++) await window.api.call('demo:incoming', '5511977776666', `atualização número ${i}`, 'Cliente Antigo');
+  });
+  await page.fill('input.search', 'XPTO-4471');
+  await page.locator('.chat-row.search-hit', { hasText: 'Cliente Antigo' }).first().click();
+  await page.locator('.msg', { hasText: 'Protocolo XPTO-4471' }).locator('mark.found').waitFor({ timeout: 5000 });
+  check(await page.locator('.msg:has-text("atualização número 130")').count() === 0, 'mensagem antiga: abre lá, sem carregar a conversa inteira');
+  await page.waitForSelector('.new-msgs-btn:not(.hidden):has-text("mais recentes")');
+  await shot(page, '03-busca-mensagem-antiga');
+  await page.click('.new-msgs-btn');
+  await page.waitForSelector('.msg:has-text("atualização número 130")');
+  check(true, '"Ir para as mensagens mais recentes" volta ao fim da conversa');
+  await page.fill('input.search', '');
+  await page.locator('.chat-row', { hasText: 'Mariana Souza' }).click();
+  await page.waitForSelector('.chat-head:has-text("Mariana Souza")');
+
   // sugestão de palavras ao digitar (aprende com o que você enviou)
   await page.fill('.composer-input', 'Preciso da procuração assinada');
   await page.keyboard.press('Enter');

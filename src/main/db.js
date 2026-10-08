@@ -913,6 +913,21 @@ export function listMessages(chatJid, { before, after, limit = 60 } = {}) {
   return rows.reverse();
 }
 
+/**
+ * Mensagens ao redor de uma (para abrir a conversa no ponto de um resultado da busca).
+ * @returns {{messages: object[], hasNewer: boolean}}
+ */
+export function messagesAround(chatJid, id, { before = 40, after = 40 } = {}) {
+  const target = get(`SELECT ${MSG_COLS}, rowid AS _r FROM messages WHERE chat_jid = ? AND id = ?`, chatJid, id);
+  if (!target) return { messages: [], hasNewer: false };
+  const older = all(`SELECT ${MSG_COLS} FROM messages WHERE chat_jid = ? AND (ts < ? OR (ts = ? AND rowid < ?))
+                     ORDER BY ts DESC, rowid DESC LIMIT ?`, chatJid, target.ts, target.ts, target._r, before).reverse();
+  const newer = all(`SELECT ${MSG_COLS} FROM messages WHERE chat_jid = ? AND (ts > ? OR (ts = ? AND rowid > ?))
+                     ORDER BY ts ASC, rowid ASC LIMIT ?`, chatJid, target.ts, target.ts, target._r, after + 1);
+  delete target._r;
+  return { messages: [...older, target, ...newer.slice(0, after)], hasNewer: newer.length > after };
+}
+
 export function oldestMessage(chatJid) {
   return get('SELECT * FROM messages WHERE chat_jid = ? AND raw IS NOT NULL ORDER BY ts ASC LIMIT 1', chatJid)
     || get('SELECT * FROM messages WHERE chat_jid = ? ORDER BY ts ASC LIMIT 1', chatJid);

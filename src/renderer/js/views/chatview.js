@@ -31,6 +31,7 @@ export function mountChatView(el, { onTogglePanel }) {
   root = el;
   on('active', (jid) => open(jid));
   on('message', onMessageEvent);
+  on('focus-message', (f) => { if (current?.jid === f.jid) jumpTo(f.id, f.query); });
   on('chats', ({ changed }) => {
     if (!current) return;
     if (changed === null || changed.includes(current.jid)) {
@@ -64,7 +65,7 @@ async function open(jid) {
   const headerEl = h('div', { class: 'chat-head' });
   const classifyEl = h('div');
   const msgsEl = h('div', { class: 'messages', onscroll: onScroll });
-  const newBtn = h('button', { class: 'new-msgs-btn hidden', onclick: () => scrollToBottom(true) }, '↓ Novas mensagens');
+  const newBtn = h('button', { class: 'new-msgs-btn hidden', onclick: () => (current.detached ? reloadLatest() : scrollToBottom(true)) }, '↓ Novas mensagens');
   const composerEl = h('div', { class: 'composer' });
   const pane = h('div', { class: 'chat-pane' }, headerEl, classifyEl, h('div', { class: 'messages-wrap' }, msgsEl, newBtn), composerEl);
   setupDrop(pane);
@@ -72,6 +73,12 @@ async function open(jid) {
   Object.assign(current, { headerEl, classifyEl, msgsEl, composerEl, newBtn });
   renderHeader();
   renderComposer();
+  // veio de um resultado da busca: abre no ponto da mensagem encontrada
+  if (state.focus?.jid === jid) {
+    const f = state.focus;
+    state.focus = null;
+    if (await jumpTo(f.id, f.query)) return;
+  }
   const msgs = await api('messages:list', jid, { limit: 80 });
   if (current?.jid !== jid) return;
   current.messages = msgs;
@@ -204,8 +211,97 @@ async function reloadOlderAfterSync(jid) {
 async function onScroll() {
   const el = current.msgsEl;
   if (el.scrollTop < 120 && !current.loadingOlder && !current.noMoreLocal) loadOlder();
+  if (current.detached) { if (nearBottom() && !current.loadingNewer) loadNewer(); return; }
   if (nearBottom()) current.newBtn.classList.add('hidden');
 }
+
+/**
+ * Abre a conversa no ponto de uma mensagem (resultado da busca): carrega as
+ * mensagens ao redor, rola até ela, destaca e marca a palavra procurada.
+ * @returns {Promise<boolean>} false se a mensagem não existe mais
+ */
+async function jumpTo(id, query = '') {
+  const c = current;
+  if (!c) return false;
+  let el = c.els.get(id);
+  if (!el) {
+    const r = await api('messages:around', c.jid, id).catch(() => null);
+    if (current !== c || !r?.messages.length) return false;
+    c.messages = r.messages;
+    c.noMoreLocal = false;
+    c.detached = r.hasNewer; // há mensagens mais novas que não estão na tela
+    renderMessages();
+    el = c.els.get(id);
+  }
+  if (!el) return false;
+  markQuery(el, query);
+  el.scrollIntoView({ block: 'center' });
+  flash(el);
+  showLatestBtn();
+  return true;
+}
+
+/** Destaca a palavra procurada dentro do texto da mensagem. */
+function markQuery(el, query) {
+  const q = String(query || '').trim();
+  const textEl = el.querySelector('.text');
+  if (!q || !textEl) return;
+  const fold = (x) => x.normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase();
+  const fq = fold(q);
+  const walker = document.createTreeWalker(textEl, NodeFilter.SHOW_TEXT);
+  const nodes = [];
+  while (walker.nextNode()) nodes.push(walker.currentNode);
+  for (const node of nodes) {
+    const t = node.nodeValue;
+    const i = fold(t).indexOf(fq); // remover acentos não muda o tamanho em pt-BR
+    if (i < 0) continue;
+    const mark = document.createElement('mark');
+    mark.className = 'found';
+    mark.textContent = t.slice(i, i + q.length);
+    node.replaceWith(t.slice(0, i), mark, t.slice(i + q.length));
+  }
+}
+
+function showLatestBtn() {
+  const b = current?.newBtn;
+  if (!b) return;
+  b.textContent = current.detached ? '↓ Ir para as mensagens mais recentes' : '↓ Novas mensagens';
+  b.classList.toggle('hidden', !current.detached);
+}
+
+/** Rolando para baixo depois de pular para uma mensagem antiga: traz as seguintes. */
+async function loadNewer() {
+  const c = current;
+  c.loadingNewer = true;
+  const last = c.messages[c.messages.length - 1];
+  const newer = await api('messages:list', c.jid, { after: (last?.ts || 0) - 1, limit: 60 }).catch(() => []);
+  c.loadingNewer = false;
+  if (current !== c) return;
+  const known = new Set(c.messages.map((m) => m.id));
+  const fresh = newer.filter((m) => !known.has(m.id));
+  if (newer.length < 60) c.detached = false;
+  if (fresh.length) {
+    const top = c.msgsEl.scrollTop;
+    c.messages = [...c.messages, ...fresh];
+    renderMessages();
+    c.msgsEl.scrollTop = top;
+  }
+  showLatestBtn();
+}
+
+/** Volta para o fim da conversa (as mensagens mais recentes). */
+async function reloadLatest() {
+  const c = current;
+  const msgs = await api('messages:list', c.jid, { limit: 80 });
+  if (current !== c) return;
+  c.messages = msgs;
+  c.noMoreLocal = msgs.length < 80;
+  c.detached = false;
+  renderMessages();
+  scrollToBottom();
+  showLatestBtn();
+}
+
 
 async function loadOlder() {
   const c = current;
@@ -226,6 +322,7 @@ async function loadOlder() {
 
 async function maybeFetchNewer() {
   const c = current;
+  if (c.detached) return; // longe do fim (veio da busca): carrega ao rolar
   const newest = c.messages[c.messages.length - 1]?.ts || 0;
   const chat = state.chats.get(c.jid);
   if (!chat || chat.last_ts <= newest || c.fetchingNewer) return;
@@ -258,7 +355,14 @@ function onMessageEvent({ chatJid, id, removed, message }) {
     current.els.delete(id);
     return;
   }
-  if (message) upsertMessage(message, true);
+  if (!message) return;
+  // olhando mensagens antigas (veio da busca): a nova fica para quando descer
+  if (current.detached && !current.els.has(message.id)) {
+    if (message.from_me) reloadLatest(); // você enviou: volta para o fim para ver
+    else showLatestBtn();
+    return;
+  }
+  upsertMessage(message, true);
 }
 
 function upsertMessage(m, fromLive) {
