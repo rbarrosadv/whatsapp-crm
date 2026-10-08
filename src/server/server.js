@@ -80,9 +80,17 @@ function serveFile(req, res, file, { download, cache = 'no-cache', csp } = {}) {
   let st;
   try { st = fs.statSync(file); } catch { res.writeHead(404); res.end('não encontrado'); return; }
   if (!st.isFile()) { res.writeHead(404); res.end('não encontrado'); return; }
+  // sem mudança desde a última vez → 304 (o navegador usa o que já tem, sem baixar de novo)
+  const lastMod = new Date(Math.floor(st.mtimeMs / 1000) * 1000).toUTCString();
+  if (!download && !req.headers.range && req.headers['if-modified-since'] === lastMod) {
+    res.writeHead(304, { 'Cache-Control': cache, 'Last-Modified': lastMod });
+    res.end();
+    return;
+  }
   const headers = {
     'Content-Type': MIME[path.extname(file).toLowerCase()] || 'application/octet-stream',
     'Cache-Control': cache,
+    'Last-Modified': lastMod,
     'X-Content-Type-Options': 'nosniff',
     'Accept-Ranges': 'bytes',
   };
@@ -102,6 +110,27 @@ function serveFile(req, res, file, { download, cache = 'no-cache', csp } = {}) {
   res.writeHead(200, { ...headers, 'Content-Length': st.size });
   if (req.method === 'HEAD') { res.end(); return; }
   fs.createReadStream(file).pipe(res);
+}
+
+/**
+ * index.html com <link rel="modulepreload"> de todos os módulos da interface:
+ * o navegador pede todos de uma vez, em vez de descobrir um import de cada vez
+ * (cada nível da cadeia custava uma ida e volta até o servidor).
+ */
+function serveIndex(res) {
+  const html = fs.readFileSync(path.join(RENDERER, 'index.html'), 'utf-8');
+  const mods = [];
+  const walk = (dir, rel) => {
+    for (const d of fs.readdirSync(dir, { withFileTypes: true })) {
+      if (d.isDirectory()) walk(path.join(dir, d.name), `${rel}${d.name}/`);
+      else if (d.name.endsWith('.js')) mods.push(`${rel}${d.name}`);
+    }
+  };
+  walk(path.join(RENDERER, 'js'), 'js/');
+  const links = mods.sort().map((m) => `<link rel="modulepreload" href="${m}">`).join('\n');
+  const out = Buffer.from(html.replace('</head>', `${links}\n</head>`));
+  res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8', 'Cache-Control': 'no-cache', 'Content-Security-Policy': CSP, 'X-Content-Type-Options': 'nosniff', 'Content-Length': out.length });
+  res.end(out);
 }
 
 /** Caminho dentro de `base` (nunca fora dela). */
@@ -372,6 +401,7 @@ export async function startServer({
     // ---------------------------------------------------- interface
     if (req.method === 'GET' || req.method === 'HEAD') {
       const rel = p === '/' ? 'index.html' : p.slice(1);
+      if (rel === 'index.html') return serveIndex(res);
       const file = inside(RENDERER, rel);
       if (file) return serveFile(req, res, file, { csp: CSP });
     }

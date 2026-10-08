@@ -1,7 +1,7 @@
 {
   "name": "whatsapp-crm",
   "productName": "Barros Associados",
-  "version": "5.3.3",
+  "version": "5.3.4",
   "description": "Sistema de gestão do escritório Barros Associados: WhatsApp integrado, casos, financeiro e agenda, para a equipe toda (servidor + app de desktop + navegador/celular)",
   "main": "src/desktop/main.js",
   "type": "module",
