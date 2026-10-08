@@ -666,3 +666,34 @@ test('links: cartão que chega é gravado com imagem; pré-visualização lê a 
   assert.equal(info.title, 'Notícia');
   assert.equal(toUrlInfo('x', null), null);
 });
+
+test('encaminhar: texto recebido e mídia; marca "Encaminhada"', async () => {
+  const A = '5511900001111@s.whatsapp.net';
+  const B = '5511900002222@s.whatsapp.net';
+  await wa.onMessages([
+    { key: { remoteJid: A, fromMe: false, id: 'FW1' }, message: { conversation: 'Segue o número do processo' }, messageTimestamp: now() },
+    { key: { remoteJid: A, fromMe: false, id: 'FW2' }, message: { documentMessage: { fileName: 'rg.pdf', mimetype: 'application/pdf', mediaKey: Buffer.alloc(32, 1) } }, messageTimestamp: now() },
+  ], 'notify');
+  const enviados = [];
+  wa.sock = { sendMessage: async (to, content) => {
+    enviados.push([to, content]);
+    const inner = content.forward.message;
+    const type = Object.keys(inner)[0];
+    // o Baileys copia a mensagem e marca isForwarded no contextInfo
+    const message = type === 'conversation'
+      ? { extendedTextMessage: { text: inner.conversation, contextInfo: { isForwarded: true, forwardingScore: 1 } } }
+      : { [type]: { ...inner[type], contextInfo: { isForwarded: true, forwardingScore: 1 } } };
+    return { key: { remoteJid: to, fromMe: true, id: `S${enviados.length}` }, message, messageTimestamp: now() };
+  } };
+  wa.state = { state: 'open' };
+  assert.deepEqual(await wa.forwardMessage(A, 'FW1', [B, B]), [B], 'sem repetir destino');
+  assert.equal(enviados[0][1].forward.message.conversation, 'Segue o número do processo', 'texto recebido sem cópia crua é montado');
+  const fw = db.getMessage(B, 'S1');
+  assert.equal(fw.text, 'Segue o número do processo');
+  assert.equal(JSON.parse(fw.extra).forwarded, true);
+  await wa.forwardMessage(A, 'FW2', [B]);
+  assert.equal(enviados[1][1].forward.message.documentMessage.fileName, 'rg.pdf', 'mídia vai com a mensagem original');
+  await assert.rejects(wa.forwardMessage(A, 'NAO-EXISTE', [B]), /não encontrada/);
+  wa.sock = null;
+  wa.state = { state: 'idle' };
+});

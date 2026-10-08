@@ -765,3 +765,8 @@ body[data-msgfont="xl"] { --msg-fs: 18.5px; --composer-fs: 18px; }
 .link-compose .icon-btn { flex: none; }
 body.discreet-msgs .link-card { filter: blur(6px); }
 body.discreet-msgs .link-card:hover { filter: none; }
+
+/* encaminhar */
+.forwarded { font-size: 12px; font-style: italic; color: var(--muted); }
+.pick-check { font-size: 17px; width: 20px; text-align: center; color: var(--accent); }
+.forward-preview { max-height: 64px; overflow: hidden; }

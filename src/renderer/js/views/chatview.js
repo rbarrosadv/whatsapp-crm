@@ -311,6 +311,10 @@ function msgEl(m) {
     const who = m.sender_name || (m.sender ? formatPhone(phoneOf(m.sender)) : '');
     body.append(h('div', { class: 'sender', style: { color: colorFor(m.sender || who) } }, who));
   }
+  const fw = parseJson(m.extra, {}).forwarded;
+  if (fw && !m.deleted) {
+    body.append(h('div', { class: 'forwarded' }, fw === 'many' ? '↪↪ Encaminhada com frequência' : '↪ Encaminhada'));
+  }
   if (m.quoted_id) {
     const qMsg = current.messages.find((x) => x.id === m.quoted_id);
     const qWho = qMsg ? (qMsg.from_me ? 'Você' : (qMsg.sender_name || chat.display_name)) : '';
@@ -455,9 +459,61 @@ function viewImage(url, m) {
   });
 }
 
+/** Escolher para quem encaminhar (até 5 conversas, como no WhatsApp). */
+function forwardDialog(m) {
+  const fromJid = current.jid;
+  const chosen = new Set();
+  const input = h('input', { class: 'input', type: 'search', placeholder: 'Pesquisar contato ou grupo…' });
+  const list = h('div', { class: 'picker-list' });
+  const preview = (m.text || ({ image: '📷 Foto', video: '🎥 Vídeo', audio: '🎵 Áudio', ptt: '🎤 Áudio', document: `📄 ${m.media_name || 'Documento'}`, sticker: '💟 Figurinha' }[m.type] || '')).slice(0, 140);
+  let sendBtn = null;
+  const fold = (x) => String(x || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase();
+  const draw = () => {
+    const q = fold(input.value);
+    const items = [...state.chats.values()]
+      .filter((c) => !q || fold(`${c.display_name} ${c.jid}`).includes(q))
+      .sort((a, b) => (chosen.has(b.jid) - chosen.has(a.jid)) || (b.last_ts - a.last_ts))
+      .slice(0, 60);
+    fill(list, ...items.map((c) => h('div', {
+      class: `picker-item ${chosen.has(c.jid) ? 'active' : ''}`,
+      onclick: () => {
+        if (chosen.has(c.jid)) chosen.delete(c.jid);
+        else if (chosen.size >= 5) { toast('Dá para encaminhar para até 5 conversas de uma vez.'); return; }
+        else chosen.add(c.jid);
+        draw();
+      },
+    }, h('span', { class: 'pick-check' }, chosen.has(c.jid) ? '☑' : '☐'), avatarEl(c, 28), h('div', null, c.display_name))));
+    if (sendBtn) {
+      sendBtn.disabled = !chosen.size;
+      sendBtn.textContent = chosen.size ? `Encaminhar (${chosen.size})` : 'Encaminhar';
+    }
+  };
+  input.addEventListener('input', draw);
+  const dlg = modal({
+    title: 'Encaminhar mensagem',
+    body: h('div', { class: 'form' }, h('div', { class: 'quoted forward-preview' }, preview || 'Mensagem'), input, list),
+    actions: [
+      { label: 'Cancelar' },
+      {
+        label: 'Encaminhar', primary: true,
+        onClick: async () => {
+          if (!chosen.size) return false;
+          const n = chosen.size;
+          await api('messages:forward', fromJid, m.id, [...chosen]);
+          toast(n === 1 ? 'Mensagem encaminhada' : `Mensagem encaminhada para ${n} conversas`, 'success');
+          return true;
+        },
+      },
+    ],
+  });
+  sendBtn = [...dlg.box.querySelectorAll('.modal-actions .btn')].pop();
+  draw();
+}
+
 function msgMenu(anchor, m) {
   const items = [
     { icon: '↩', label: 'Responder', onClick: () => setReply(m) },
+    ...(!m.deleted ? [{ icon: '↪', label: 'Encaminhar…', onClick: () => forwardDialog(m) }] : []),
     ...(!m.deleted ? [{ icon: '😊', label: 'Reagir…', onClick: () => reactMenu(anchor, m) }] : []),
     ...(m.text ? [{ icon: '📋', label: 'Copiar texto', onClick: () => navigator.clipboard.writeText(m.text) }] : []),
     ...(m.text ? [{ icon: '📝', label: 'Salvar como nota do contato', onClick: () => saveAsNote(m) }] : []),

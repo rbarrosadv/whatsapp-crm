@@ -184,6 +184,14 @@ export function parseMessage(msg, { chatJid, senderJid, senderName, keepRaw }) {
     row.text = t;
   }
 
+  // "Encaminhada" (o WhatsApp marca no contextInfo da mensagem)
+  if (ctx?.isForwarded) {
+    let extra = {};
+    try { extra = row.extra ? JSON.parse(row.extra) : {}; } catch { extra = {}; }
+    extra.forwarded = (ctx.forwardingScore || 0) >= 4 ? 'many' : true;
+    row.extra = JSON.stringify(extra);
+  }
+
   if (keepRaw) row.raw = JSON.stringify(msg, BufferJSON.replacer);
   return { kind: 'message', row };
 }

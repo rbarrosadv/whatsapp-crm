@@ -169,6 +169,23 @@ try {
   await page.waitForSelector('.msg.out:has-text("Sem cartão")');
   check(await page.locator('.msg.out:has-text("Sem cartão") .link-card').count() === 0, '✕ envia o link sem a pré-visualização');
 
+  // encaminhar: menu da mensagem → escolher contatos → aparece "Encaminhada" no destino
+  const toFwd = page.locator('.msg.in', { hasText: 'Tem desconto pra pagamento anual?' }).first();
+  await toFwd.hover();
+  await toFwd.locator('.msg-menu-btn').click();
+  await page.locator('.popup-item', { hasText: 'Encaminhar' }).click();
+  await page.waitForSelector('.modal .forward-preview:has-text("Tem desconto")');
+  await page.locator('.modal .picker-item', { hasText: 'Ana Beatriz' }).click();
+  await page.locator('.modal .picker-item', { hasText: 'João (Fornecedor)' }).click();
+  check((await page.textContent('.modal-actions .btn-primary')) === 'Encaminhar (2)', 'escolhe para quem encaminhar (2 conversas)');
+  await shot(page, '03f-encaminhar');
+  await page.click('.modal-actions .btn-primary');
+  await page.locator('.chat-row', { hasText: 'Ana Beatriz' }).click();
+  await page.waitForSelector('.msg.out:has-text("Tem desconto pra pagamento anual?") .forwarded');
+  check(true, 'mensagem encaminhada aparece no destino com "↪ Encaminhada"');
+  await page.locator('.chat-row', { hasText: 'Mariana Souza' }).click();
+  await page.waitForSelector('.chat-head:has-text("Mariana Souza")');
+
   // rascunho: fica guardado ao trocar de conversa e aparece na lista
   await page.locator('.chat-row', { hasText: 'Ana Beatriz' }).click();
   await page.waitForSelector('.chat-head:has-text("Ana Beatriz")');

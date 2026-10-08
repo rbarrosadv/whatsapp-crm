@@ -229,6 +229,30 @@ export class DemoWhatsAppService extends WhatsAppService {
     this.applyReaction(chatJid, id, { from: 'me', text: emoji });
   }
 
+  async forwardMessage(chatJid, id, targets) {
+    this.requireSock();
+    const { m, msg } = this.forwardable(chatJid, id);
+    const ok = [];
+    for (const to of [...new Set(targets || [])].slice(0, 5)) {
+      // cópia com a marca de encaminhada, como o Baileys faz
+      const content = JSON.parse(JSON.stringify(msg.message || {}));
+      if (content.conversation) {
+        content.extendedTextMessage = { text: content.conversation };
+        delete content.conversation;
+      }
+      const type = Object.keys(content)[0];
+      // como no WhatsApp: encaminhar mensagem sua não ganha a marca "Encaminhada"
+      const score = (content[type].contextInfo?.forwardingScore || 0) + (msg.key.fromMe ? 0 : 1);
+      content[type].contextInfo = score ? { isForwarded: true, forwardingScore: score } : {};
+      const fwd = { key: { remoteJid: to, fromMe: true, id: newId() }, message: content, messageTimestamp: Math.floor(Date.now() / 1000), status: 2 };
+      await this.onMessages([fwd], 'append');
+      if (m.media_file) db.updateMessage(to, fwd.key.id, { media_file: m.media_file });
+      this.simulateDelivery(to, fwd.key);
+      ok.push(to);
+    }
+    return ok;
+  }
+
   async editMessage(chatJid, id, text) {
     this.requireSock();
     editableCheck(db.getMessage(chatJid, id), text);

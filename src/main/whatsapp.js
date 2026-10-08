@@ -865,6 +865,29 @@ export class WhatsAppService extends EventEmitter {
     this.emit('message', { chatJid, id, isNew: false });
   }
 
+  /** Mensagem no formato do WhatsApp para encaminhar (a guardada, ou montada do texto). */
+  forwardable(chatJid, id) {
+    const m = db.getMessage(chatJid, id);
+    if (!m || m.deleted) throw new Error('Mensagem não encontrada.');
+    if (['system', 'call'].includes(m.type)) throw new Error('Este tipo de mensagem não pode ser encaminhado.');
+    if (m.raw) return { m, msg: rawToMessage(m.raw) };
+    if (m.type !== 'text' || !m.text) throw new Error('Esta mensagem não pode ser encaminhada daqui (abra no celular).');
+    return { m, msg: { key: { remoteJid: chatJid, id, fromMe: !!m.from_me }, message: { conversation: m.text } } };
+  }
+
+  /** Encaminha a mensagem para uma ou mais conversas (como o "Encaminhar" do WhatsApp). */
+  async forwardMessage(chatJid, id, targets) {
+    const sock = this.requireSock();
+    const { msg } = this.forwardable(chatJid, id);
+    const ok = [];
+    for (const to of [...new Set(targets || [])].slice(0, 5)) {
+      const sent = await sock.sendMessage(to, { forward: msg });
+      if (sent) await this.onMessages([sent], 'append');
+      ok.push(to);
+    }
+    return ok;
+  }
+
   /** Edita uma mensagem de texto enviada por você (o WhatsApp permite até 15 minutos). */
   async editMessage(chatJid, id, text) {
     const sock = this.requireSock();

@@ -186,6 +186,12 @@ Interface (`src/renderer`, JS puro em módulos ES, sem build):
   — o Baileys não gera sozinho (sem `link-preview-js`). `main/linkpreview.js`
   busca og:/twitter:/<title> da página e a imagem (reduzida a JPEG ≤320 px
   com `nativeImage`); no demo usa uma página de exemplo (sem internet).
+- **Encaminhar**: menu da mensagem → `forwardDialog` (até 5 conversas) →
+  `messages:forward` → `sock.sendMessage(to, { forward: msg })` com a mensagem
+  crua guardada (mídia vai sem baixar/reenviar) ou montada do texto
+  (`forwardable`). Recebidas com `contextInfo.isForwarded` gravam
+  `extra.forwarded` → "↪ Encaminhada" (≥4 = "com frequência"); encaminhar
+  mensagem SUA não marca, igual ao WhatsApp.
 - **Editar mensagem**: só texto seu, até 15 min (`editableCheck`);
   `sendMessage(jid, { text, edit: key })`. No composer, `editing` mostra a
   faixa "Editando" (Esc cancela). Fotos abrem em `views/imageviewer.js`

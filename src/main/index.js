@@ -492,6 +492,7 @@ const api = {
   'messages:react': (jid, id, emoji) => wa.react(jid, id, emoji),
   'messages:delete': (jid, id) => wa.deleteForEveryone(jid, id),
   'messages:edit': (jid, id, text) => wa.editMessage(jid, id, text),
+  'messages:forward': (jid, id, targets) => wa.forwardMessage(chatOrThrow(jid), id, (targets || []).map(chatOrThrow)),
   'messages:download': async (jid, id) => {
     const rel = await wa.downloadMedia(jid, id);
     send('message', { chatJid: jid, id, isNew: false, message: stripRaw(db.getMessage(jid, id)) });
