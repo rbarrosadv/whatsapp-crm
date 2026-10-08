@@ -11,7 +11,16 @@ export function mountSettings(el) {
   root = el;
   on('view', (v) => v === 'settings' && render());
   on('config', () => state.view === 'settings' && render());
-  on('status', () => state.view === 'settings' && render());
+  // o status do WhatsApp chega várias vezes (reconexão): só redesenha se mudou o que aparece,
+  // senão o que estava sendo digitado nos campos se perdia
+  let lastStatus = '';
+  on('status', () => {
+    const st = state.status || {};
+    const key = [st.state, st.registered, st.error, st.me?.jid].join('|');
+    if (key === lastStatus) return;
+    lastStatus = key;
+    if (state.view === 'settings') render();
+  });
   on('settings', () => state.view === 'settings' && render());
   on('me', () => state.view === 'settings' && render());
   on('users', () => state.view === 'settings' && render());
@@ -157,13 +166,17 @@ async function userEditor(u = {}) {
 }
 
 /** Pasta do escritório no OneDrive (onde estão 02 CLIENTES, 04 MODELOS…): neste computador ou pela internet. */
+// escolha da aba e o que foi digitado sobrevivem quando a tela é redesenhada
+let docsModeChoice = null;
+const odDraft = { clientId: null, secret: '', link: '' };
+
 function docsSection() {
   const box = h('div', { class: 'stack' }, h('p', { class: 'muted small' }, 'Carregando…'));
-  let mode = null;
   const draw = async () => {
     let st;
     try { st = await api('docs:status'); } catch (e) { fill(box, h('p', { class: 'muted small' }, e.message)); return; }
-    mode = mode || st.docsMode || 'local';
+    const od = st.onedrive || {};
+    const mode = docsModeChoice || st.docsMode || (od.configured || od.connected ? 'onedrive' : 'local');
     const statusLine = st.ok
       ? h('div', { class: 'conn-info' }, h('span', { class: 'status-dot ok' }), h('div', null,
         h('b', null, st.mode === 'onedrive' ? `OneDrive conectado — ${st.onedrive?.folder?.name || 'BARROS ADVOGADOS'}` : 'Pasta encontrada neste computador'),
@@ -171,7 +184,7 @@ function docsSection() {
       : h('div', { class: 'conn-info' }, h('span', { class: 'status-dot warn' }), h('div', null, h('b', null, 'Pasta do escritório não ligada'),
         h('div', { class: 'muted small' }, st.mode === 'onedrive' || mode === 'onedrive' ? 'Siga os passos abaixo para ligar o OneDrive.' : (st.guess ? `Achei: ${st.guess}` : 'Informe onde está a pasta.'))));
     const modeSeg = state.can.admin ? h('div', { class: 'segmented' }, [['local', 'Pasta neste computador'], ['onedrive', 'OneDrive pela internet (servidor)']].map(([v, l]) => h('button', {
-      class: `seg ${mode === v ? 'active' : ''}`, type: 'button', onclick: () => { mode = v; draw(); },
+      class: `seg ${mode === v ? 'active' : ''}`, type: 'button', onclick: () => { docsModeChoice = v; draw(); },
     }, l))) : null;
     fill(box, statusLine, modeSeg, mode === 'onedrive' ? oneDriveSetup(st, draw) : localSetup(st, draw));
   };
@@ -204,9 +217,9 @@ function oneDriveSetup(st, redraw) {
   const od = st.onedrive || {};
   if (!state.can.admin) return h('p', { class: 'muted small' }, od.connected ? `Conta: ${od.account || '—'}` : 'Só um sócio liga o OneDrive.');
   const redirect = `${location.origin}/onedrive/callback`;
-  const clientId = h('input', { class: 'input mono', value: od.clientId || '', placeholder: '00000000-0000-0000-0000-000000000000' });
-  const secret = h('input', { class: 'input mono', type: 'password', placeholder: od.configured ? '(já salvo — deixe em branco para manter)' : 'Valor do segredo' });
-  const link = h('input', { class: 'input', placeholder: 'https://1drv.ms/f/…  (Compartilhar → Copiar link da pasta)' });
+  const clientId = h('input', { class: 'input mono', value: odDraft.clientId ?? od.clientId ?? '', placeholder: '00000000-0000-0000-0000-000000000000', oninput: (e) => { odDraft.clientId = e.target.value; } });
+  const secret = h('input', { class: 'input mono', type: 'password', value: odDraft.secret, placeholder: od.configured ? '(já salvo — deixe em branco para manter)' : 'Valor do segredo', oninput: (e) => { odDraft.secret = e.target.value; } });
+  const link = h('input', { class: 'input', value: odDraft.link, placeholder: 'https://1drv.ms/f/…  (Compartilhar → Copiar link da pasta)', oninput: (e) => { odDraft.link = e.target.value; } });
   const shared = h('div', { class: 'stack' });
   const step = (n, title, done, ...body) => h('div', { class: `od-step ${done ? 'done' : ''}` },
     h('div', { class: 'od-num' }, done ? icon('check', 14) : String(n)), h('div', { class: 'grow stack' }, h('b', null, title), ...body));
@@ -216,7 +229,8 @@ function oneDriveSetup(st, redraw) {
     step(1, 'Cadastrar o sistema no portal da Microsoft (uma vez)', od.configured,
       h('ol', { class: 'small od-list' },
         h('li', null, 'Entre em ', h('a', { href: '#', onclick: (e) => { e.preventDefault(); openExternal('https://entra.microsoft.com/#view/Microsoft_AAD_RegisteredApps/ApplicationsListBlade'); } }, 'entra.microsoft.com → Registros de aplicativo'), ' com a conta Microsoft do escritório e clique em "Novo registro".'),
-        h('li', null, 'Nome: Barros Associados. Tipos de conta: "Somente contas pessoais da Microsoft".'),
+        h('li', null, 'Nome: Barros Associados. Tipos de conta: "Qualquer Locatário de ID de Entra + Contas Pessoais da Microsoft" (ou "Somente contas pessoais").'),
+        h('li', null, 'Se a Microsoft disser que não dá para criar aplicativos fora de um diretório: crie a conta gratuita do Azure (portal.azure.com) com a conta do escritório e registre o aplicativo por lá, em Microsoft Entra ID → Registros de aplicativo.'),
         h('li', null, 'URI de redirecionamento: plataforma "Web" e o endereço ', h('code', null, redirect), ' ', h('button', { class: 'btn btn-sm', type: 'button', onclick: () => copy(redirect) }, 'Copiar')),
         h('li', null, 'Depois de criar, copie o "ID do aplicativo (cliente)". Em "Certificados e segredos" → "Novo segredo do cliente", copie o "Valor".')),
       h('div', { class: 'grid2' },
@@ -224,7 +238,7 @@ function oneDriveSetup(st, redraw) {
         h('label', { class: 'field' }, h('span', null, 'Segredo do cliente (Valor)'), secret)),
       h('div', null, h('button', {
         class: 'btn', type: 'button',
-        onclick: () => api('onedrive:setApp', { clientId: clientId.value, clientSecret: secret.value }).then(() => { toast('Dados do app salvos', 'success'); redraw(); }).catch(errToast),
+        onclick: () => api('onedrive:setApp', { clientId: clientId.value, clientSecret: secret.value }).then(() => { odDraft.clientId = null; odDraft.secret = ''; toast('Dados do app salvos', 'success'); redraw(); }).catch(errToast),
       }, 'Salvar'))),
     step(2, 'Entrar com a conta Microsoft do escritório', od.connected,
       od.connected ? h('div', { class: 'small' }, `Conectado: ${od.account || 'conta Microsoft'}`) : null,
@@ -238,7 +252,7 @@ function oneDriveSetup(st, redraw) {
       od.folder ? h('div', { class: 'small' }, `Pasta: ${od.folder.name}`) : null,
       h('p', { class: 'muted small' }, 'No seu OneDrive, compartilhe a pasta BARROS ADVOGADOS com o e-mail da conta do escritório (pode editar). Depois cole aqui o link da pasta, ou escolha na lista.'),
       h('div', { class: 'row wrap' }, link,
-        h('button', { class: 'btn btn-primary', type: 'button', disabled: !od.connected, onclick: () => api('onedrive:useLink', link.value).then(() => { toast('Pasta ligada. Lendo os documentos para a busca…', 'success'); redraw(); }).catch(errToast) }, 'Usar esta pasta'),
+        h('button', { class: 'btn btn-primary', type: 'button', disabled: !od.connected, onclick: () => api('onedrive:useLink', link.value).then(() => { odDraft.link = ''; toast('Pasta ligada. Lendo os documentos para a busca…', 'success'); redraw(); }).catch(errToast) }, 'Usar esta pasta'),
         h('button', {
           class: 'btn', type: 'button', disabled: !od.connected,
           onclick: async () => {
