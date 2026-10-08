@@ -606,3 +606,15 @@ test('correção automática em português do Brasil', async () => {
   assert.equal(autocorrectBefore('vou pega-la '), null, 'pedaço com hífen fica');
   assert.equal(autocorrectBefore('ok '), null);
 });
+
+test('balão da lista: mensagem curta inteira; longa cortada no fim de uma palavra', async () => {
+  const { tipText, TIP_MAX } = await import('../src/renderer/js/preview-tip.js');
+  assert.equal(tipText('  Bom dia, Dr.!  '), 'Bom dia, Dr.!');
+  assert.equal(tipText(''), '');
+  const longa = 'O processo foi distribuído para a vara cível '.repeat(12);
+  const t = tipText(longa);
+  assert.ok(t.endsWith('… (abra a conversa para ler tudo)'));
+  const corpo = t.replace('… (abra a conversa para ler tudo)', '');
+  assert.ok(corpo.length <= TIP_MAX && longa.startsWith(corpo), 'corta sem quebrar palavra');
+  assert.ok(/[a-zíú]$/.test(corpo));
+});

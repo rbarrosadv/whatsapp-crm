@@ -5,6 +5,8 @@ import {
 } from '../store.js';
 import { avatarEl, ticks, stagePill, tagDots, typeMenu } from '../components.js';
 import { newCaseDialog } from './casemodal.js';
+import { getDraft } from '../drafts.js';
+import { tipText } from '../preview-tip.js';
 import { filterEditor } from './settings.js';
 
 const filters = { q: '', filterId: null, stage: '', tag: '', archived: false };
@@ -123,8 +125,11 @@ export function mountChatList(root) {
       class: `chat-row ${state.activeJid === c.jid ? 'active' : ''} ${c.unread > 0 ? 'unread' : ''}`,
       dataset: { jid: c.jid },
       style: st ? { '--stage': st.color } : null,
-      onclick: () => openChat(c.jid),
-      oncontextmenu: (e) => { e.preventDefault(); rowMenu(c, e); },
+      onclick: () => { hideTip(); openChat(c.jid); },
+      oncontextmenu: (e) => { e.preventDefault(); hideTip(); rowMenu(c, e); },
+      onmouseenter: (e) => armTip(c, e),
+      onmousemove: (e) => moveTip(e),
+      onmouseleave: hideTip,
     },
     avatarEl(c, 46),
     h('div', { class: 'chat-main' },
@@ -134,7 +139,9 @@ export function mountChatList(root) {
           c.display_name),
         h('span', { class: 'chat-time' }, fmtListTime(c.last_ts))),
       h('div', { class: 'chat-bottom' },
-        h('span', { class: 'chat-preview' }, c.last_from_me ? ticks(c.last_status) : null, ' ', c.last_preview || ''),
+        draftOf(c)
+          ? h('span', { class: 'chat-preview' }, h('span', { class: 'draft-label' }, '✏️ Rascunho: '), draftOf(c))
+          : h('span', { class: 'chat-preview' }, c.last_from_me ? ticks(c.last_status) : null, ' ', c.last_preview || ''),
         c.unread > 0 ? h('span', { class: 'badge' }, c.unread > 99 ? '99+' : String(c.unread)) : null),
       (st || c.tag_ids.length || c.open_tasks || waitingMs(c) || c.overdue_payments) ? h('div', { class: 'chat-meta' },
         waitingMs(c) ? h('span', { class: `waiting ${waitingMs(c) > 24 * 3600e3 ? 'late' : ''}`, title: 'Aguardando sua resposta' },
@@ -146,6 +153,53 @@ export function mountChatList(root) {
         c.open_tasks ? h('span', { class: `task-flag ${c.next_due && c.next_due < Date.now() ? 'late' : ''}` }, `⏰ ${c.open_tasks}`) : null) : null));
     return el;
   }
+
+  // rascunho aparece na lista quando a conversa não está aberta
+  function draftOf(c) {
+    if (c.jid === state.activeJid) return '';
+    return getDraft(c.jid).replace(/\s+/g, ' ').trim();
+  }
+
+  // balão com a mensagem completa ao passar o mouse (não abre nem marca como lida)
+  const tip = h('div', { class: 'chat-tip hidden', role: 'tooltip' });
+  document.body.append(tip);
+  let tipTimer = null;
+  let tipPos = { x: 0, y: 0 };
+  function armTip(c, e) {
+    hideTip();
+    tipPos = { x: e.clientX, y: e.clientY };
+    if (state.settings.discreet) return; // modo discreto: nada de prévia
+    const draft = draftOf(c);
+    const text = tipText(draft ? `✏️ Rascunho: ${draft}` : c.last_preview);
+    if (!text) return;
+    tipTimer = setTimeout(() => {
+      fill(tip,
+        h('div', { class: 'chat-tip-head' }, h('b', null, c.display_name), h('span', null, fmtListTime(c.last_ts))),
+        h('div', { class: 'chat-tip-text' }, !draft && c.last_from_me ? 'Você: ' : '', text));
+      tip.classList.remove('hidden');
+      placeTip();
+    }, 500);
+  }
+  function moveTip(e) {
+    tipPos = { x: e.clientX, y: e.clientY };
+    if (!tip.classList.contains('hidden')) placeTip();
+  }
+  function placeTip() {
+    const r = tip.getBoundingClientRect();
+    let x = tipPos.x + 16;
+    let y = tipPos.y + 18;
+    if (x + r.width > window.innerWidth - 8) x = Math.max(8, tipPos.x - r.width - 12);
+    if (y + r.height > window.innerHeight - 8) y = Math.max(8, tipPos.y - r.height - 12);
+    tip.style.left = `${x}px`;
+    tip.style.top = `${y}px`;
+  }
+  function hideTip() {
+    clearTimeout(tipTimer);
+    tip.classList.add('hidden');
+  }
+  listEl.addEventListener('scroll', hideTip, { passive: true });
+  const renderSoon = debounce(render, 150);
+  on('drafts', renderSoon);
 
   function rowMenu(c, e) {
     popupMenu(null, [
@@ -168,6 +222,8 @@ export function mountChatList(root) {
   on('active', () => {
     listEl.querySelectorAll('.chat-row.active').forEach((r) => r.classList.remove('active'));
     listEl.querySelector(`.chat-row[data-jid="${CSS.escape(state.activeJid || '')}"]`)?.classList.add('active');
+    // a conversa que ficou para trás passa a mostrar o rascunho na lista
+    renderSoon();
   });
   render();
 }

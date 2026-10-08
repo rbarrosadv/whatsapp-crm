@@ -168,6 +168,17 @@ Interface (`src/renderer`, JS puro em módulos ES, sem build):
   configuração `autocorrect`): ao digitar espaço/pontuação troca acentos
   esquecidos e erros comuns, só sem ambiguidade; Backspace logo depois desfaz;
   a última palavra é corrigida ao enviar.
+- **Rascunhos** (`js/drafts.js`): por conversa no `localStorage` (sobrevivem a
+  trocar de conversa/tela e a fechar o app); a lista mostra "✏️ Rascunho:"
+  nas conversas não abertas. Obs.: `h()` põe `value` na propriedade — no
+  `<textarea>` o atributo é ignorado (era por isso que o rascunho sumia).
+- **Balão da lista**: parar o mouse 0,5 s numa conversa mostra a última
+  mensagem (até 300 letras, `js/preview-tip.js`); não abre nem marca como
+  lida; não aparece no modo discreto.
+- **Letra e zoom** (`js/appearance.js`): `msgFont` sm/md/lg/xl →
+  `body[data-msgfont]` → `--msg-fs`/`--composer-fs`; Ctrl + roda ou
+  Ctrl +/−/0. `uiZoom` (0,9–1,5) → `app:setZoom` (`setZoomFactor`); Ctrl +
+  Shift +/−/0. Os papéis zoomIn/zoomOut do menu foram tirados para não brigar.
 - **Editar mensagem**: só texto seu, até 15 min (`editableCheck`);
   `sendMessage(jid, { text, edit: key })`. No composer, `editing` mostra a
   faixa "Editando" (Esc cancela). Fotos abrem em `views/imageviewer.js`

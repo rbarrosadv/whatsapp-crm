@@ -12,6 +12,7 @@ import { mountFinance } from './views/finance.js';
 import { mountAgenda } from './views/agenda.js';
 import { mountSettings, applyTheme } from './views/settings.js';
 import { mountConnect } from './views/connect.js';
+import { applyAppearance, stepFont, stepZoom } from './appearance.js';
 
 const NAV = [
   ['inbox', '💬', 'Conversas'],
@@ -26,6 +27,8 @@ const NAV = [
 async function main() {
   await bootstrap();
   applyTheme();
+  applyAppearance();
+  on('settings', applyAppearance);
   window.matchMedia('(prefers-color-scheme: dark)').addEventListener('change', applyTheme);
 
   const views = {
@@ -121,6 +124,13 @@ async function main() {
 
   // atalhos de teclado
   document.addEventListener('keydown', (e) => {
+    // Ctrl + "+" / "−" / 0: letra das conversas; com Shift: zoom do programa inteiro
+    if (e.ctrlKey && !e.altKey && ['+', '=', '-', '_', '0', ')'].includes(e.key)) {
+      e.preventDefault();
+      const dir = ['+', '='].includes(e.key) ? 1 : ['-', '_'].includes(e.key) ? -1 : 0;
+      (e.shiftKey ? stepZoom : stepFont)(dir).catch(() => {});
+      return;
+    }
     if (e.ctrlKey && e.shiftKey && e.key.toLowerCase() === 'd') {
       e.preventDefault();
       toggleDiscreet();
@@ -135,6 +145,16 @@ async function main() {
       listCol.querySelector('input.search')?.focus();
     }
   });
+
+  // Ctrl + roda do mouse: letra das conversas (no lugar do zoom do Chromium)
+  let wheelAt = 0;
+  window.addEventListener('wheel', (e) => {
+    if (!e.ctrlKey) return;
+    e.preventDefault();
+    if (Date.now() - wheelAt < 250) return;
+    wheelAt = Date.now();
+    stepFont(e.deltaY < 0 ? 1 : -1).catch(() => {});
+  }, { passive: false });
 
   const initial = ['inbox', 'board', 'contacts', 'agenda', 'tasks', 'finance', 'dashboard'].includes(state.settings.lastView) ? state.settings.lastView : 'inbox';
   state.view = null;

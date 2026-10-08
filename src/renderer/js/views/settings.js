@@ -2,6 +2,7 @@
 // rápidas, backup e importação do Kanban antigo.
 import { h, fill, modal, toast, errToast, confirmDialog, formatPhone, phoneOf, PALETTE } from '../util.js';
 import { state, on, api, setSetting } from '../store.js';
+import { FONT_SIZES, ZOOMS } from '../appearance.js';
 
 let root;
 
@@ -63,6 +64,17 @@ function render() {
         toggle('spellcheck', 'Corretor ortográfico', 'Sublinha palavras erradas; clique com o botão direito na palavra para ver as correções.'),
         toggle('autocorrect', 'Correção automática (português do Brasil)', 'Ao terminar a palavra, corrige acentos esquecidos e erros comuns: nao → não, voce → você, procuracao → procuração. Backspace logo depois desfaz.'),
         toggle('wordSuggest', 'Sugerir palavras ao digitar', 'Completa a palavra com as que você mais usa nas suas mensagens. Tab (ou clique) aceita a sugestão.'),
+        h('label', { class: 'toggle-row' },
+          h('div', null, h('div', null, 'Tamanho da letra das conversas'),
+            h('div', { class: 'muted small' }, 'Atalho: Ctrl + roda do mouse, ou Ctrl + “+” / “−” (Ctrl + 0 volta ao normal).')),
+          h('select', { class: 'input select-sm', onchange: (e) => setSetting('msgFont', e.target.value).catch(errToast) },
+            FONT_SIZES.map(([v, l]) => h('option', { value: v, selected: (state.settings.msgFont || 'md') === v }, l)))),
+        h('div', { class: 'font-preview' }, h('div', { class: 'bubble in' }, h('div', { class: 'text' }, 'Exemplo: Bom dia, Dr.! A audiência ficou para quinta às 14h.'))),
+        h('label', { class: 'toggle-row' },
+          h('div', null, h('div', null, 'Zoom do programa'),
+            h('div', { class: 'muted small' }, 'Aumenta tudo: lista, botões, menus e mensagens. Atalho: Ctrl + Shift + “+” / “−”.')),
+          h('select', { class: 'input select-sm', onchange: (e) => setSetting('uiZoom', Number(e.target.value)).catch(errToast) },
+            ZOOMS.map((z) => h('option', { value: z, selected: Number(state.settings.uiZoom || 1) === z }, `${Math.round(z * 100)}%`)))),
         h('label', { class: 'toggle-row' }, h('div', null, 'Tema'),
           h('select', { class: 'input select-sm', onchange: (e) => setSetting('theme', e.target.value).then(applyTheme) },
             [['system', 'Automático'], ['dark', 'Escuro'], ['light', 'Claro']].map(([v, l]) => h('option', { value: v, selected: (state.settings.theme || 'system') === v }, l)))),

@@ -590,6 +590,8 @@ const api = {
   'quick:delete': (id) => { db.deleteQuickReply(id); broadcastConfig(); },
   stats: () => db.stats(),
   'words:vocab': () => db.vocabulary(),
+  // zoom do programa inteiro (Configurações ou Ctrl + Shift + "+"/"−")
+  'app:setZoom': (f) => { const z = Math.min(1.5, Math.max(0.8, Number(f) || 1)); win?.webContents.setZoomFactor(z); return z; },
 
   // configurações
   'settings:set': (key, value) => {
@@ -597,7 +599,7 @@ const api = {
       'theme', 'lastView', 'lastPipeline', 'enterToSend', 'forgottenHours', 'lastFilter',
       'chargeTemplate', 'pixKey', 'paymentNoticeDays', 'staleCaseDays',
       'googleSync', 'googleCalendarId', 'agendaHidden', 'agendaView', 'agendaHours',
-      'discreet', 'discreetMessages', 'spellcheck', 'wordSuggest', 'autocorrect'];
+      'discreet', 'discreetMessages', 'spellcheck', 'wordSuggest', 'autocorrect', 'msgFont', 'uiZoom'];
     if (!allowed.includes(key)) throw new Error('configuração desconhecida');
     settings[key] = value;
     db.setSetting(key, value);
@@ -801,10 +803,6 @@ app.whenReady().then(async () => {
       submenu: [
         { label: 'Recarregar interface', accelerator: 'CmdOrCtrl+R', click: () => win?.reload() },
         { label: 'Ferramentas do desenvolvedor', accelerator: 'F12', click: () => win?.webContents.toggleDevTools() },
-        { type: 'separator' },
-        { role: 'zoomIn', label: 'Aumentar zoom' },
-        { role: 'zoomOut', label: 'Diminuir zoom' },
-        { role: 'resetZoom', label: 'Zoom normal' },
         { type: 'separator' },
         { label: 'Sair', accelerator: 'CmdOrCtrl+Q', click: () => { quitting = true; app.quit(); } },
       ],

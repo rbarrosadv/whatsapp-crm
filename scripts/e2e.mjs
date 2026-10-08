@@ -149,6 +149,53 @@ try {
   await page.keyboard.press('Escape');
   check(await page.locator('.iv-overlay').count() === 0, 'Esc fecha o visualizador');
 
+  // rascunho: fica guardado ao trocar de conversa e aparece na lista
+  await page.locator('.chat-row', { hasText: 'Ana Beatriz' }).click();
+  await page.waitForSelector('.chat-head:has-text("Ana Beatriz")');
+  await page.fill('.composer-input', 'Minuta do contrato em revisão');
+  await page.locator('.chat-row', { hasText: 'Mariana Souza' }).click();
+  await page.waitForSelector('.chat-row:has-text("Ana Beatriz") .draft-label');
+  check((await page.textContent('.chat-row:has-text("Ana Beatriz") .chat-preview')).includes('Minuta do contrato'), 'lista mostra "✏️ Rascunho" da conversa que ficou para trás');
+  await page.locator('.chat-row', { hasText: 'Ana Beatriz' }).click();
+  await page.waitForSelector('.chat-head:has-text("Ana Beatriz")');
+  check(await page.inputValue('.composer-input') === 'Minuta do contrato em revisão', 'ao voltar, o rascunho está na caixa de mensagem');
+  await page.locator('.chat-row', { hasText: 'Mariana Souza' }).click();
+  await page.waitForSelector('.chat-head:has-text("Mariana Souza")');
+
+  // balão com a mensagem completa ao passar o mouse, sem marcar como lida
+  const unreadRow = page.locator('.chat-row.unread').filter({ hasNotText: 'Mariana' }).first();
+  const badgeBefore = await unreadRow.locator('.badge').textContent();
+  await unreadRow.hover();
+  await page.waitForSelector('.chat-tip:not(.hidden)', { timeout: 3000 });
+  const tipTxt = await page.textContent('.chat-tip');
+  check(tipTxt.length > 10, 'balão com a mensagem aparece ao parar o mouse na conversa');
+  await shot(page, '03c-balao-lista');
+  await page.mouse.move(700, 400);
+  await page.waitForSelector('.chat-tip.hidden', { state: 'attached' });
+  check(await unreadRow.locator('.badge').textContent() === badgeBefore, 'passar o mouse não marca como lida');
+
+  // tamanho da letra (Ctrl + roda / Ctrl + "+") e zoom do programa (Ctrl + Shift + "+")
+  const fs = () => page.$eval('.msg .text', (el) => parseFloat(getComputedStyle(el).fontSize));
+  const fsNormal = await fs();
+  await page.mouse.move(700, 400);
+  await page.keyboard.down('Control');
+  await page.mouse.wheel(0, -200);
+  await page.keyboard.up('Control');
+  await page.waitForFunction(() => document.body.dataset.msgfont === 'lg');
+  check(await fs() > fsNormal, `Ctrl + roda aumenta a letra das conversas (${fsNormal}px → ${await fs()}px)`);
+  await page.keyboard.press('Control+Equal');
+  await page.waitForFunction(() => document.body.dataset.msgfont === 'xl');
+  await shot(page, '03d-letra-grande');
+  await page.keyboard.press('Control+0');
+  await page.waitForFunction(() => document.body.dataset.msgfont === 'md');
+  check(await fs() === fsNormal, 'Ctrl + 0 volta a letra ao normal');
+  await page.keyboard.press('Control+Shift+Equal');
+  await page.waitForFunction(() => window.__crm.state.settings.uiZoom === 1.1);
+  await page.waitForTimeout(200);
+  check(Math.abs(await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0].webContents.getZoomFactor()) - 1.1) < 0.01, 'Ctrl + Shift + "+" aumenta o zoom do programa');
+  await page.keyboard.press('Control+Shift+Digit0');
+  await page.waitForFunction(() => window.__crm.state.settings.uiZoom === 1);
+
   // 3b) classificação: faixa "Quem é este contato?" e filtros
   await page.waitForSelector('.classify-bar');
   await page.click('.classify-bar button:has-text("Cliente")');
@@ -357,13 +404,13 @@ try {
     'tipo Cliente baixa arquivos automaticamente');
 
   // tema claro
-  await page.selectOption('.settings-grid select', 'light');
+  await page.selectOption('.settings-grid select:has(option[value="light"])', 'light');
   await page.click('.rail-btn[title="Conversas"]');
   await page.locator('.chat-row', { hasText: 'Mariana Souza' }).click();
   await page.waitForSelector('.msg');
   await shot(page, '10-light');
   await page.click('.rail-btn[title="Configurações"]');
-  await page.selectOption('.settings-grid select', 'dark');
+  await page.selectOption('.settings-grid select:has(option[value="light"])', 'dark');
   await page.click('.rail-btn[title="Conversas"]');
   await page.waitForTimeout(300);
   await shot(page, '12-dark');
@@ -398,6 +445,7 @@ try {
   check(true, 'caso e etapa continuam salvos');
   await page.waitForSelector('.chat-head .stage-btn:has-text("Cliente")');
   check(true, 'classificação continua salva');
+  check((await page.textContent('.chat-row:has-text("Ana Beatriz") .chat-preview')).includes('Rascunho: Minuta do contrato'), 'rascunho continua guardado depois de fechar e abrir o programa');
   await shot(page, '11-reopen');
 } catch (e) {
   await shot(page, 'zz-failure-reopen').catch(() => {});

@@ -1,5 +1,6 @@
 // Conversa aberta: cabeçalho, mensagens e caixa de envio.
 import { openImageViewer } from './imageviewer.js';
+import { getDraft, setDraft, clearDraft } from '../drafts.js';
 import { suggestWords, applyWord, learnWords } from '../wordsuggest.js';
 import { autocorrectBefore, correctWord } from '../autocorrect.js';
 
@@ -490,11 +491,7 @@ function setReply(m) {
 function cancelEdit() {
   if (!editing) return;
   editing = null;
-  const draftKey = `draft:${current.jid}`;
-  sessionStorage.removeItem(draftKey);
-  renderComposer();
-  const ta = current.composerEl.querySelector('textarea');
-  if (ta) ta.value = '';
+  renderComposer(); // volta o rascunho que havia antes de editar
 }
 
 function startEdit(m) {
@@ -518,10 +515,10 @@ function renderComposerState() {
 function renderComposer() {
   const c = current;
   const chat = state.chats.get(c.jid);
-  const draftKey = `draft:${c.jid}`;
+  const saveDraft = () => { if (!editing) setDraft(c.jid, ta.value); };
   const ta = h('textarea', {
     class: 'composer-input', rows: 1, placeholder: 'Digite uma mensagem  ( / para respostas rápidas )',
-    value: sessionStorage.getItem(draftKey) || '',
+    value: editing ? '' : getDraft(c.jid),
   });
   const suggest = h('div', { class: 'quick-suggest hidden' });
   // sugestões de palavras (como no teclado do celular): Tab ou clique completa
@@ -545,7 +542,7 @@ function renderComposer() {
     const r = applyWord(ta.value.slice(0, ta.selectionStart), ta.value.slice(ta.selectionEnd), w);
     ta.value = r.value;
     ta.setSelectionRange(r.cursor, r.cursor);
-    sessionStorage.setItem(draftKey, ta.value);
+    saveDraft();
     autosize();
     updateWords();
     ta.focus();
@@ -583,7 +580,7 @@ function renderComposer() {
     ta.value = head + ta.value.slice(f.pos);
     ta.setSelectionRange(head.length, head.length);
     keepAsTyped.add(f.from.toLowerCase());
-    sessionStorage.setItem(draftKey, ta.value);
+    saveDraft();
     wordBar.classList.add('hidden');
   };
   // a última palavra (sem espaço depois) também é corrigida ao enviar
@@ -611,7 +608,7 @@ function renderComposer() {
     if (vocab) learnWords(vocab, text);
     ta.value = '';
     updateWords();
-    sessionStorage.removeItem(draftKey);
+    clearDraft(c.jid);
     autosize();
     replyTo = null;
     c.composerEl.querySelector('.reply-bar')?.remove();
@@ -620,6 +617,7 @@ function renderComposer() {
     } catch (e) {
       errToast(e);
       ta.value = text;
+      saveDraft(); // não enviou: volta a ser rascunho
       autosize();
     }
   };
@@ -650,7 +648,7 @@ function renderComposer() {
   ta.addEventListener('input', (e) => {
     runAutocorrect(e);
     autosize();
-    sessionStorage.setItem(draftKey, ta.value);
+    saveDraft();
     updateSuggest();
     if (!lastFix) updateWords(); // se acabou de corrigir, a faixa mostra a correção
     if (Date.now() - lastTyping > 4000) { lastTyping = Date.now(); api('chats:presence', c.jid, 'composing').catch(() => {}); }
