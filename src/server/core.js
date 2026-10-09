@@ -166,12 +166,31 @@ export async function createCore({ dataDir, demo = false, version = '', safeStor
   // no OneDrive pela API da Microsoft (servidor) — Ajustes → Documentos
   const onedrive = new OneDriveAuth({ dir: path.join(dataDir, 'onedrive'), crypt: fileSafeStorage(path.join(dataDir, 'onedrive')) });
   let storeCache = null;
+  // cópia das pastas do OneDrive no banco (por pasta escolhida; trocou = começa de novo)
+  const docTree = (folderId) => {
+    if (db.get("SELECT value FROM meta WHERE key = 'docTreeFolder'")?.value !== JSON.stringify(folderId)) {
+      db.run('DELETE FROM doc_tree');
+      db.run("INSERT OR REPLACE INTO meta (key, value) VALUES ('docTreeFolder', ?)", JSON.stringify(folderId));
+    }
+    return {
+      get: (p) => { const r = db.get('SELECT at, list FROM doc_tree WHERE dir = ?', p); try { return r ? { at: r.at, list: JSON.parse(r.list) } : null; } catch { return null; } },
+      set: (p, list) => db.run('INSERT OR REPLACE INTO doc_tree (dir, at, list) VALUES (?, ?, ?)', p, Date.now(), JSON.stringify(list)),
+      drop: (p) => db.run('DELETE FROM doc_tree WHERE dir = ?', p),
+      prune: (seen) => { for (const r of db.all('SELECT dir FROM doc_tree')) if (!seen.has(r.dir)) db.run('DELETE FROM doc_tree WHERE dir = ?', r.dir); },
+    };
+  };
   const getStore = () => {
     if (settings.docsMode === 'onedrive') {
       const st = onedrive.status();
       if (!st.connected || !st.folder) return null;
       if (storeCache?.kind !== 'onedrive' || storeCache.itemId !== st.folder.itemId) {
-        storeCache = new GraphStore({ driveId: st.folder.driveId, itemId: st.folder.itemId, getToken: () => onedrive.token(), fetch: (...a) => onedrive.fetch(...a) });
+        storeCache = new GraphStore({
+          driveId: st.folder.driveId, itemId: st.folder.itemId, getToken: () => onedrive.token(), fetch: (...a) => onedrive.fetch(...a),
+          mirror: docTree(st.folder.itemId),
+          filesDir: path.join(dataDir, 'onedrive', 'arquivos'),
+          // pasta mudou no OneDrive (por fora): as telas com ela aberta atualizam
+          onChange: (rel) => send('docs:changed', { rel }),
+        });
       }
       return storeCache;
     }

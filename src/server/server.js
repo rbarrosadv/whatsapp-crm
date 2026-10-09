@@ -366,28 +366,29 @@ export async function startServer({
       if (inline) {
         const extra = { 'X-Frame-Options': 'SAMEORIGIN', 'Content-Security-Policy': PREVIEW_CSP, 'Content-Disposition': 'inline' };
         if (file) return serveFile(req, res, file, { cache: 'private, no-cache', headers: extra });
-        // OneDrive: o servidor busca e repassa (o link da Microsoft manda baixar e é de outro endereço)
-        try {
-          const st = core.docs.store();
-          const link = await st?.downloadUrl?.(rel);
-          if (!link) { res.writeHead(404); return res.end(); }
-          const r = await (st.fetch || fetch)(link);
-          if (!r.ok || !r.body) { res.writeHead(502); return res.end(); }
-          res.writeHead(200, {
-            'Content-Type': MIME[ext] || 'application/octet-stream', 'Cache-Control': 'private, no-cache', 'X-Content-Type-Options': 'nosniff',
-            ...(r.headers.get('content-length') ? { 'Content-Length': r.headers.get('content-length') } : {}), ...extra,
-          });
-          if (req.method === 'HEAD') return res.end();
-          return Readable.fromWeb(r.body).pipe(res);
-        } catch (e) { return sendJson(res, 502, { error: e.message }); }
       }
       if (file) return serveFile(req, res, file, { download: url.searchParams.get('download') || undefined, csp: "default-src 'none'; img-src 'self'; media-src 'self'; style-src 'unsafe-inline'; sandbox" });
-      // OneDrive pela API: link temporário da Microsoft (o arquivo vem direto de lá)
+      // OneDrive: a cópia guardada no servidor (baixada da Microsoft só na 1ª vez
+      // ou quando o arquivo mudou); arquivos enormes vêm direto da Microsoft
       try {
-        const link = await core.docs.store()?.downloadUrl?.(rel);
-        if (!link) { res.writeHead(404); return res.end(); }
-        res.writeHead(302, { Location: link, 'Cache-Control': 'no-store' });
-        return res.end();
+        const st = core.docs.store();
+        const c = await st?.localCopy?.(rel);
+        if (!c) { res.writeHead(404); return res.end(); }
+        if (c.file) {
+          return inline
+            ? serveFile(req, res, c.file, { cache: 'private, no-cache', headers: { 'X-Frame-Options': 'SAMEORIGIN', 'Content-Security-Policy': PREVIEW_CSP, 'Content-Disposition': 'inline' } })
+            : serveFile(req, res, c.file, { download: url.searchParams.get('download') || c.name, csp: "default-src 'none'; img-src 'self'; media-src 'self'; style-src 'unsafe-inline'; sandbox" });
+        }
+        if (!inline) { res.writeHead(302, { Location: c.link, 'Cache-Control': 'no-store' }); return res.end(); }
+        const r = await (st.fetch || fetch)(c.link);
+        if (!r.ok || !r.body) { res.writeHead(502); return res.end(); }
+        res.writeHead(200, {
+          'Content-Type': MIME[ext] || 'application/octet-stream', 'Cache-Control': 'private, no-cache', 'X-Content-Type-Options': 'nosniff',
+          ...(r.headers.get('content-length') ? { 'Content-Length': r.headers.get('content-length') } : {}),
+          'X-Frame-Options': 'SAMEORIGIN', 'Content-Security-Policy': PREVIEW_CSP, 'Content-Disposition': 'inline',
+        });
+        if (req.method === 'HEAD') return res.end();
+        return Readable.fromWeb(r.body).pipe(res);
       } catch (e) { return sendJson(res, 502, { error: e.message }); }
     }
     if (p === '/download/backup' && user.role === 'socio') {

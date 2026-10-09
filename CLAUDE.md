@@ -83,8 +83,8 @@ Motor (`src/main`, sem Electron apesar do nome da pasta):
   `meta`, `contact_types`, `chat_filters`, `cases`,
   `payments`, `case_docs`, `users`, `sessions`, `doc_index`, `clients`,
   `case_parties`, `case_moves`, `case_steps`, `case_checklist`, `oabs`,
-  `intimations`, `expenses`, `incomes`, `leads`, `lead_contacts`, `push_subs`, `case_hints`, `doc_recent`, `doc_ocr`, `case_phases` (migrações por versão em
-  `migrate()`; `meta.schema` guarda a versão atual — v21).
+  `intimations`, `expenses`, `incomes`, `leads`, `lead_contacts`, `push_subs`, `case_hints`, `doc_recent`, `doc_ocr`, `case_phases`, `doc_tree` (migrações por versão em
+  `migrate()`; `meta.schema` guarda a versão atual — v22).
 - `docs.js` — `DocsService`: pasta "BARROS ADVOGADOS" do escritório, sempre
   por caminho relativo (`clients.folder`, `cases.folder`, conferido por
   `safeRel` — sem `..`), sobre um **armazenamento** (`storage.js`):
@@ -105,7 +105,7 @@ Motor (`src/main`, sem Electron apesar do nome da pasta):
   `{representante}`. Busca: `doc_index` (texto de .docx/.pdf simples/.txt,
   `fold` sem acento, incremental por data; PDFs > 8 MB e outros > 15 MB só
   pelo nome — ler = baixar). `zip.js` = zip mínimo. Rota `GET /docs/file/<rel>`
-  (local: o arquivo; OneDrive: 302 para o link temporário da Microsoft).
+  (local: o arquivo; OneDrive: a cópia guardada no servidor, ver abaixo).
   **Arquivo morto**: ao encerrar, `docs:archivePlan/archiveFolder` oferece mover
   a pasta do cliente (sem outro processo aberto) ou só a do processo para
   `03 ARQUIVO MORTO` (e de volta ao reabrir); `renameFolderPrefix` acerta os
@@ -118,8 +118,16 @@ Motor (`src/main`, sem Electron apesar do nome da pasta):
   link de compartilhamento (`/shares/u!…`) ou pela lista `sharedWithMe`.
   `GraphStore` (em `storage.js`) usa caminhos `items/{pasta}:/{rel}:`,
   `children`, `content` (PUT até 200 MB), PATCH para mover, espera em 429.
+  **Como o app do OneDrive** (v22): as pastas ficam guardadas em `doc_tree`
+  (`mirror` do `GraphStore`, por pasta escolhida — `meta.docTreeFolder`) e abrem na
+  hora, conferidas por trás (cópia com mais de 30 s → `revalidate`; mudou → evento
+  `docs:changed {rel}` e o `folderBrowser` aberto redesenha); a releitura do índice
+  renova tudo e tira as pastas que sumiram. Arquivos: `localCopy(rel)` confere a versão
+  (1 consulta) e guarda a cópia em `<dados>/onedrive/arquivos/` (`id-mtime-tamanho`,
+  até 2 GB, sai o aberto há mais tempo; > 150 MB vem direto da Microsoft) — `/docs/file`
+  (ver e baixar), `read()` (prévia, OCR, índice) usam a cópia.
   **Cache** no `GraphStore` (listas e itens por 5 min, `forget(rel)` ao criar/
-  enviar/mover; `docs:list(rel, {fresh})` = botão Atualizar; o índice relê tudo
+  enviar/mover — esquece também a cópia guardada; `docs:list(rel, {fresh})` = botão Atualizar; o índice relê tudo
   a cada 15 min das 6h às 22h e renova o cache). Modelos aceitam qualquer tipo
   de arquivo (só .docx é preenchido).
   **Ver e editar** (`views/docviewer.js`): "Ver" abre por cima (`docs:preview`:

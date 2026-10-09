@@ -7,6 +7,7 @@ import path from 'node:path';
 
 export const posix = (p) => String(p || '').split(/[\\/]+/).filter(Boolean).join('/');
 const HIDDEN = /^(\.|~\$|desktop\.ini$|thumbs\.db$)/i;
+const listSig = (l) => (l ? l.map((e) => `${e.name}|${e.dir ? 1 : 0}|${e.size}|${e.mtime}`).sort().join('\n') : '');
 
 // ------------------------------------------------------------ disco
 
@@ -79,12 +80,21 @@ export const GRAPH = 'https://graph.microsoft.com/v1.0';
  * "BARROS ADVOGADOS". `getToken()` devolve um token de acesso válido.
  */
 export class GraphStore {
-  constructor({ driveId, itemId, getToken, fetch: f = globalThis.fetch }) {
+  constructor({ driveId, itemId, getToken, fetch: f = globalThis.fetch, mirror = null, filesDir = null, filesMax = 2 * 1024 ** 3, onChange = null }) {
     this.driveId = driveId;
     this.itemId = itemId;
     this.getToken = getToken;
     this.fetch = f;
     this.kind = 'onedrive';
+    // como o aplicativo do OneDrive: as pastas ficam guardadas (abrem na hora e
+    // são conferidas em segundo plano; `onChange(rel)` quando mudou) e os arquivos
+    // já abertos ficam numa cópia no servidor, baixados de novo só se mudarem
+    this.mirror = mirror; // { get(p) → {at, list}, set(p, list), drop(p), prune(vistos) }
+    this.filesDir = filesDir;
+    this.filesMax = filesMax;
+    this.onChange = onChange;
+    this.revalidating = new Set();
+    this.downloading = new Map();
     // cache: cada consulta à Microsoft leva ~0,3–1 s; pastas e itens já vistos
     // ficam guardados por alguns minutos e são esquecidos quando o sistema muda algo
     this.cache = new Map(); // 'L:caminho' (lista) | 'I:caminho' (item) → { at, v }
@@ -95,8 +105,10 @@ export class GraphStore {
   cached(key, load) {
     const c = this.cache.get(key);
     if (c && Date.now() - c.at < this.ttl) return c.v;
-    const v = load().then((r) => r, (e) => { this.cache.delete(key); throw e; });
-    this.cache.set(key, { at: Date.now(), v });
+    const entry = { at: Date.now(), done: false };
+    entry.v = load().then((r) => { entry.done = true; return r; }, (e) => { this.cache.delete(key); throw e; });
+    this.cache.set(key, entry);
+    const v = entry.v;
     if (this.cache.size > 5000) for (const k of [...this.cache.keys()].slice(0, 1000)) this.cache.delete(k);
     return v;
   }
@@ -110,6 +122,9 @@ export class GraphStore {
       if (kp === p || kp.startsWith(`${p}/`) || (k[0] === 'L' && kp === parent)) this.cache.delete(k);
     }
     if (!p) this.cache.clear();
+    // a cópia guardada também (a próxima abertura relê da Microsoft)
+    this.mirror?.drop(p);
+    this.mirror?.drop(parent);
   }
 
   /** Limpa tudo (botão "Atualizar" ou depois de reler o índice). */
@@ -167,12 +182,40 @@ export class GraphStore {
 
   async list(rel) {
     const p = posix(rel);
-    const out = await this.cached(`L:${p}`, () => this.listNow(p));
-    if (!out) this.cache.delete(`L:${p}`);
+    const key = `L:${p}`;
+    const c = this.cache.get(key);
+    let out;
+    if (c && c.done && Date.now() - c.at < this.ttl) out = await c.v;
+    else {
+      const saved = this.mirror?.get(p);
+      if (saved) {
+        // abre na hora com a cópia guardada; confere com a Microsoft por trás
+        out = saved.list;
+        if (Date.now() - saved.at > 30e3) this.revalidate(p, saved.list);
+      } else out = await this.cached(key, () => this.listNow(p));
+    }
+    if (!out) this.cache.delete(key);
     return out && out.map((e) => ({ ...e }));
   }
 
+  /** Relê a pasta em segundo plano e avisa se mudou desde a cópia guardada. */
+  revalidate(p, old) {
+    if (this.revalidating.has(p)) return;
+    this.revalidating.add(p);
+    this.cache.delete(`L:${p}`);
+    this.cached(`L:${p}`, () => this.listNow(p))
+      .then((list) => { if (listSig(list) !== listSig(old)) this.onChange?.(p); })
+      .catch(() => {})
+      .finally(() => this.revalidating.delete(p));
+  }
+
   async listNow(p) {
+    const out = await this.listRemote(p);
+    if (this.mirror) { if (out) this.mirror.set(p, out); else this.mirror.drop(p); }
+    return out;
+  }
+
+  async listRemote(p) {
     let url = `${p ? this.itemUrl(p) : this.base()}/children?$top=999&$select=id,name,size,lastModifiedDateTime,folder,file`;
     const out = [];
     while (url) {
@@ -208,8 +251,67 @@ export class GraphStore {
   }
 
   async read(rel) {
+    const c = await this.localCopy(rel).catch(() => null);
+    if (c?.file) return fs.promises.readFile(c.file);
     const r = await this.req(`${this.itemUrl(rel)}/content`, {}, { raw: true });
     return Buffer.from(await r.arrayBuffer());
+  }
+
+  /**
+   * Cópia do arquivo no servidor: `{ file, size, mtime, name }` (pronta, ou baixada
+   * agora) ou `{ link, size, mtime }` para os grandes demais (> 150 MB), ou null.
+   * Confere a versão na Microsoft a cada abertura (uma consulta rápida) e só
+   * baixa de novo se o arquivo mudou.
+   */
+  async localCopy(rel) {
+    const it = await this.req(`${this.itemUrl(rel)}?$select=id,name,size,lastModifiedDateTime,file,folder,@microsoft.graph.downloadUrl`, {}, { allow404: true });
+    if (!it || it.folder) return null;
+    const mtime = Date.parse(it.lastModifiedDateTime) || 0;
+    const link = it['@microsoft.graph.downloadUrl'];
+    if (!this.filesDir || it.size > 150 * 1024 * 1024) return link ? { link, size: it.size, mtime, name: it.name } : null;
+    const id = String(it.id).replace(/[^A-Za-z0-9_-]/g, '_');
+    const file = path.join(this.filesDir, `${id}-${mtime}-${it.size}${path.extname(it.name).toLowerCase().replace(/[^.a-z0-9]/g, '')}`);
+    const out = { file, size: it.size, mtime, name: it.name };
+    if (fs.existsSync(file)) {
+      try { fs.utimesSync(file, new Date(), new Date(mtime)); } catch { /* ignore */ }
+      return out;
+    }
+    if (!link) return null;
+    if (!this.downloading.has(file)) {
+      this.downloading.set(file, (async () => {
+        const r = await this.fetch(link);
+        if (!r.ok) throw new Error(`OneDrive respondeu ${r.status}`);
+        const buf = Buffer.from(await r.arrayBuffer());
+        fs.mkdirSync(this.filesDir, { recursive: true });
+        // versões antigas do mesmo arquivo saem
+        for (const f of fs.readdirSync(this.filesDir)) if (f.startsWith(`${id}-`)) fs.rmSync(path.join(this.filesDir, f), { force: true });
+        const tmp = `${file}.parcial`;
+        fs.writeFileSync(tmp, buf);
+        fs.utimesSync(tmp, new Date(), new Date(mtime));
+        fs.renameSync(tmp, file);
+        this.pruneFiles();
+      })().finally(() => this.downloading.delete(file)));
+    }
+    await this.downloading.get(file);
+    return out;
+  }
+
+  /** Guarda no máximo `filesMax` bytes: sai o que foi aberto há mais tempo. */
+  pruneFiles() {
+    let files;
+    try {
+      files = fs.readdirSync(this.filesDir).filter((f) => !f.endsWith('.parcial')).map((f) => {
+        const st = fs.statSync(path.join(this.filesDir, f));
+        return { f, size: st.size, used: st.atimeMs };
+      });
+    } catch { return; }
+    let total = files.reduce((n, x) => n + x.size, 0);
+    files.sort((a, b) => a.used - b.used);
+    for (const x of files) {
+      if (total <= this.filesMax) break;
+      fs.rmSync(path.join(this.filesDir, x.f), { force: true });
+      total -= x.size;
+    }
   }
 
   async write(rel, buf) {
@@ -267,13 +369,20 @@ export class GraphStore {
 
   async* walk(limit = 100000) {
     const stack = [''];
+    const seen = new Set();
     let n = 0;
+    let failed = false;
     while (stack.length) {
       const rel = stack.pop();
       // relê da Microsoft (o índice é o que descobre mudanças feitas por fora) e renova o cache
       const p = posix(rel);
-      const list = await this.listNow(p).catch(() => null);
-      if (list) this.cache.set(`L:${p}`, { at: Date.now(), v: Promise.resolve(list) });
+      const old = this.mirror?.get(p);
+      const list = await this.listNow(p).catch(() => { failed = true; return null; });
+      seen.add(p);
+      if (list) {
+        this.cache.set(`L:${p}`, { at: Date.now(), done: true, v: Promise.resolve(list) });
+        if (old && listSig(list) !== listSig(old.list)) this.onChange?.(p);
+      }
       for (const e of list || []) {
         const r = posix(`${rel}/${e.name}`);
         if (e.dir) { stack.push(r); continue; }
@@ -282,5 +391,7 @@ export class GraphStore {
       }
       await new Promise((res) => setTimeout(res, 150)); // sem rajadas à Microsoft
     }
+    // pastas que sumiram da Microsoft saem da cópia guardada
+    if (!failed) this.mirror?.prune(seen);
   }
 }

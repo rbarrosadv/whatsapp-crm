@@ -80,6 +80,7 @@ export async function bootstrap() {
   window.api.on('cases:import', (st) => { emit('cases-import', st); if (!st.running) emit('cases', null); });
   window.api.on('leads:changed', (id) => emit('leads', id));
   window.api.on('finance:changed', () => emit('finance'));
+  window.api.on('docs:changed', (d) => emit('docs-changed', d));
   window.api.on('ui:open-chat', (jid) => openChat(jid));
   window.api.on('ui:open-view', (v) => setView(v));
   window.api.on('ui:open-filter', (kind) => { setView('inbox'); emit('open-filter', kind); });

@@ -34,8 +34,19 @@ export async function openDocument(d) {
  * Lista uma pasta com navegação (sem sair de `top`), envio de arquivos,
  * nova pasta e "novo a partir de modelo".
  */
+// pastas abertas na tela: quando o servidor avisa que uma mudou no OneDrive, redesenha
+const openBrowsers = new Set();
+on('docs-changed', ({ rel } = {}) => {
+  for (const b of [...openBrowsers]) {
+    if (!b.el.isConnected) { openBrowsers.delete(b); continue; }
+    if (b.rel() === rel) b.render();
+  }
+});
+
 export function folderBrowser(el, { top, start, caseId, clientId }) {
   let rel = start || top;
+  for (const b of openBrowsers) if (b.el === el) openBrowsers.delete(b);
+  openBrowsers.add({ el, rel: () => rel, render: () => render() });
   async function render(fresh = false) {
     let r;
     if (!el.childElementCount) fill(el, h('p', { class: 'muted small' }, 'Carregando…'));

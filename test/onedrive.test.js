@@ -7,6 +7,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { makeDocx, docxText } from '../src/main/docs.js';
+import * as db from '../src/main/db.js';
 
 const { startServer } = await import('../src/server/server.js');
 
@@ -177,9 +178,11 @@ test('OneDrive pela API: conectar, pasta compartilhada, pastas, modelo, busca, a
   await c.call('docs:reindex');
   const hits = await c.call('docs:search', 'outorgante fulana');
   assert.ok(hits.some((d) => d.rel === made.rel), 'busca no conteúdo dos arquivos do OneDrive');
+  // abrir: o servidor baixa da Microsoft uma vez e guarda a cópia
   const open = await c.req(hits[0].url, { redirect: 'manual' });
-  assert.equal(open.status, 302);
-  assert.match(open.headers.get('location'), /^https:\/\/download\.example\//);
+  assert.equal(open.status, 200);
+  assert.match(open.headers.get('content-disposition'), /^attachment/);
+  assert.equal(Buffer.from(await open.arrayBuffer()).length, doc.content.length);
   const list = await c.call('docs:list', kf);
   assert.ok(list.entries.some((e) => e.name === made.rel.split('/').pop()));
 
@@ -189,7 +192,8 @@ test('OneDrive pela API: conectar, pasta compartilhada, pastas, modelo, busca, a
   assert.ok(pv.blocks.some((b) => b.runs?.some((r) => /FULANA DE TAL/.test(r.text))));
   const docxUrl = (await c.call('docs:list', kf)).entries.find((e) => e.rel === made.rel).url;
   const asDownload = await c.req(`${docxUrl}?inline=1`, { redirect: 'manual' });
-  assert.equal(asDownload.status, 302, 'Word não abre inline: vai para o link de baixar');
+  assert.match(asDownload.headers.get('content-disposition') || '', /^attachment/, 'Word não abre inline: baixa');
+  await asDownload.arrayBuffer();
   const pdfDir = ms.byPath(kf);
   ms.items.set('PDF1', { id: 'PDF1', name: 'peticao.pdf', parent: pdfDir.id, folder: false, content: Buffer.from('%PDF-1.4 teste'), mtime: Date.now() });
   const inl = await c.req(`/docs/file/${kf.split('/').map(encodeURIComponent).join('/')}/peticao.pdf?inline=1`);
@@ -197,6 +201,17 @@ test('OneDrive pela API: conectar, pasta compartilhada, pastas, modelo, busca, a
   assert.equal(inl.headers.get('content-type'), 'application/pdf');
   assert.equal(inl.headers.get('x-frame-options'), 'SAMEORIGIN');
   assert.equal(await inl.text(), '%PDF-1.4 teste');
+  // 2ª vez: vem da cópia do servidor (só confere a versão, não baixa de novo)
+  const dl = () => ms.calls.filter((x) => x === 'GET /PDF1').length;
+  assert.equal(dl(), 1);
+  const pdfUrl = `/docs/file/${kf.split('/').map(encodeURIComponent).join('/')}/peticao.pdf?inline=1`;
+  assert.equal(await (await c.req(pdfUrl)).text(), '%PDF-1.4 teste');
+  assert.equal(dl(), 1, 'arquivo já aberto não é baixado de novo');
+  // mudou no OneDrive: baixa a versão nova
+  Object.assign(ms.items.get('PDF1'), { content: Buffer.from('%PDF-1.4 versao 2'), mtime: Date.now() + 5000 });
+  assert.equal(await (await c.req(pdfUrl)).text(), '%PDF-1.4 versao 2');
+  assert.equal(dl(), 2);
+  assert.equal(fs.readdirSync(path.join(dir, 'onedrive', 'arquivos')).filter((f) => f.startsWith('PDF1-')).length, 1, 'versão antiga sai');
   // editar no Word: abre o arquivo do próprio OneDrive (d.docs.live.net), não uma cópia
   const ed = await c.call('docs:editLinks', made.rel);
   assert.equal(ed.app, 'word');
@@ -224,6 +239,27 @@ test('OneDrive pela API: conectar, pasta compartilhada, pastas, modelo, busca, a
   assert.equal(ms.calls.length, n0, 'pasta repetida vem do cache');
   await c.call('docs:list', '04 MODELOS', { fresh: true });
   assert.ok(ms.calls.length > n0, 'Atualizar consulta de novo');
+  // pastas guardadas: mesmo sem o cache da memória (ex.: servidor reiniciou)
+  // abrem na hora pela cópia, sem esperar a Microsoft
+  const store = srv.core.docs.store();
+  store.cache.clear();
+  const n1 = ms.calls.length;
+  await c.call('docs:list', '04 MODELOS');
+  assert.equal(ms.calls.length, n1, 'pasta vem da cópia guardada');
+  // mudou por fora: abre com a cópia, confere por trás e avisa as telas
+  const modelosItem = ms.byPath('04 MODELOS');
+  ms.items.set('EXT1', { id: 'EXT1', name: 'Feito no Word.docx', parent: modelosItem.id, folder: false, content: Buffer.from('x'), mtime: Date.now() });
+  const changed = [];
+  const onEv = (ch, data) => { if (ch === 'docs:changed') changed.push(data.rel); };
+  srv.core.events.on('event', onEv);
+  store.cache.clear();
+  db.run("UPDATE doc_tree SET at = 0 WHERE dir = '04 MODELOS'");
+  const stale = await c.call('docs:list', '04 MODELOS');
+  assert.ok(!stale.entries.some((e) => e.name === 'Feito no Word.docx'), 'mostra a cópia na hora');
+  for (let i = 0; i < 50 && !changed.length; i++) await new Promise((r) => setTimeout(r, 20));
+  srv.core.events.off('event', onEv);
+  assert.deepEqual(changed, ['04 MODELOS'], 'avisa que a pasta mudou');
+  assert.ok((await c.call('docs:list', '04 MODELOS')).entries.some((e) => e.name === 'Feito no Word.docx'));
   // pasta criada pelo sistema aparece na hora (o cache é esquecido)
   await c.call('docs:mkdir', '04 MODELOS/Nova área');
   assert.ok((await c.call('docs:list', '04 MODELOS')).entries.some((e) => e.name === 'Nova área'));

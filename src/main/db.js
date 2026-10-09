@@ -9,7 +9,7 @@ import { fullAddress, sameName } from '../renderer/js/qualify.js';
 
 let db;
 
-const SCHEMA_VERSION = 21;
+const SCHEMA_VERSION = 22;
 
 // Tipos de contato (editáveis). `personal` = não conta como trabalho
 // (fica fora de "Aguardando resposta" e dos avisos de conversa esquecida).
@@ -512,6 +512,8 @@ function migrate() {
     );
     CREATE INDEX IF NOT EXISTS case_phases_case ON case_phases(case_id, at);
   `);
+  // versão 22: cópia das pastas do OneDrive (abrem na hora; conferidas em segundo plano)
+  db.exec('CREATE TABLE IF NOT EXISTS doc_tree (dir TEXT PRIMARY KEY, at INTEGER NOT NULL, list TEXT NOT NULL)');
 
   const version = Number(get('SELECT value FROM meta WHERE key = ?', 'schema')?.value || 0);
   if (version < 1) seedDefaults();
