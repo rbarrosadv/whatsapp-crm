@@ -52,13 +52,23 @@ async function render() {
   let list;
   let stats;
   const month = new Date(); month.setDate(1); month.setHours(0, 0, 0, 0);
+  // nunca fica em branco: mostra que está carregando (e o erro, se houver)
+  if (!root.firstChild) fill(root, h('div', { class: 'page-head' }, h('div', { class: 'row' }, h('h2', null, 'Atendimento'), atendimentoSwitch('commercial'))), h('p', { class: 'muted' }, 'Carregando…'));
   try {
     await loadMeta();
     [list, stats] = await Promise.all([
       api('leads:list', { responsible: who || undefined }),
       api('leads:stats', { from: month.getTime() }),
     ]);
-  } catch (e) { errToast(e); return; }
+  } catch (e) {
+    errToast(e);
+    if (my === loading) {
+      fill(root, h('div', { class: 'page-head' }, h('div', { class: 'row' }, h('h2', null, 'Atendimento'), atendimentoSwitch('commercial'))),
+        h('div', { class: 'empty' }, h('p', null, `Não consegui abrir o Comercial: ${e.message || e}`),
+          h('button', { class: 'btn', onclick: () => render() }, 'Tentar de novo')));
+    }
+    return;
+  }
   if (my !== loading || state.view !== 'commercial') return;
 
   const search = h('input', { class: 'input search', type: 'search', placeholder: 'Buscar: nome, telefone, assunto, origem…', value: q });

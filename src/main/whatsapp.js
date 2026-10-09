@@ -587,12 +587,16 @@ export class WhatsAppService extends EventEmitter {
     if (!jid) return;
     this.changedChats.add(jid);
     if (!this.flushTimer) {
+      // em rajada (sincronização do histórico) junta mais: no máximo 1 aviso
+      // às janelas a cada 2 s, para o servidor e as telas não ficarem lentos
+      const busy = Date.now() - (this.lastFlush || 0) < 2000;
       this.flushTimer = setTimeout(() => {
         const list = [...this.changedChats];
         this.changedChats.clear();
         this.flushTimer = null;
+        this.lastFlush = Date.now();
         this.emit('chats-changed', list);
-      }, 250);
+      }, busy ? 2000 : 250);
     }
   }
 
@@ -600,7 +604,13 @@ export class WhatsAppService extends EventEmitter {
     if (lidPnMappings?.length) this.onLidMapping(lidPnMappings);
     await this.onContacts(contacts || []);
     await this.onChats(chats || [], true, true);
-    await this.onMessages(messages || [], 'history');
+    // em lotes de 300, dando a vez às outras requisições entre um e outro
+    // (o 1º histórico pode ter dezenas de milhares de mensagens)
+    const all = messages || [];
+    for (let i = 0; i < all.length; i += 300) {
+      await this.onMessages(all.slice(i, i + 300), 'history');
+      if (i + 300 < all.length) await new Promise((r) => setImmediate(r));
+    }
     if (progress != null) {
       this.historyProgress = progress;
       this.emit('history', { progress, syncType });

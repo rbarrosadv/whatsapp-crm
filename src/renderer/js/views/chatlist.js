@@ -161,8 +161,14 @@ export function mountChatList(root) {
     ], { x: e.clientX, y: e.clientY });
   }
 
-  on('chats', debounce(render, 60));
-  on('config', render);
+  // fora do Atendimento não redesenha (na sincronização chegam milhares de
+  // mudanças); redesenha ao voltar
+  let dirty = false;
+  const visible = () => state.view === 'inbox';
+  const soon = debounce(render, 150);
+  on('chats', () => { if (visible()) soon(); else dirty = true; });
+  on('config', () => { if (visible()) render(); else dirty = true; });
+  on('view', (v) => { if (v === 'inbox' && dirty) { dirty = false; render(); } });
   on('open-filter', (kind) => {
     const f = state.filters.find((x) => (kind === 'awaiting' ? x.rules.awaiting : false));
     if (f) { filters.filterId = f.id; filters.q = ''; searchInput.value = ''; render(); }

@@ -186,6 +186,7 @@ function migrate() {
       created_at INTEGER NOT NULL
     );
     CREATE INDEX IF NOT EXISTS tasks_due ON tasks(done, due_at);
+    CREATE INDEX IF NOT EXISTS tasks_jid ON tasks(jid, done);
 
     CREATE TABLE IF NOT EXISTS activity (
       id INTEGER PRIMARY KEY AUTOINCREMENT, jid TEXT NOT NULL, ts INTEGER NOT NULL, kind TEXT NOT NULL, detail TEXT

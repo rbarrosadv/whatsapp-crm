@@ -69,7 +69,7 @@ Motor (`src/main`, sem Electron apesar do nome da pasta):
   reconexão com backoff, logout (401 apaga `auth/` e volta ao QR),
   tradução dos eventos do Baileys para o banco, envio (texto, arquivos,
   voz), download de mídia, fotos de perfil, grupos, histórico sob demanda.
-  Emite `status`, `chats-changed` (debounced, lista de jids), `message`,
+  Emite `status`, `chats-changed` (debounced: 250 ms, ou 2 s em rajada — sincronização do histórico, que também grava em lotes de 300 dando a vez às requisições; a lista de conversas só redesenha com o Atendimento aberto), lista de jids), `message`,
   `history`, `chat-merged`.
 - `demo.js` — `DemoWhatsAppService` (subclasse) que simula tudo; os
   métodos de envio geram mensagens no formato do Baileys e passam pelo

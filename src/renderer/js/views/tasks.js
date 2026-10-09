@@ -1,6 +1,6 @@
 // Agenda em lista: tarefas, prazos, audiências e reuniões juntos, agrupados por
 // data, com filtro por tipo e por responsável. (O calendário é a outra visão.)
-import { h, fill } from '../util.js';
+import { h, fill, debounce } from '../util.js';
 import { state, on, api, setView } from '../store.js';
 import { taskRow, taskDialog } from './crmpanel.js';
 import { TASK_KINDS } from './casemodal.js';
@@ -16,8 +16,9 @@ let team = [];
 export function mountTasks(el) {
   root = el;
   on('view', (v) => v === 'tasks' && render());
-  on('tasks', () => state.view === 'tasks' && render());
-  on('chats', () => state.view === 'tasks' && render());
+  const refresh = debounce(() => state.view === 'tasks' && render(), 300);
+  on('tasks', refresh);
+  on('chats', debounce(() => state.view === 'tasks' && render(), 3000));
 }
 
 /** Abre a lista já filtrada (ex.: pelo painel Hoje). */
