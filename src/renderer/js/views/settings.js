@@ -3,6 +3,7 @@
 import { h, fill, modal, toast, errToast, confirmDialog, formatPhone, phoneOf, PALETTE, downloadUrl, fmtDateTime, pickFiles, uploadFiles, openExternal } from '../util.js';
 import { state, on, api, setSetting } from '../store.js';
 import { icon, named, iconName, PICK_ICONS } from '../icons.js';
+import { phaseList } from '../phases.js';
 import { pushSupported, needsInstall, currentSubscription, enablePush, disablePush } from '../push.js';
 
 let root;
@@ -29,7 +30,7 @@ export function mountSettings(el) {
 // configurações que valem para o escritório todo (só sócio muda)
 const OFFICE_KEYS = ['courtsNotifyAll', 'sendReadReceipts', 'forgottenHours', 'chargeTemplate', 'pixKey', 'paymentNoticeDays',
   'staleCaseDays', 'googleSync', 'googleCalendarId', 'signMessages', 'docsRequestTemplate', 'datajudKey',
-  'officeName', 'officeDoc', 'officeAddress', 'officeCity', 'idleCaseDays', 'prescriptionYears', 'clientUpdateTemplate', 'waSaveContacts', 'docsOcr'];
+  'officeName', 'officeDoc', 'officeAddress', 'officeCity', 'idleCaseDays', 'prescriptionYears', 'clientUpdateTemplate', 'waSaveContacts', 'docsOcr', 'phaseConfig'];
 
 function toggle(key, label, hint, def = true) {
   const val = state.settings[key] ?? def;
@@ -278,6 +279,58 @@ function oneDriveSetup(st, redraw) {
     }, 'Desligar o OneDrive')) : null);
 }
 
+/**
+ * Fases do processo: nome, mostrar/esconder, quem cuida de cada fase (ao entrar
+ * nela, a tarefa vai para essa pessoa) e fases a mais do escritório.
+ */
+function phasesSection() {
+  const box = h('div', { class: 'stack' }, h('p', { class: 'muted small' }, 'Carregando…'));
+  let cfg;
+  try { cfg = JSON.parse(state.settings.phaseConfig || '{}') || {}; } catch { cfg = {}; }
+  cfg = { names: {}, hidden: [], custom: [], resp: {}, ...cfg };
+  const admin = state.can.admin;
+  api('team:list').then((team) => {
+    const draw = () => {
+      const list = phaseList(cfg).filter((p) => p.id !== 'encerrado');
+      const nameIn = h('input', { class: 'input', placeholder: 'Nome da fase (ex.: Precatório)' });
+      const afterSel = h('select', { class: 'input select-sm' }, list.map((p) => h('option', { value: p.id, selected: p.id === 'cumprimento' }, `depois de ${p.label}`)));
+      fill(box,
+        h('p', { class: 'muted small' }, 'A fase muda sozinha pelos andamentos do tribunal (sentença, trânsito em julgado, cumprimento de sentença…) e pode ser mudada à mão na ficha. Aqui o escritório escolhe os nomes, esconde as que não usa e diz quem cuida de cada fase: quando o processo entra nela, essa pessoa recebe uma tarefa.'),
+        h('div', { class: 'table-wrap' }, h('table', { class: 'table compact phases-table' },
+          h('thead', null, h('tr', null, ['Fase', 'Mostrar', 'Quem cuida', ''].map((t) => h('th', null, t)))),
+          h('tbody', null, list.map((p) => h('tr', null,
+            h('td', null, h('input', {
+              class: 'input', value: p.label, placeholder: p.base, disabled: !admin,
+              onchange: (e) => { const v = e.target.value.trim(); if (!v || v === p.base) delete cfg.names[p.id]; else if (p.custom) cfg.custom.find((x) => x.id === p.id).label = v; else cfg.names[p.id] = v; save(); },
+            })),
+            h('td', null, h('input', {
+              type: 'checkbox', class: 'switch', checked: !p.hidden, disabled: !admin,
+              onchange: (e) => { cfg.hidden = cfg.hidden.filter((x) => x !== p.id); if (!e.target.checked) cfg.hidden.push(p.id); save(); },
+            })),
+            h('td', null, h('select', {
+              class: 'input select-sm', disabled: !admin,
+              onchange: (e) => { if (e.target.value) cfg.resp[p.id] = Number(e.target.value); else delete cfg.resp[p.id]; save(); },
+            }, h('option', { value: '' }, 'Responsável do processo'), team.map((u) => h('option', { value: String(u.id), selected: Number(cfg.resp[p.id]) === u.id }, u.name)))),
+            h('td', null, p.custom && admin ? h('button', {
+              class: 'icon-btn small', title: 'Tirar esta fase',
+              onclick: () => { cfg.custom = cfg.custom.filter((x) => x.id !== p.id); delete cfg.resp[p.id]; save(true); },
+            }, icon('trash', 14)) : null)))))),
+        admin ? h('div', { class: 'row wrap' }, nameIn, afterSel, h('button', {
+          class: 'btn btn-sm', type: 'button',
+          onclick: () => {
+            const label = nameIn.value.trim();
+            if (!label) { toast('Escreva o nome da fase', 'error'); return; }
+            cfg.custom.push({ id: `c_${Date.now().toString(36)}`, label, after: afterSel.value });
+            save(true);
+          },
+        }, [icon('plus', 14), 'Incluir fase'])) : h('p', { class: 'muted small' }, 'Só um sócio muda as fases.'));
+    };
+    const save = (redraw) => setSetting('phaseConfig', JSON.stringify(cfg)).then(() => { toast('Fases salvas', 'success'); if (redraw) draw(); }).catch(errToast);
+    draw();
+  }).catch((e) => fill(box, h('p', { class: 'muted small' }, e.message)));
+  return box;
+}
+
 function section(title, ...children) {
   return h('div', { class: 'panel' }, h('div', { class: 'panel-head' }, h('h3', null, title)), ...children);
 }
@@ -462,6 +515,8 @@ function render() {
             h('button', { class: 'btn btn-sm', onclick: () => quickEditor(r) }, 'Editar'),
             h('button', { class: 'btn btn-sm btn-danger', onclick: () => api('quick:delete', r.id).catch(errToast) }, 'Excluir')))),
         h('button', { class: 'btn', onclick: () => quickEditor() }, [icon('plus', 15), 'Nova resposta rápida'])),
+
+      section('Fases do processo', phasesSection()),
 
       state.can.admin && section('Dados e backup',
         h('p', { class: 'muted small' }, 'Tudo fica salvo no servidor do escritório, na pasta:'),

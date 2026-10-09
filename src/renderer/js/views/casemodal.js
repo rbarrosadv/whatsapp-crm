@@ -11,6 +11,7 @@ import { caseFolderPanel } from './docs.js';
 import { icon, dataIcon } from '../icons.js';
 import { caseBanners, closeCase, reopenCase } from './importcases.js';
 import { hintLabel, runHint, dismissHint } from './hints.js';
+import { caseDetail } from './casepanel.js';
 
 export const TASK_KINDS = {
   prazo: { icon: '', label: 'Prazo' },
@@ -118,7 +119,7 @@ function debounceLocal(fn, ms) {
 
 // ---------------------------------------------------------- ficha do caso
 
-export async function openCase(id, { tab = 'dados' } = {}) {
+export async function openCase(id, { tab = 'geral' } = {}) {
   let current = tab;
   const body = h('div', { class: 'case' });
   let k = null;
@@ -148,6 +149,7 @@ export async function openCase(id, { tab = 'dados' } = {}) {
 
     const pend = full.checklist.filter((i) => i.status !== 'recebido').length;
     const tabs = [
+      ['geral', 'Visão geral'],
       ['dados', 'Resumo'],
       ['fluxo', `Fluxo ${full.flow.done}/${full.flow.total}${pend ? ` · ${pend} doc.` : ''}`],
       ['andamentos', `Andamentos${full.moves.length ? ` (${full.moves.length})` : ''}`],
@@ -205,7 +207,12 @@ export async function openCase(id, { tab = 'dados' } = {}) {
         onclick: () => { current = key; render(); },
       }, label))),
       content);
-    ({ dados: renderDados, fluxo: renderFluxo, andamentos: renderMoves, honorarios: renderHonorarios, prazos: renderPrazos, docs: renderDocs, notas: renderNotas })[current](content);
+    ({ geral: renderGeral, dados: renderDados, fluxo: renderFluxo, andamentos: renderMoves, honorarios: renderHonorarios, prazos: renderPrazos, docs: renderDocs, notas: renderNotas })[current](content);
+  }
+
+  // ------------------------------------------------------------- visão geral (fase, o que fazer agora, linha do tempo)
+  function renderGeral(el) {
+    caseDetail(el, id, { inModal: true, onOpenFull: (t) => { current = t || 'dados'; render(); } });
   }
 
   // ------------------------------------------------------------- resumo

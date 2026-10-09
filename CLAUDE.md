@@ -83,8 +83,8 @@ Motor (`src/main`, sem Electron apesar do nome da pasta):
   `meta`, `contact_types`, `chat_filters`, `cases`,
   `payments`, `case_docs`, `users`, `sessions`, `doc_index`, `clients`,
   `case_parties`, `case_moves`, `case_steps`, `case_checklist`, `oabs`,
-  `intimations`, `expenses`, `incomes`, `leads`, `lead_contacts`, `push_subs`, `case_hints`, `doc_recent`, `doc_ocr` (migrações por versão em
-  `migrate()`; `meta.schema` guarda a versão atual — v20).
+  `intimations`, `expenses`, `incomes`, `leads`, `lead_contacts`, `push_subs`, `case_hints`, `doc_recent`, `doc_ocr`, `case_phases` (migrações por versão em
+  `migrate()`; `meta.schema` guarda a versão atual — v21).
 - `docs.js` — `DocsService`: pasta "BARROS ADVOGADOS" do escritório, sempre
   por caminho relativo (`clients.folder`, `cases.folder`, conferido por
   `safeRel` — sem `..`), sobre um **armazenamento** (`storage.js`):
@@ -313,6 +313,34 @@ Motor (`src/main`, sem Electron apesar do nome da pasta):
   avisado por outro meio). Ficam no Hoje e na ficha até alguém conferir.
   Hoje também mostra **processos parados** (`idleCaseDays`, padrão 90) e
   **arquivados com prescrição** nos próximos 90 dias.
+- **Fases do processo** (v21, `src/renderer/js/phases.js`, usado pelo servidor e
+  pela interface): `PHASES` (pré-processual → inicial → citação → contestação →
+  audiência → instrução → aguardando sentença → sentença → recurso → superiores →
+  trânsito → liquidação → cumprimento de sentença → acordo/pagamento; suspenso e
+  arquivado provisório "à parte"; encerrado) e `INSS_PHASES`. `phaseFromText`
+  (regras do mais específico ao geral) + `derivePhase` (só avança; arquivado/
+  suspenso entram e saem; desarquivar volta à fase de antes). `cases.phase/
+  phase_since/phase_manual` + histórico `case_phases` (auto ou quem mudou).
+  `core.updatePhase` roda em `organizeCase` (andamento novo: `live` → tarefa para
+  quem cuida da fase) e em `caseChanged` (status/INSS); escolha à mão
+  (`cases:setPhase`) vale até um andamento levar adiante. Opção do escritório
+  `phaseConfig` JSON `{names, hidden, custom:[{id,label,after}], resp:{fase: userId}}`
+  (Ajustes → Fases do processo). `phaseAverages` = mediana de dias por fase.
+- **Jurídico novo** (`views/legalview.js` + `views/casepanel.js`): abas Por cliente
+  (3 colunas: clientes com bolinhas · processos do cliente em cartões · processo em
+  detalhe; no celular uma coluna por vez, voltar pelo gesto/botão `backColumn`),
+  Quadro por fase (arrastar = `cases:setPhase`), Lista de processos (a tabela
+  antiga), Intimações, Atividade (`activity:feed`: `activity` + mudanças automáticas
+  de fase). `cases:overview` = semáforo (vermelho compromisso ≤3 dias · laranja
+  intimação nova/sugestão/prescrição em 90 dias · cinza sem andamento nem retorno há
+  `idleCaseDays` · verde), próximo compromisso, novidade, dias na fase e média.
+  `caseDetail` (também a aba **Visão geral** da ficha do processo): régua das fases
+  (`rulerPhases`; pulada = apagada; quem cuida), "O que fazer agora", linha do tempo
+  única (`cases:timeline`: andamentos com `big`/`routine` — `ROUTINE_MOVE` recolhido
+  —, prazos/tarefas com `created_by`/`done_by`, notas `user_name`, documentos,
+  fases à mão, mensagens enviadas ao cliente pela assinatura) e **Explicar ao
+  cliente** (`moves:clientText` reaproveita `clientUpdateText`; `moves:notifyClient`
+  envia pelo WhatsApp ou marca avisado — `case_moves.notified_*`, conclui a sugestão).
 - **Tribunais por advogado**: cada advogado cadastra a própria OAB (o sócio, de
   qualquer um); processo cadastrado a partir de intimação/importação fica com o
   **dono da OAB** (`oabOwnerOf`); Intimações tem "Minhas OABs | Todas";
@@ -379,7 +407,7 @@ Interface (`src/renderer`, JS puro em módulos ES, sem build):
   (`legal` + `board`) · Atendimento (`inbox` + `commercial` + `contacts`) · Documentos ·
   Financeiro · Relatórios (`dashboard`). `body[data-view]`: a tela do QR e a
   faixa de conexão só aparecem no Atendimento.
-- `js/views/legal.js` — **Jurídico**: abas Clientes · Processos · Intimações
+- `js/views/legal.js` — **Jurídico**: abas Por cliente · Quadro por fase · Lista de processos · Intimações · Atividade (ver "Jurídico novo"); Lista/Intimações
   (`views/intimations.js`: OABs acompanhadas, Buscar agora, conferir / criar
   prazo, processos encontrados para cadastrar), busca no topo; ficha do cliente
   (Processos, Dados — que preenchem os modelos —, Documentos, Financeiro,

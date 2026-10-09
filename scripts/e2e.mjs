@@ -181,11 +181,12 @@ try {
   await page.fill('input.search', 'XPTO-4471');
   await page.locator('.chat-row.search-hit', { hasText: 'Cliente Antigo' }).first().click();
   await page.locator('.msg', { hasText: 'Protocolo XPTO-4471' }).locator('mark.found').waitFor({ timeout: 5000 });
-  check(await page.locator('.msg:has-text("atualização número 130")').count() === 0, 'mensagem antiga: abre lá, sem carregar a conversa inteira');
+  // innerText separa o texto do horário (no textContent, "número 13" + "01:26" viraria "1301:26")
+  check(!(await page.evaluate(() => [...document.querySelectorAll('.msg')].some((m) => /número 130(?!\d)/.test(m.innerText)))), 'mensagem antiga: abre lá, sem carregar a conversa inteira');
   await page.waitForSelector('.new-msgs-btn:not(.hidden):has-text("mais recentes")');
   await shot(page, '03-busca-mensagem-antiga');
   await page.click('.new-msgs-btn');
-  await page.waitForSelector('.msg:has-text("atualização número 130")');
+  await page.waitForFunction(() => [...document.querySelectorAll('.msg')].some((m) => /número 130(?!\d)/.test(m.innerText)));
   check(true, '"Ir para as mensagens mais recentes" volta ao fim da conversa');
   await page.fill('input.search', '');
   await page.locator('.chat-row', { hasText: 'Mariana Souza' }).click();
@@ -696,6 +697,70 @@ try {
   await page.waitForFunction(() => document.querySelectorAll('.cases-table tbody tr').length === 1);
   check((await page.locator('.cases-table tbody tr').innerText()).includes('Joana Lima'), 'busca de processos pela parte contrária');
   await shot(page, '05i-juridico-processos');
+  // visão por cliente: cliente → processos dele → processo (fase, o que fazer agora, linha do tempo)
+  await page.evaluate(async () => {
+    const k = (await window.api.call('cases:list', {})).find((x) => x.title === 'Revisional de aluguel');
+    await window.api.call('cases:save', { id: k.id, process_number: '1001234-55.2026.8.11.0041' });
+    const d = (n) => Date.now() - n * 864e5;
+    await window.api.call('moves:add', { case_id: k.id, ts: d(6), text: 'Distribuído por sorteio' });
+    await window.api.call('moves:add', { case_id: k.id, ts: d(5), text: 'Juntada de petição' });
+    await window.api.call('moves:add', { case_id: k.id, ts: d(4), text: 'Conclusos para despacho' });
+    await window.api.call('moves:add', { case_id: k.id, ts: d(1), text: 'Sentença — julgado procedente o pedido de revisão do aluguel' });
+  });
+  await page.fill('.legal-search', '');
+  await page.click('.view-legal .seg:has-text("Por cliente")');
+  await page.fill('.lv-search', 'Joana');
+  await page.click('.lv-client:has-text("Joana Lima")');
+  await page.click('.lv-c2 .lv-card:has-text("Revisional de aluguel")');
+  await page.waitForSelector('.lv-c3 .cp-step.cur:has-text("Sentença")');
+  check(true, 'fase deduzida dos andamentos (sentença) na régua');
+  check(await page.locator('.lv-c3 .cp-routine').count() === 1, 'movimentos de rotina ficam recolhidos');
+  await page.locator('.lv-c3 .cp-item.big', { hasText: 'Sentença' }).locator('button:has-text("Explicar ao cliente")').click();
+  await page.waitForSelector('.lv-c3 .cp-explain textarea');
+  check((await page.locator('.lv-c3 .cp-explain textarea').inputValue()).includes('Joana'), 'explicar ao cliente: mensagem pronta com o nome');
+  await shot(page, '05l-juridico-por-cliente');
+  await page.click('.lv-c3 .cp-explain button:has-text("Avisei por outro meio")');
+  await page.waitForSelector('.lv-c3 .cp-sent');
+  check(true, 'andamento marcado como "cliente avisado"');
+  await page.click('.lv-c3 button:has-text("Mudar fase")');
+  await page.click('.popup-menu button:has-text("Recurso")');
+  await page.waitForSelector('.lv-c3 .cp-step.cur:has-text("Recurso")');
+  check(true, 'fase mudada à mão');
+  // quadro por fase: arrastar muda a fase
+  await page.click('.view-legal .seg:has-text("Quadro por fase")');
+  await page.waitForSelector('.lv-bcol[data-phase="recurso"] .lv-card:has-text("Revisional de aluguel")');
+  await page.dragAndDrop('.lv-bcol[data-phase="recurso"] .lv-card:has-text("Revisional de aluguel")', '.lv-bcol[data-phase="transito"] .lv-bscroll');
+  await page.waitForSelector('.lv-bcol[data-phase="transito"] .lv-card:has-text("Revisional de aluguel")');
+  check(true, 'quadro por fase: arrastar o cartão muda a fase');
+  await shot(page, '05m-quadro-fases');
+  // ficha do processo: aba Visão geral (mesma régua e linha do tempo)
+  await page.locator('.lv-bcol[data-phase="transito"] .lv-card:has-text("Revisional de aluguel")').click();
+  await page.waitForSelector('.modal-case .tab.active:has-text("Visão geral")');
+  await page.waitForSelector('.modal-case .cp-step.cur:has-text("Trânsito em julgado")');
+  check(true, 'ficha do processo abre na Visão geral com a fase');
+  await shot(page, '05m2-ficha-visao-geral');
+  await page.keyboard.press('Escape');
+  // celular: uma coluna por vez (cliente → processos → processo)
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.click('.view-legal .seg:has-text("Por cliente")');
+  await page.fill('.lv-search', 'Joana');
+  await page.click('.lv-client:has-text("Joana Lima")');
+  await page.click('.lv-c2 .lv-card:has-text("Revisional de aluguel")');
+  await page.waitForSelector('.lv-c3 .cp-ruler');
+  check(await page.evaluate(() => document.documentElement.scrollWidth <= 392), 'celular: processo em uma coluna, sem rolar de lado');
+  await shot(page, '05m3-celular-processo');
+  await page.setViewportSize({ width: 1400, height: 860 });
+  // atividade da equipe
+  await page.click('.view-legal .seg:has-text("Atividade")');
+  await page.waitForSelector('.lv-feed-row:has-text("Trânsito em julgado")');
+  check(await page.locator('.lv-feed-row:has-text("cliente avisado")').count() >= 1, 'atividade da equipe: quem fez o quê');
+  await shot(page, '05n-atividade');
+  // devolve o processo sem nº (as intimações de demonstração usam os primeiros processos com nº)
+  await page.evaluate(async () => {
+    const k = (await window.api.call('cases:list', {})).find((x) => x.title === 'Revisional de aluguel');
+    await window.api.call('cases:save', { id: k.id, process_number: '' });
+  });
+  await page.click('.view-legal .seg:has-text("Lista de processos")');
   // cadastros repetidos: marcados na lista; "Juntar" deixa um só, com o processo
   await page.evaluate(async () => {
     const id1 = await window.api.call('clients:save', { name: 'Elvira Maria Palma', cpf: '293.355.071-72' });
@@ -703,11 +768,12 @@ try {
     await window.api.call('cases:save', { client_id: id2, title: 'Revisão de aposentadoria' });
     return [id1, id2];
   });
-  await page.click('.view-legal .seg:has-text("Clientes")');
-  await page.fill('.legal-search', 'elvira');
-  await page.waitForFunction(() => document.querySelectorAll('.clients-table tbody tr .dup-pill').length === 2);
+  await page.click('.view-legal .seg:has-text("Por cliente")');
+  await page.fill('.lv-search', 'elvira');
+  await page.waitForFunction(() => document.querySelectorAll('.lv-client .dup-pill').length === 2);
   check(true, 'cadastros repetidos aparecem marcados');
-  await page.locator('.clients-table tbody tr').first().locator('.dup-btn').click();
+  await page.locator('.lv-client', { hasText: 'Elvira' }).first().click();
+  await page.locator('.lv-c2 .dup-btn').click();
   await page.waitForSelector('.modal .radio-row');
   await shot(page, '05k-juntar-cadastros');
   await page.click('.modal button:text-is("Juntar")');
@@ -793,9 +859,10 @@ try {
   check(true, 'virou cliente: processo aberto com os dados da proposta');
   await page.keyboard.press('Escape');
   await page.click('.rail-btn[title="Jurídico"]');
-  await page.click('.view-legal .seg:has-text("Clientes")');
-  await page.fill('.view-legal .legal-search', 'Lucas');
-  await page.click('.view-legal tr:has-text("Lucas Prado")');
+  await page.click('.view-legal .seg:has-text("Por cliente")');
+  await page.fill('.lv-search', 'Lucas');
+  await page.click('.lv-client:has-text("Lucas Prado")');
+  await page.click('.lv-c2 button:has-text("Ficha do cliente")');
   await page.click('.view-legal .tab:has-text("Atendimentos")');
   await page.waitForSelector('.view-legal .att-item:has-text("juros abusivos")');
   check(true, 'atendimentos do comercial aparecem na ficha do cliente');

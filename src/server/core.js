@@ -25,6 +25,7 @@ import { lookupCep, lookupCnpj, demoLookupFetch } from '../main/lookup.js';
 import { reais } from '../main/extenso.js';
 import { readSheet } from '../main/sheet.js';
 import { sameName } from '../renderer/js/qualify.js';
+import { derivePhase, startPhase, inssPhase, phaseLabel, phaseList } from '../renderer/js/phases.js';
 import {
   detectColumns, parseImport, classifyArea, archiveState, suggestPrescription, partiesFromDjen, isGenericTitle, hearingFromText, CLIENT_WORTHY,
 } from '../main/importer.js';
@@ -36,6 +37,8 @@ import { CourtsService, DATAJUD_PUBLIC_KEY, deadlineFromAvailability, formatCnj,
 import { computeSteps, suggestedChecklist, docsRequestText, addBusinessDays, STEPS, PARTY_ROLES, DEFAULT_DOCS_TEMPLATE } from '../main/workflow.js';
 
 const DAY = 24 * 3600 * 1000;
+// andamentos de rotina (ficam recolhidos na linha do tempo)
+const ROUTINE_MOVE = /juntada de (peti|documento|of[ií]cio|aviso|ar|mandado|guia|procura)|conclusos? para despacho|mero expediente|ato ordinat|expedi[cç][aã]o de (certid|of[ií]cio|intima)|decorrid[oa] (o )?prazo|publicad[oa]|disponibilizad[oa]|recebidos? os autos|remessa interna|redistribu|certid[aã]o|proferido despacho|despacho de mero|confirmad[oa] a intima|ci[eê]ncia|leitura|aguardando/i;
 const ASSETS_DIR = fileURLToPath(new URL('../../assets/', import.meta.url));
 const money = (v) => Number(v || 0).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' });
 const dateBR = (ts) => (ts ? new Date(ts).toLocaleDateString('pt-BR') : 'sem data');
@@ -46,7 +49,7 @@ export const USER_KEYS = ['notifications', 'notificationPreview', 'theme', 'last
 export const OFFICE_KEYS = ['sendReadReceipts', 'forgottenHours', 'chargeTemplate', 'pixKey', 'paymentNoticeDays',
   'staleCaseDays', 'googleSync', 'googleCalendarId', 'signMessages', 'docsRoot', 'docsRequestTemplate', 'datajudKey',
   'officeName', 'officeDoc', 'officeAddress', 'officeCity', 'proposalTemplate', 'proposalValidDays', 'prescriptionYears', 'clientUpdateTemplate', 'idleCaseDays', 'waSaveContacts', 'docsMode',
-  'receiptSigner', 'receiptSignMode', 'courtsNotifyAll', 'docsOcr'];
+  'receiptSigner', 'receiptSignMode', 'courtsNotifyAll', 'docsOcr', 'phaseConfig'];
 
 export const DEFAULT_CHARGE_TEMPLATE = 'Olá, {nome}! Tudo bem? Passando para lembrar da {parcela} dos honorários referentes a {caso}, '
   + 'no valor de {valor}, com vencimento em {vencimento}.{pix_linha}\nQualquer dúvida, estou à disposição.';
@@ -421,6 +424,9 @@ export async function createCore({ dataDir, demo = false, version = '', safeStor
       }
     } catch (e) { console.error(e); }
   };
+  // processos ainda sem fase (antes da v21, ou vindos de importação): calcula em silêncio
+  try { for (const r of db.all('SELECT id FROM cases WHERE phase IS NULL')) updatePhase(r.id); } catch (e) { console.error('fases:', e.message); }
+
   const timers = [setInterval(check, 30000), setTimeout(check, 5000),
     setInterval(() => courtsTick(), 30 * 60e3), setTimeout(() => courtsTick(), demo ? 3000 : 60e3),
     // OneDrive: relê as pastas a cada 15 min (6h–22h) — acha o que mudou por fora e deixa o cache quente
@@ -507,7 +513,7 @@ export async function createCore({ dataDir, demo = false, version = '', safeStor
       if (result.new) {
         if (result.new > 10) notify({ kind: 'intimation', title: `${result.new} intimações novas no DJEN`, body: 'Abra Jurídico → Intimações para conferir e criar os prazos.', action: { view: 'legal', tab: 'intimacoes' } });
         send('intimations:changed', null);
-        for (const id of touched) { organizeCase(id); caseChanged(db.getCase(id)); }
+        for (const id of touched) { organizeCase(id, { live: true }); caseChanged(db.getCase(id)); }
       }
       return result;
     })().finally(() => { checkingIntimations = null; });
@@ -534,7 +540,7 @@ export async function createCore({ dataDir, demo = false, version = '', safeStor
       if (k.datajud_checked_at && mv.ts > Date.now() - 30 * DAY) hintsFor(caseId, { text: mv.text, ts: mv.ts, ref: mv.ext_id });
     }
     db.markDatajud(caseId, null);
-    organizeCase(caseId, { classe: p.classe, assuntos: p.assuntos });
+    organizeCase(caseId, { classe: p.classe, assuntos: p.assuntos, live: !!k.datajud_checked_at && newMoves > 0 });
     if (newMoves || Object.keys(fill).length) caseChanged(db.getCase(caseId));
     return { found: true, newMoves, classe: p.classe, updated: p.updated };
   }
@@ -545,7 +551,65 @@ export async function createCore({ dataDir, demo = false, version = '', safeStor
    * ganha data para conferir a prescrição; definitivo só fica sugerido (encerrar
    * é sempre com a confirmação de alguém).
    */
-  function organizeCase(caseId, { classe, assuntos } = {}) {
+  /**
+   * Fase do processo: encerrado; INSS pela situação; judicial pelos andamentos
+   * (a partir da fase escolhida à mão, se houver — o manual vale até um
+   * andamento levar adiante). `live` = andamento novo agora (registra na
+   * atividade e cria a tarefa de quem cuida da nova fase, se configurado);
+   * sem isso é só organização (histórico, importação), em silêncio.
+   */
+  function updatePhase(caseId, { live = false } = {}) {
+    const k = db.get('SELECT * FROM cases WHERE id = ?', caseId);
+    if (!k) return null;
+    let target;
+    let since = Date.now();
+    let history = [];
+    let reason = null;
+    if (k.status !== 'aberto') { target = 'encerrado'; since = k.closed_at || k.updated_at || Date.now(); reason = 'Processo encerrado'; }
+    else if (k.kind === 'inss') {
+      const byStatus = inssPhase(k.inss_status);
+      target = k.phase_manual && String(k.phase || '').startsWith('inss_') ? k.phase : byStatus || 'inss_protocolo';
+      if (target === k.phase) return k.phase;
+      reason = k.inss_status ? `Situação no INSS` : null;
+    } else {
+      const moves = db.listMoves(caseId);
+      const manual = k.phase_manual && k.phase && k.phase !== 'encerrado' && !k.phase.startsWith('inss_');
+      const r = derivePhase(moves, manual ? { start: k.phase, startTs: k.phase_since } : { start: startPhase(k) });
+      target = r.phase;
+      since = r.since || k.created_at;
+      history = r.history;
+      if (manual && target === k.phase) return k.phase;
+    }
+    if (target === k.phase) return k.phase;
+    const already = k.phase_since || 0;
+    // a fase de início também fica no histórico (para a régua mostrar por onde passou)
+    if (k.kind !== 'inss' && k.status === 'aberto' && !k.phase_manual) {
+      const start = startPhase(k);
+      if (start !== target && !db.get('SELECT 1 AS x FROM case_phases WHERE case_id = ? AND phase = ?', caseId, start)) {
+        const firstMove = db.get('SELECT MIN(ts) AS t FROM case_moves WHERE case_id = ?', caseId)?.t;
+        db.run('INSERT INTO case_phases (case_id, phase, at, auto) VALUES (?, ?, ?, 1)', caseId, start, Math.min(firstMove || Date.now(), k.created_at || Date.now()));
+      }
+    }
+    // histórico: as fases do caminho (só as novas desde a última gravada)
+    const steps = history.filter((h) => h.ts > already && h.phase !== target);
+    for (const h of steps) db.setCasePhase(caseId, h.phase, { at: h.ts, auto: true, reason: h.text });
+    const last = history[history.length - 1];
+    db.setCasePhase(caseId, target, { at: since || Date.now(), auto: true, reason: reason || last?.text || null });
+    if (live && k.phase) {
+      // (a mudança aparece na atividade da equipe pelo histórico das fases)
+      const label = phaseLabel(target, settings.phaseConfig, k.kind);
+      const resp = phaseList(settings.phaseConfig, k.kind).find((p) => p.id === target)?.resp;
+      if (resp && db.get('SELECT 1 AS x FROM users WHERE id = ? AND active = 1', Number(resp))) {
+        const due = new Date(addBusinessDays(Date.now(), 2)); due.setHours(18, 0, 0, 0);
+        const t = db.saveTask({ jid: k.jid, case_id: caseId, kind: 'tarefa', title: `Fase "${label}": dar andamento — ${k.title}`, due_at: due.getTime(), assignee_id: Number(resp), by: 'Sistema' });
+        syncTaskLater(t);
+        send('tasks:changed', null);
+      }
+    }
+    return target;
+  }
+
+  function organizeCase(caseId, { classe, assuntos, live = false } = {}) {
     const k = db.getCase(caseId);
     if (!k) return;
     const moves = db.listMoves(caseId);
@@ -566,6 +630,7 @@ export async function createCore({ dataDir, demo = false, version = '', safeStor
       if (!st.state) { meta.prescription_at = null; meta.prescription_notified = null; }
     }
     db.setCaseMeta(caseId, meta);
+    updatePhase(caseId, { live });
   }
 
   /**
@@ -970,6 +1035,7 @@ export async function createCore({ dataDir, demo = false, version = '', safeStor
   }
   function caseChanged(k) {
     if (!k) return;
+    updatePhase(k.id);
     wa.markChanged(k.jid);
     send('cases:changed', k.jid);
   }
@@ -1170,7 +1236,7 @@ export async function createCore({ dataDir, demo = false, version = '', safeStor
     'crm:activity': (_c, jid) => db.listActivity(jid),
     'notes:list': (_c, jid, caseId) => db.listNotes(jid, caseId),
     'notes:add': (ctx, jid, text, caseId) => {
-      const id = db.addNote(jid, text, caseId);
+      const id = db.addNote(jid, text, caseId, ctx.user.name);
       db.logActivity(jid, 'note', 'Nota adicionada', who(ctx));
       return id;
     },
@@ -1612,7 +1678,146 @@ export async function createCore({ dataDir, demo = false, version = '', safeStor
     },
     'parties:save': (_c, p) => { const id = db.saveParty(p); caseChanged(db.getCase(p.case_id)); return id; },
     'parties:delete': (_c, id, caseId) => { db.deleteParty(id); caseChanged(db.getCase(caseId)); },
-    'moves:add': (ctx, m) => { const id = db.addMove({ ...m, user_name: ctx.user.name }); organizeCase(m.case_id); caseChanged(db.getCase(m.case_id)); return id; },
+    'moves:add': (ctx, m) => { const id = db.addMove({ ...m, user_name: ctx.user.name }); organizeCase(m.case_id, { live: true }); caseChanged(db.getCase(m.case_id)); return id; },
+    // ---------------------------------------------------- visão do Jurídico (por cliente, por fase)
+    /**
+     * Processos com o semáforo: vermelho = compromisso em até 3 dias (ou
+     * vencido); laranja = novidade para conferir ou prescrição chegando;
+     * cinza = parado (sem andamento nem retorno ao cliente há N dias); verde.
+     */
+    'cases:overview': (ctx, opts = {}) => {
+      // processos criados por fora do fluxo normal (demonstração, importação antiga) ainda sem fase
+      for (const r of db.all('SELECT id FROM cases WHERE phase IS NULL LIMIT 500')) updatePhase(r.id);
+      const idle = Number(settings.idleCaseDays ?? 90) * DAY;
+      const avg = db.phaseAverages();
+      const nowTs = Date.now();
+      return db.caseOverview(opts).map((k) => {
+        const due = k.next_task?.due_at;
+        const lastAny = Math.max(k.last_move_ts || 0, k.last_move_at || 0, k.last_update_at || 0, k.created_at || 0);
+        const prescr = k.prescription_at && k.prescription_at - nowTs < 90 * DAY;
+        let status = 'green';
+        if (k.status !== 'aberto') status = 'closed';
+        else if (due && due - nowTs <= 3 * DAY) status = 'red';
+        else if (k.novelty || prescr) status = 'orange';
+        else if (idle > 0 && nowTs - lastAny > idle) status = 'gray';
+        const days = k.phase_since ? Math.max(0, Math.floor((nowTs - k.phase_since) / DAY)) : null;
+        return {
+          ...k, status, prescription_soon: !!prescr, days_in_phase: days, phase_avg: avg[k.phase] || null,
+          phase_label: phaseLabel(k.phase, settings.phaseConfig, k.kind),
+          last_client_days: k.last_update_at ? Math.floor((nowTs - k.last_update_at) / DAY) : null,
+        };
+      });
+    },
+    'cases:phaseInfo': () => ({ averages: db.phaseAverages() }),
+    /**
+     * Linha do tempo única do processo: andamentos (tribunal ou à mão), prazos e
+     * tarefas, notas, documentos, mudanças de fase e mensagens ao cliente —
+     * cada item com quem fez. Andamentos importantes em destaque; os de rotina
+     * marcados para ficarem recolhidos.
+     */
+    'cases:timeline': (ctx, id) => {
+      const k = db.getCase(id);
+      if (!k) throw new Error('Processo não encontrado');
+      const items = [];
+      for (const m of db.listMoves(id)) {
+        const text = String(m.text || '');
+        const big = CLIENT_WORTHY.test(text) || !!hearingFromText(text) || /arquivamento|desarquiv|suspens|tr[aâ]nsit|senten|distribu[ií]/i.test(text);
+        const routine = !big && ROUTINE_MOVE.test(text);
+        const [first, ...rest] = text.split(/\s+[—-]\s+|\n/);
+        items.push({
+          type: 'move', id: m.id, at: m.ts, title: first.slice(0, 160), text: rest.join(' — ').slice(0, 600) || (first.length > 160 ? text.slice(160, 760) : ''),
+          src: m.source, by: m.user_name || null, auto: m.source !== 'manual', big, routine,
+          notified: m.notified_at ? { at: m.notified_at, via: m.notified_via, by: m.notified_by } : null,
+        });
+      }
+      for (const t of db.all('SELECT * FROM tasks WHERE case_id = ?', id)) {
+        const what = { prazo: 'Prazo', audiencia: 'Audiência', reuniao: 'Reunião' }[t.kind] || 'Tarefa';
+        items.push({ type: 'task', kind: t.kind, id: t.id, at: t.created_at, title: `${what} criad${t.kind === 'audiencia' || t.kind === 'reuniao' || t.kind === 'tarefa' ? 'a' : 'o'}: ${t.title}`, due_at: t.due_at, by: t.created_by || null, auto: !t.created_by });
+        if (t.done && t.done_at) items.push({ type: 'done', kind: t.kind, id: t.id, at: t.done_at, title: `Concluído: ${t.title}`, by: t.done_by || null });
+      }
+      for (const n of db.all('SELECT * FROM notes WHERE case_id = ?', id)) items.push({ type: 'note', id: n.id, at: n.created_at, title: 'Nota', text: n.text, by: n.user_name || null });
+      for (const d of db.all('SELECT * FROM case_docs WHERE case_id = ?', id)) items.push({ type: 'doc', id: d.id, at: d.created_at, title: `Documento: ${d.name}`, by: d.user_name || null });
+      for (const p of db.phaseHistory(id)) {
+        if (p.auto) continue; // a mudança automática já aparece no andamento que a causou
+        items.push({ type: 'phase', id: p.id, at: p.at, title: `Fase → ${phaseLabel(p.phase, settings.phaseConfig, k.kind)}`, by: p.user_name || null });
+      }
+      // mensagens enviadas ao cliente (as últimas), com a assinatura de quem mandou
+      if (k.client_jid) {
+        for (const m of db.all("SELECT id, ts, text FROM messages WHERE chat_jid = ? AND from_me = 1 AND text IS NOT NULL AND text <> '' ORDER BY ts DESC LIMIT 40", k.client_jid)) {
+          const sig = /^\*([^*\n]{1,40}):\*\s*\n?/.exec(m.text);
+          const body = sig ? m.text.slice(sig[0].length) : m.text;
+          items.push({ type: 'client', id: m.id, at: m.ts, title: 'Mensagem ao cliente', text: body.slice(0, 300), by: sig ? sig[1] : null });
+        }
+      }
+      items.sort((a, b) => b.at - a.at);
+      return { items, phases: db.phaseHistory(id).map((p) => ({ phase: p.phase, at: p.at, auto: !!p.auto, by: p.user_name })) };
+    },
+    /** Andamento explicado em linguagem simples (para revisar e mandar ao cliente). */
+    'moves:clientText': (_c, moveId) => {
+      const m = db.get('SELECT * FROM case_moves WHERE id = ?', moveId);
+      if (!m) throw new Error('Andamento não encontrado');
+      const k = db.getCase(m.case_id);
+      const hit = CLIENT_WORTHY.exec(String(m.text));
+      const hint = { case_id: m.case_id, kind: hearingFromText(m.text) ? 'hearing' : 'client', ts: m.ts, title: hit ? hit[0] : String(m.text).split(/\s+[—-]\s+/)[0].slice(0, 80), text: m.text };
+      return { text: clientUpdateText(hint), jid: k?.client_jid || null, client_name: k?.client_name || null };
+    },
+    /** Avisa o cliente sobre o andamento (WhatsApp ou por outro meio) e marca no andamento. */
+    'moves:notifyClient': async (ctx, moveId, text, { via = 'whatsapp' } = {}) => {
+      const m = db.get('SELECT * FROM case_moves WHERE id = ?', moveId);
+      if (!m) throw new Error('Andamento não encontrado');
+      const k = db.getCase(m.case_id);
+      if (via === 'whatsapp') {
+        if (!k?.client_jid) throw new Error('O cliente não tem WhatsApp ligado. Copie o texto e envie por outro meio.');
+        await api['messages:sendText'](ctx, k.client_jid, String(text || '').trim());
+      }
+      db.run('UPDATE case_moves SET notified_at = ?, notified_via = ?, notified_by = ? WHERE id = ?', Date.now(), via, ctx.user.name, moveId);
+      if (m.ext_id) for (const h of db.all("SELECT id FROM case_hints WHERE case_id = ? AND ref = ? AND status = 'nova'", m.case_id, m.ext_id)) db.setHint(h.id, 'feita', ctx.user.name);
+      db.touchCase(m.case_id);
+      db.logActivity(k.jid, 'case', `${k.title}: cliente avisado do andamento (${String(m.text).split(/\s+[—-]\s+/)[0].slice(0, 80)})`, ctx.user.name);
+      caseChanged(db.getCase(m.case_id));
+      return true;
+    },
+    /** Atividade da equipe: quem fez o quê, em qual processo/cliente. */
+    'activity:feed': (ctx, { before } = {}) => {
+      const { acts, phases } = db.activityFeed({ before });
+      const clientOf = new Map();
+      const nameOf = (jid) => {
+        if (!clientOf.has(jid)) {
+          const cl = db.clientByKey(jid);
+          clientOf.set(jid, cl ? { id: cl.id, name: cl.name } : { id: null, name: db.getChat(jid)?.display_name || null });
+        }
+        return clientOf.get(jid);
+      };
+      const rows = acts.filter((a) => !(ctx.user.role === 'estagiario' && /parcela|pagamento|recibo|honor/i.test(a.detail || ''))).map((a) => {
+        const cl = nameOf(a.jid);
+        return { at: a.ts, who: a.user_name || null, what: a.detail, kind: a.kind, client_id: cl.id, client_name: cl.name, jid: a.jid };
+      });
+      for (const p of phases) {
+        const cl = nameOf(p.jid);
+        rows.push({ at: p.ts, who: null, auto: true, what: `${p.title}: fase → ${phaseLabel(p.phase, settings.phaseConfig, p.case_kind)}${p.reason ? ` (pelo andamento "${String(p.reason).slice(0, 80)}")` : ''}`, kind: 'phase', case_id: p.case_id, client_id: cl.id, client_name: cl.name });
+      }
+      rows.sort((a, b) => b.at - a.at);
+      return rows.slice(0, 80);
+    },
+    /** Fase escolhida à mão (vale até um andamento levar o processo adiante). */
+    'cases:setPhase': (ctx, id, phase) => {
+      const k = db.getCase(id);
+      if (!k) throw new Error('Processo não encontrado');
+      const list = phaseList(settings.phaseConfig, k.kind);
+      if (!list.some((p) => p.id === phase)) throw new Error('Fase desconhecida');
+      if (phase === 'encerrado') throw new Error('Para encerrar, use "Encerrar processo" na ficha.');
+      db.setCasePhase(id, phase, { userName: ctx.user.name, manual: true });
+      db.logActivity(k.jid, 'case', `${k.title}: fase → ${phaseLabel(phase, settings.phaseConfig, k.kind)}`, ctx.user.name);
+      const resp = list.find((p) => p.id === phase)?.resp;
+      if (resp && Number(resp) !== ctx.user.id && db.get('SELECT 1 AS x FROM users WHERE id = ? AND active = 1', Number(resp))) {
+        const due = new Date(addBusinessDays(Date.now(), 2)); due.setHours(18, 0, 0, 0);
+        const t = db.saveTask({ jid: k.jid, case_id: id, kind: 'tarefa', title: `Fase "${phaseLabel(phase, settings.phaseConfig, k.kind)}": dar andamento — ${k.title}`, due_at: due.getTime(), assignee_id: Number(resp), by: ctx.user.name });
+        syncTaskLater(t);
+        send('tasks:changed', null);
+      }
+      caseChanged(db.getCase(id));
+      return phase;
+    },
     'moves:delete': (_c, id, caseId) => { db.deleteMove(id); caseChanged(db.getCase(caseId)); },
     'checklist:add': (_c, caseId, labels) => { const n = db.addChecklistItems(caseId, labels); caseChanged(db.getCase(caseId)); return n; },
     'checklist:delete': (_c, id) => { const i = db.checklistItem(id); db.deleteChecklistItem(id); if (i) caseChanged(db.getCase(i.case_id)); },
@@ -1689,21 +1894,21 @@ export async function createCore({ dataDir, demo = false, version = '', safeStor
       return id;
     },
     'cases:setStage': (_c, id, stageId) => { db.setCaseStage(id, stageId); const k = db.getCase(id); wa.markChanged(k.jid); send('cases:changed', k.jid); },
-    'cases:setStatus': (_c, id, status) => { db.setCaseStatus(id, status); const k = db.getCase(id); wa.markChanged(k.jid); send('cases:changed', k.jid); },
+    'cases:setStatus': (_c, id, status) => { db.setCaseStatus(id, status); caseChanged(db.getCase(id)); },
     'cases:touch': (_c, id) => { db.touchCase(id); send('cases:changed', db.getCase(id)?.jid); },
     'cases:delete': (_c, id) => { const jid = db.deleteCase(id); if (jid) { wa.markChanged(jid); send('cases:changed', jid); } },
     'cases:docs': (_c, id) => db.listCaseDocs(id).map((d) => ({ ...d, url: mediaUrl(d.file) })),
-    'cases:attachMessage': async (_c, caseId, chatJid, msgId) => {
+    'cases:attachMessage': async (ctx, caseId, chatJid, msgId) => {
       const m = db.getMessage(chatJid, msgId);
       if (!m) throw new Error('Mensagem não encontrada');
       const rel = m.media_file && fs.existsSync(resolveMedia(m.media_file)) ? m.media_file : await wa.downloadMedia(chatJid, msgId);
       const name = m.media_name || `${{ image: 'foto', video: 'video', audio: 'audio', ptt: 'audio', sticker: 'figurinha' }[m.type] || 'arquivo'}-${new Date(m.ts).toISOString().slice(0, 10)}${path.extname(rel)}`;
-      const id = db.addCaseDoc({ case_id: caseId, name, file: rel, mime: m.media_mime, size: m.media_size, msg_id: msgId });
+      const id = db.addCaseDoc({ case_id: caseId, name, file: rel, mime: m.media_mime, size: m.media_size, msg_id: msgId, user_name: ctx.user?.name });
       copyToCaseFolder(caseId, [{ path: resolveMedia(rel), name }]);
       send('cases:changed', db.getCase(caseId)?.jid);
       return id;
     },
-    'cases:addFiles': (_c, caseId, tokens) => {
+    'cases:addFiles': (ctx, caseId, tokens) => {
       const files = uploads(tokens);
       const dir = path.join(wa.mediaDir, '_casos', String(caseId));
       fs.mkdirSync(dir, { recursive: true });
@@ -1713,7 +1918,7 @@ export async function createCore({ dataDir, demo = false, version = '', safeStor
         for (let i = 2; fs.existsSync(dest); i++) { name = `${path.parse(f.name).name} (${i})${path.extname(f.name)}`; dest = path.join(dir, name); }
         fs.copyFileSync(f.path, dest);
         fs.rmSync(path.dirname(f.path), { recursive: true, force: true });
-        db.addCaseDoc({ case_id: caseId, name, file: path.relative(wa.mediaDir, dest), size: fs.statSync(dest).size });
+        db.addCaseDoc({ case_id: caseId, name, file: path.relative(wa.mediaDir, dest), size: fs.statSync(dest).size, user_name: ctx.user?.name });
         copyToCaseFolder(caseId, [{ path: dest, name }]);
       }
       send('cases:changed', db.getCase(caseId)?.jid);
@@ -2062,7 +2267,7 @@ export async function createCore({ dataDir, demo = false, version = '', safeStor
     'tasks:save': async (ctx, task) => {
       // tarefa nova sem responsável escolhido fica com quem criou (nada fica sem dono)
       if (!task.id && task.assignee_id === undefined) task = { ...task, assignee_id: ctx.user.id };
-      const id = db.saveTask(task);
+      const id = db.saveTask({ ...task, by: ctx.user.name });
       if (task.calendar_id) {
         // escolheu outra agenda do Google: move o evento para lá
         const cur = db.getTask(id);

@@ -9,7 +9,7 @@ import { fullAddress, sameName } from '../renderer/js/qualify.js';
 
 let db;
 
-const SCHEMA_VERSION = 20;
+const SCHEMA_VERSION = 21;
 
 // Tipos de contato (editáveis). `personal` = não conta como trabalho
 // (fica fora de "Aguardando resposta" e dos avisos de conversa esquecida).
@@ -492,6 +492,24 @@ function migrate() {
     CREATE TABLE IF NOT EXISTS doc_ocr (
       rel TEXT PRIMARY KEY, mtime INTEGER NOT NULL, status TEXT NOT NULL, pages INTEGER, at INTEGER NOT NULL
     );
+  `);
+
+  // v21: fase do processo (deduzida dos andamentos ou escolhida à mão) e o
+  // histórico das fases; quem fez cada coisa (notas, tarefas, documentos) e o
+  // aviso ao cliente de cada andamento
+  for (const [c, t] of [['phase', 'TEXT'], ['phase_since', 'INTEGER'], ['phase_manual', 'INTEGER']]) addColumn('cases', c, t);
+  addColumn('notes', 'user_name', 'TEXT');
+  addColumn('tasks', 'created_by', 'TEXT');
+  addColumn('tasks', 'done_by', 'TEXT');
+  addColumn('case_docs', 'user_name', 'TEXT');
+  for (const [c, t] of [['notified_at', 'INTEGER'], ['notified_via', 'TEXT'], ['notified_by', 'TEXT']]) addColumn('case_moves', c, t);
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS case_phases (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      case_id INTEGER NOT NULL REFERENCES cases(id) ON DELETE CASCADE,
+      phase TEXT NOT NULL, at INTEGER NOT NULL, user_name TEXT, auto INTEGER NOT NULL DEFAULT 0, reason TEXT
+    );
+    CREATE INDEX IF NOT EXISTS case_phases_case ON case_phases(case_id, at);
   `);
 
   const version = Number(get('SELECT value FROM meta WHERE key = ?', 'schema')?.value || 0);
@@ -1787,10 +1805,10 @@ export function defaulters() {
 
 // documentos do caso
 export function listCaseDocs(caseId) { return all('SELECT * FROM case_docs WHERE case_id = ? ORDER BY created_at DESC', caseId); }
-export function addCaseDoc({ case_id, name, file, mime, size, msg_id }) {
+export function addCaseDoc({ case_id, name, file, mime, size, msg_id, user_name }) {
   if (msg_id && get('SELECT 1 AS x FROM case_docs WHERE case_id = ? AND msg_id = ?', case_id, msg_id)) return null;
-  return Number(run('INSERT INTO case_docs (case_id, name, file, mime, size, msg_id, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)',
-    case_id, name, file, mime || null, size || null, msg_id || null, now()).lastInsertRowid);
+  return Number(run('INSERT INTO case_docs (case_id, name, file, mime, size, msg_id, created_at, user_name) VALUES (?, ?, ?, ?, ?, ?, ?, ?)',
+    case_id, name, file, mime || null, size || null, msg_id || null, now(), user_name || null).lastInsertRowid);
 }
 // ------------------------------------------------------------ processo: partes, andamentos, etapas, documentos
 
@@ -1804,6 +1822,78 @@ export function saveParty(p) {
 export function deleteParty(id) { run('DELETE FROM case_parties WHERE id = ?', id); }
 
 export function listMoves(caseId) { return all('SELECT * FROM case_moves WHERE case_id = ? ORDER BY ts DESC, id DESC', caseId); }
+// ------------------------------------------------------------ fases do processo
+
+/** Muda a fase e guarda no histórico (`auto` = pelos andamentos). */
+export function setCasePhase(caseId, phase, { at = now(), userName = null, auto = false, reason = null, manual } = {}) {
+  run('UPDATE cases SET phase = ?, phase_since = ?, phase_manual = ?, updated_at = ? WHERE id = ?',
+    phase, at, manual ? 1 : 0, now(), caseId);
+  run('INSERT INTO case_phases (case_id, phase, at, user_name, auto, reason) VALUES (?, ?, ?, ?, ?, ?)',
+    caseId, phase, at, userName, auto ? 1 : 0, reason ? String(reason).slice(0, 300) : null);
+}
+
+export function phaseHistory(caseId) {
+  return all('SELECT * FROM case_phases WHERE case_id = ? ORDER BY at, id', caseId);
+}
+
+/**
+ * Processos para a tela do Jurídico (por cliente / quadro por fase): fase, o
+ * próximo compromisso, novidades sem conferir (intimações e sugestões) e o
+ * último retorno ao cliente. Leve (uma consulta) para muitos processos.
+ */
+export function caseOverview({ clientId, includeClosed = false } = {}) {
+  const where = [];
+  const args = [now()];
+  if (!includeClosed) where.push("c.status = 'aberto'");
+  if (clientId) { where.push('c.client_id = ?'); args.push(clientId); }
+  return all(`SELECT c.id, c.title, c.client_id, c.jid, c.process_number, c.court, c.tribunal, c.area, c.kind, c.status, c.opposing_party,
+      c.responsible_id, c.phase, c.phase_since, c.phase_manual, c.last_update_at, c.last_move_at, c.created_at, c.closed_at,
+      c.archive_state, c.prescription_at, c.inss_status, c.folder,
+      (SELECT name FROM clients WHERE id = c.client_id) AS client_name,
+      (SELECT jid FROM clients WHERE id = c.client_id) AS client_jid,
+      (SELECT name FROM users WHERE id = c.responsible_id) AS responsible_name,
+      (SELECT id FROM tasks t WHERE t.case_id = c.id AND t.done = 0 AND t.due_at IS NOT NULL ORDER BY t.due_at LIMIT 1) AS next_task_id,
+      (SELECT COUNT(*) FROM intimations i WHERE i.case_id = c.id AND i.status = 'nova') AS new_intimations,
+      (SELECT COUNT(*) FROM case_hints h WHERE h.case_id = c.id AND h.status = 'nova') AS open_hints,
+      (SELECT MAX(ts) FROM case_moves m WHERE m.case_id = c.id) AS last_move_ts,
+      (SELECT COUNT(*) FROM payments p WHERE p.case_id = c.id AND p.paid_at IS NULL AND p.due_at < ?) AS overdue_payments
+    FROM cases c ${where.length ? `WHERE ${where.join(' AND ')}` : ''} ORDER BY c.updated_at DESC`, ...args).map((c) => {
+    const t = c.next_task_id ? get('SELECT id, title, due_at, kind, assignee_id FROM tasks WHERE id = ?', c.next_task_id) : null;
+    const novelty = c.new_intimations
+      ? get("SELECT id, date, kind, doc_kind, substr(text, 1, 200) AS text FROM intimations WHERE case_id = ? AND status = 'nova' ORDER BY date DESC LIMIT 1", c.id)
+      : c.open_hints ? get("SELECT id, kind, title, ts FROM case_hints WHERE case_id = ? AND status = 'nova' ORDER BY ts DESC LIMIT 1", c.id) : null;
+    return { ...c, next_task: t, novelty: novelty ? { ...novelty, source: c.new_intimations ? 'intimation' : 'hint' } : null };
+  });
+}
+
+/** Atividade da equipe (o que cada um fez, mais as mudanças de fase automáticas). */
+export function activityFeed({ limit = 80, before } = {}) {
+  const b = before || now() + 1;
+  const acts = all(`SELECT a.id, a.ts, a.kind, a.detail, a.user_name, a.jid FROM activity a WHERE a.ts < ? ORDER BY a.ts DESC LIMIT ?`, b, limit);
+  const phases = all(`SELECT p.id, p.at AS ts, p.phase, p.reason, p.user_name, p.auto, c.id AS case_id, c.title, c.jid, c.kind AS case_kind
+      FROM case_phases p JOIN cases c ON c.id = p.case_id WHERE p.auto = 1 AND p.reason IS NOT NULL AND p.reason <> 'Processo encerrado' AND p.at < ? AND p.at > ? ORDER BY p.at DESC LIMIT ?`, b, now() - 60 * 864e5, limit);
+  return { acts, phases };
+}
+
+/** Dias médios em cada fase (das fases já concluídas de todos os processos). */
+export function phaseAverages() {
+  const rows = all('SELECT case_id, phase, at FROM case_phases ORDER BY case_id, at, id');
+  const sum = {};
+  for (let i = 0; i < rows.length - 1; i++) {
+    const a = rows[i];
+    const b = rows[i + 1];
+    if (a.case_id !== b.case_id || b.at < a.at) continue;
+    (sum[a.phase] ||= []).push((b.at - a.at) / 864e5);
+  }
+  const out = {};
+  for (const [p, list] of Object.entries(sum)) {
+    if (list.length < 2) continue;
+    const sorted = list.sort((x, y) => x - y);
+    out[p] = Math.round(sorted[Math.floor(sorted.length / 2)]);
+  }
+  return out;
+}
+
 export function addMove({ case_id, ts, text, source = 'manual', ext_id = null, user_name = null }) {
   if (!String(text || '').trim()) throw new Error('Escreva o andamento.');
   if (ext_id && get('SELECT 1 AS x FROM case_moves WHERE case_id = ? AND ext_id = ?', case_id, ext_id)) return null;
@@ -2099,8 +2189,8 @@ export function listNotes(jid, caseId) {
   if (caseId) return all('SELECT * FROM notes WHERE case_id = ? ORDER BY created_at DESC', caseId);
   return all('SELECT * FROM notes WHERE jid = ? ORDER BY created_at DESC', jid);
 }
-export function addNote(jid, text, caseId) {
-  const id = Number(run('INSERT INTO notes (jid, text, created_at, case_id) VALUES (?, ?, ?, ?)', jid, text, now(), caseId || null).lastInsertRowid);
+export function addNote(jid, text, caseId, userName = null) {
+  const id = Number(run('INSERT INTO notes (jid, text, created_at, case_id, user_name) VALUES (?, ?, ?, ?, ?)', jid, text, now(), caseId || null, userName).lastInsertRowid);
   return id;
 }
 export function deleteNote(id) { run('DELETE FROM notes WHERE id = ?', id); }
@@ -2144,12 +2234,12 @@ export function casesWithoutUpdate(ms, limit = 20) {
   return all(`SELECT id, jid, client_id, (SELECT name FROM clients WHERE id = cases.client_id) AS client_name, title, COALESCE(last_update_at, created_at) AS since FROM cases
               WHERE status = 'aberto' AND COALESCE(last_update_at, created_at) < ? ORDER BY since LIMIT ?`, now() - ms, limit);
 }
-export function saveTask({ id, jid, title, due_at, done, case_id, kind, end_at, assignee_id }) {
+export function saveTask({ id, jid, title, due_at, done, case_id, kind, end_at, assignee_id, by }) {
   if (id) {
     const cur = get('SELECT * FROM tasks WHERE id = ?', id);
     if (!cur) return id;
     if (assignee_id !== undefined) run('UPDATE tasks SET assignee_id = ? WHERE id = ?', assignee_id || null, id);
-    if (done !== undefined && !!done !== !!cur.done) run('UPDATE tasks SET done_at = ? WHERE id = ?', done ? now() : null, id);
+    if (done !== undefined && !!done !== !!cur.done) run('UPDATE tasks SET done_at = ?, done_by = ? WHERE id = ?', done ? now() : null, done ? by || null : null, id);
     const newDue = due_at === undefined ? cur.due_at : due_at;
     if (end_at !== undefined || due_at !== undefined) {
       // mantém a duração quando só o início muda
@@ -2165,8 +2255,8 @@ export function saveTask({ id, jid, title, due_at, done, case_id, kind, end_at, 
     return id;
   }
   if (case_id && !jid) jid = get('SELECT jid FROM cases WHERE id = ?', case_id)?.jid;
-  return Number(run('INSERT INTO tasks (jid, title, due_at, created_at, case_id, kind, end_at, assignee_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?)',
-    jid || null, title, due_at || null, now(), case_id || null, kind || 'tarefa', end_at || null, assignee_id || null).lastInsertRowid);
+  return Number(run('INSERT INTO tasks (jid, title, due_at, created_at, case_id, kind, end_at, assignee_id, created_by) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)',
+    jid || null, title, due_at || null, now(), case_id || null, kind || 'tarefa', end_at || null, assignee_id || null, by || null).lastInsertRowid);
 }
 export function deleteTask(id) { run('DELETE FROM tasks WHERE id = ?', id); }
 export function getTask(id) {

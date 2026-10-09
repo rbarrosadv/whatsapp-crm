@@ -15,9 +15,10 @@ import { contactList, contactDialog } from './commercial.js';
 import { clientForm } from './clientform.js';
 import { importDialog, importProgress, drawWithoutClient, archiveBadge } from './importcases.js';
 import { looksLikeCompany, fmtCnpj, fmtCpf } from '../qualify.js';
+import { renderByClient, renderPhaseBoard, renderFeed, focusCase, resetColumns } from './legalview.js';
 
 let root;
-let tab = 'clientes'; // clientes | processos | intimacoes
+let tab = 'cliente'; // cliente | fases | processos | intimacoes | atividade (clientes = lista antiga)
 let clientId = null; // ficha aberta
 let clientTab = 'processos';
 let q = '';
@@ -29,7 +30,10 @@ let listBody = null;
 
 function drawList(my = loading) {
   if (!listBody?.isConnected) return;
-  if (tab === 'clientes') drawClients(listBody, my);
+  if (tab === 'cliente') renderByClient(listBody);
+  else if (tab === 'fases') renderPhaseBoard(listBody, { onOpen: (k) => openCase(k.id) });
+  else if (tab === 'atividade') renderFeed(listBody, { onOpen: (r) => { focusCase(r.client_id, r.case_id); tab = 'cliente'; render(); } });
+  else if (tab === 'clientes') drawClients(listBody, my);
   else if (tab === 'processos') drawCases(listBody, my);
   else drawIntimations(listBody);
 }
@@ -40,11 +44,14 @@ export function mountLegal(el) {
   // dados mudaram: na lista só redesenha a lista (não tira o foco da busca)
   const refresh = debounce(() => {
     if (state.view !== 'legal') return;
+    // alguém digitando (ex.: mensagem ao cliente na linha do tempo): não redesenha por cima
+    const act = document.activeElement;
+    if (listBody?.contains(act) && act.tagName === 'TEXTAREA') return;
     if (clientId || !listBody?.isConnected) render(); else drawList();
   }, 250);
-  on('view', (v) => v === 'legal' && render());
+  on('view', (v) => { if (v === 'legal') { resetColumns(); render(); } });
   on('open-client', (id) => { clientId = id; clientTab = 'processos'; tab = 'clientes'; render(); });
-  on('open-legal', (o) => { tab = o.tab || tab; clientId = null; if (o.status) caseStatus = o.status; render(); });
+  on('open-legal', (o) => { tab = o.tab === 'clientes' ? 'cliente' : o.tab || tab; clientId = null; if (o.status) caseStatus = o.status; render(); });
   on('clients', refresh);
   on('cases', refresh);
   on('finance', refresh);
@@ -60,7 +67,7 @@ async function render() {
     class: 'input legal-search', type: 'search', value: q,
     placeholder: tab === 'processos' ? 'Buscar processo: assunto, cliente, nº do processo, parte contrária…' : 'Buscar cliente: nome, CPF/CNPJ ou telefone…',
   });
-  const body = h('div', { class: 'legal-body' });
+  const body = h('div', { class: `legal-body ${tab === 'cliente' ? 'lv-host' : ''}` });
   listBody = body;
   // o texto vale na hora (se a tela se atualizar no meio, a busca não se perde)
   search.addEventListener('input', () => { q = search.value; redrawList(); });
@@ -69,15 +76,15 @@ async function render() {
     h('div', { class: 'page-head' },
       h('h2', null, 'Jurídico'),
       h('div', { class: 'segmented' },
-        [['clientes', 'Clientes'], ['processos', 'Processos'], ['intimacoes', 'Intimações']].map(([id, label]) => h('button', {
-          class: `seg ${tab === id ? 'active' : ''}`, onclick: () => { tab = id; render(); },
+        [['cliente', 'Por cliente'], ['fases', 'Quadro por fase'], ['processos', 'Lista de processos'], ['intimacoes', 'Intimações'], ['atividade', 'Atividade']].map(([id, label]) => h('button', {
+          class: `seg ${tab === id ? 'active' : ''}`, onclick: () => { tab = id; if (id === 'cliente') resetColumns(); render(); },
         }, label))),
       h('div', { class: 'row' },
         tab === 'processos' && state.me?.role !== 'estagiario' ? h('button', { class: 'btn', title: 'Importar a lista de processos de outro sistema (LinkLei…), em Excel ou CSV', onclick: () => importDialog() }, [icon('upload', 15), 'Importar lista']) : null,
         tab === 'processos' ? h('button', { class: 'btn', title: 'Ver os processos em colunas por etapa', onclick: () => setView('board') }, 'Funil') : null,
         h('button', { class: 'btn', onclick: () => clientDialog() }, [icon('plus', 15), 'Cliente']),
         h('button', { class: 'btn btn-primary', onclick: () => newCaseDialog(null) }, [icon('plus', 15), 'Processo']))),
-    tab === 'intimacoes' ? null : h('div', { class: 'row legal-tools' }, search,
+    ['intimacoes', 'cliente', 'fases', 'atividade'].includes(tab) ? null : h('div', { class: 'row legal-tools' }, search,
       tab === 'processos' ? h('select', { class: 'input select-sm', onchange: (e) => { caseStatus = e.target.value; drawList(); } },
         CASE_FILTERS.map(([v, l]) => h('option', { value: v, selected: caseStatus === v }, l))) : null,
       tab === 'processos' ? h('select', { class: 'input select-sm', onchange: (e) => { caseResp = e.target.value; drawList(); } },

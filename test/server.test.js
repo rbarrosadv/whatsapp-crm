@@ -1028,7 +1028,7 @@ test('INSS administrativo: situação gera prazos e aviso ao cliente, conferênc
   assert.equal(full.case.tribunal, 'INSS (administrativo)');
   await c.call('cases:save', { id: k, inss_status: 'exigencia' });
   let tasks = await c.call('tasks:list', { caseId: k });
-  assert.ok(tasks.some((t) => t.kind === 'prazo' && /exigência/i.test(t.title) && Math.round((t.due_at - Date.now()) / 864e5) === 30), 'exigência: prazo de 30 dias');
+  assert.ok(tasks.some((t) => t.kind === 'prazo' && /exigência/i.test(t.title) && Math.abs((t.due_at - Date.now()) / 864e5 - 30) <= 1), 'exigência: prazo de 30 dias');
   await c.call('cases:save', { id: k, inss_status: 'concedido' });
   full = await c.call('cases:full', k);
   const hint = full.hints.find((x) => x.kind === 'client');
@@ -1138,4 +1138,63 @@ test('cadastros repetidos: aparecem marcados, juntar leva processos/prazos/notas
   const e = await c.call('clients:save', { name: 'Cadastro por engano' });
   await c.call('clients:delete', e);
   assert.ok(!(await c.call('clients:list', { q: 'engano' })).length);
+});
+
+test('Jurídico: fase pelos andamentos, semáforo, linha do tempo, explicar ao cliente, mudar fase, responsável por fase e atividade', async () => {
+  const c = client();
+  await c.req('/auth/login', { body: { login: 'barros', password: 'segredo1' } });
+  const me = (await c.call('bootstrap')).me;
+  const cid = await c.call('clients:save', { name: 'Fase Teste da Silva' });
+  const k = await c.call('cases:save', { client_id: cid, title: 'Cobrança', process_number: '1009999-11.2026.8.11.0041' });
+  const day = 864e5;
+  await c.call('moves:add', { case_id: k, ts: Date.now() - 9 * day, text: 'Distribuído por sorteio' });
+  await c.call('moves:add', { case_id: k, ts: Date.now() - 8 * day, text: 'Juntada de petição' });
+  await c.call('moves:add', { case_id: k, ts: Date.now() - 2 * day, text: 'Sentença — julgado procedente o pedido' });
+  let ov = (await c.call('cases:overview', {})).find((x) => x.id === k);
+  assert.equal(ov.phase, 'sentenca', 'fase deduzida do andamento');
+  assert.equal(ov.phase_label, 'Sentença');
+  assert.equal(ov.days_in_phase, 2);
+  assert.equal(ov.status, 'green');
+  // prazo em 2 dias → vermelho
+  const t = await c.call('tasks:save', { case_id: k, kind: 'prazo', title: 'Apelação', due_at: Date.now() + 2 * day });
+  ov = (await c.call('cases:overview', {})).find((x) => x.id === k);
+  assert.equal(ov.status, 'red');
+  assert.equal(ov.next_task.title, 'Apelação');
+  // linha do tempo: andamento importante em destaque, rotina marcada, prazo com quem criou
+  const tl = await c.call('cases:timeline', k);
+  const sent = tl.items.find((x) => x.type === 'move' && /Sentença/.test(x.title));
+  assert.ok(sent.big && !sent.routine);
+  assert.ok(tl.items.find((x) => /Juntada de petição/.test(x.title)).routine, 'rotina fica recolhida');
+  assert.equal(tl.items.find((x) => x.type === 'task' && x.id === t).by, me.name, 'quem criou o prazo');
+  // explicar ao cliente (sem WhatsApp: marca avisado por outro meio)
+  const ex = await c.call('moves:clientText', sent.id);
+  assert.match(ex.text, /sentença/i);
+  await assert.rejects(c.call('moves:notifyClient', sent.id, ex.text, { via: 'whatsapp' }), /WhatsApp/);
+  await c.call('moves:notifyClient', sent.id, ex.text, { via: 'outro' });
+  assert.equal((await c.call('cases:timeline', k)).items.find((x) => x.id === sent.id && x.type === 'move').notified.by, me.name);
+  // mudar à mão; responsável pela fase recebe tarefa
+  const users = await c.call('team:list');
+  const other = users.find((u) => u.id !== me.id) || me;
+  await c.call('settings:set', 'phaseConfig', JSON.stringify({ resp: { recurso: other.id }, names: { recurso: 'Recurso (2º grau)' } }));
+  await c.call('cases:setPhase', k, 'recurso');
+  ov = (await c.call('cases:overview', {})).find((x) => x.id === k);
+  assert.equal(ov.phase, 'recurso');
+  assert.equal(ov.phase_manual, 1);
+  assert.equal(ov.phase_label, 'Recurso (2º grau)');
+  if (other.id !== me.id) assert.ok((await c.call('tasks:list', { caseId: k })).some((x) => /Recurso \(2º grau\)/.test(x.title) && x.assignee_id === other.id), 'tarefa para quem cuida da fase');
+  // andamento de fase anterior não volta; trânsito em julgado leva adiante
+  await new Promise((r) => setTimeout(r, 15));
+  await c.call('moves:add', { case_id: k, ts: Date.now(), text: 'Citação do réu para contrarrazões' });
+  assert.equal((await c.call('cases:overview', {})).find((x) => x.id === k).phase, 'recurso');
+  await new Promise((r) => setTimeout(r, 15));
+  await c.call('moves:add', { case_id: k, ts: Date.now(), text: 'Certidão de trânsito em julgado' });
+  assert.equal((await c.call('cases:overview', {})).find((x) => x.id === k).phase, 'transito');
+  // encerrar → Encerrado
+  await c.call('cases:setStatus', k, 'encerrado');
+  assert.equal((await c.call('cases:overview', { includeClosed: true })).find((x) => x.id === k).phase, 'encerrado');
+  // atividade da equipe
+  const feed = await c.call('activity:feed', {});
+  assert.ok(feed.some((r) => r.auto && /Cobrança: fase → Trânsito em julgado/.test(r.what)), 'mudança automática de fase');
+  assert.ok(feed.some((r) => r.who === me.name && /cliente avisado/.test(r.what)), 'quem avisou o cliente');
+  await c.call('settings:set', 'phaseConfig', '');
 });

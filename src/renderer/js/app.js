@@ -1,4 +1,5 @@
 // Ponto de entrada da interface.
+import { backColumn } from './views/legalview.js';
 import './bridge.js';
 import { h, debounce, toast } from './util.js';
 import { setupNotifications } from './notify.js';
@@ -99,6 +100,7 @@ async function main() {
     .observe(crmCol, { attributes: true, attributeFilter: ['class'] });
   window.addEventListener('popstate', () => {
     if (!phone.matches) return;
+    if (state.view === 'legal' && backColumn()) return;
     if (!crmCol.classList.contains('hidden')) crmCol.classList.add('hidden');
     else if (document.body.classList.contains('chat-open')) openChat(null);
   });
