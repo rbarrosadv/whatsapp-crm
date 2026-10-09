@@ -43,7 +43,11 @@ fi
 
 say "Atualizando o Ubuntu e instalando o básico"
 export DEBIAN_FRONTEND=noninteractive
-apt-get update -y
+# o repositório do Caddy (cloudsmith) passou a recusar downloads (402): com o
+# Caddy já instalado ele não faz falta, e um repositório fora do ar não pode
+# parar a atualização do sistema
+if command -v caddy >/dev/null; then rm -f /etc/apt/sources.list.d/caddy-stable.list; fi
+apt-get update -y || say "Aviso: algum repositório do Ubuntu não respondeu; seguindo assim mesmo"
 apt-get install -y curl ca-certificates gnupg debian-keyring debian-archive-keyring apt-transport-https tar
 
 if ! command -v node >/dev/null || [ "$(node -p 'process.versions.node.split(".")[0]')" -lt 22 ]; then
@@ -56,10 +60,13 @@ node -e 'const [a,b]=process.versions.node.split(".").map(Number); if (a===22 &&
 
 if ! command -v caddy >/dev/null; then
   say "Instalando o Caddy (HTTPS automático)"
-  curl -1sLf 'https://dl.cloudsmith.io/public/caddy/stable/gpg.key' | gpg --dearmor --yes -o /usr/share/keyrings/caddy-stable-archive-keyring.gpg
-  curl -1sLf 'https://dl.cloudsmith.io/public/caddy/stable/debian.deb.txt' > /etc/apt/sources.list.d/caddy-stable.list
-  apt-get update -y
-  apt-get install -y caddy
+  # 1º o pacote do próprio Ubuntu; se não houver, o repositório oficial do Caddy
+  if ! apt-get install -y caddy; then
+    curl -1sLf 'https://dl.cloudsmith.io/public/caddy/stable/gpg.key' | gpg --dearmor --yes -o /usr/share/keyrings/caddy-stable-archive-keyring.gpg
+    curl -1sLf 'https://dl.cloudsmith.io/public/caddy/stable/debian.deb.txt' > /etc/apt/sources.list.d/caddy-stable.list
+    apt-get update -y || true
+    apt-get install -y caddy || die "Não consegui instalar o Caddy (HTTPS)."
+  fi
 fi
 
 say "Baixando o sistema do GitHub ($REPO, ramo $RAMO)"
