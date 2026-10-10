@@ -31,7 +31,18 @@ export async function renderIntimations(el, redraw) {
   }
   const counts = { nova: filter === 'nova' ? list.length : null };
 
+  // urgentes primeiro; as de rotina (ato ordinatório, juntada…) recolhidas
+  const rank = { alta: 0, normal: 1, rotina: 2 };
+  if (filter === 'nova') list = [...list].sort((a, b) => (rank[a.priority] - rank[b.priority]) || (b.date - a.date));
+  const routine = filter === 'nova' ? list.filter((i) => i.priority === 'rotina') : [];
+  const main = filter === 'nova' ? list.filter((i) => i.priority !== 'rotina') : list;
+  const failing = st.failing || (st.oabs.some((o) => o.active) && st.lastOk && Date.now() - st.lastOk > 12 * 3600e3);
+
   fill(el,
+    failing ? h('div', { class: 'panel intim-alert' },
+      h('b', null, 'A busca de intimações está falhando'),
+      h('p', { class: 'small' }, `O DJEN não responde desde ${st.lastOk ? fmtDateTime(st.lastOk) : 'a primeira busca'}. Até voltar, confira as publicações direto no site do DJEN.`),
+      h('button', { class: 'btn btn-sm', onclick: () => openExternal('https://comunica.pje.jus.br/') }, 'Abrir o DJEN')) : null,
     oabPanel(st, canEdit, redraw),
     st.oabs.some((o) => o.active) ? historyPanel(st.history, redraw) : null,
     unknown.length ? unknownPanel(unknown, redraw) : null,
@@ -59,8 +70,15 @@ export async function renderIntimations(el, redraw) {
           redraw();
         },
       }, 'Buscar agora')),
-    list.length ? h('div', { class: 'intim-list' }, list.map((i) => card(i, redraw)))
-      : h('div', { class: 'panel' }, h('p', { class: 'muted' }, filter === 'nova' ? 'Nenhuma intimação para conferir.' : 'Nada aqui.')));
+    main.length ? h('div', { class: 'intim-list' }, main.map((i) => card(i, redraw)))
+      : h('div', { class: 'panel' }, h('p', { class: 'muted' }, filter === 'nova' ? (routine.length ? 'Nenhuma intimação importante para conferir.' : 'Nenhuma intimação para conferir.') : 'Nada aqui.')),
+    routine.length ? h('details', { class: 'panel intim-routine' },
+      h('summary', null, h('b', null, `${routine.length} de rotina`), h('span', { class: 'muted small' }, ' — ato ordinatório, juntada, remessa, vista… (sem prazo no texto)'),
+        h('button', {
+          class: 'btn btn-sm', style: { marginLeft: '12px' }, title: 'Marca todas as de rotina como conferidas',
+          onclick: async (e) => { e.preventDefault(); await api('intimations:set', routine.map((i) => i.id), 'lida').catch(errToast); redraw(); },
+        }, 'Conferir todas')),
+      h('div', { class: 'intim-list' }, routine.map((i) => card(i, redraw)))) : null);
 }
 
 // ------------------------------------------------------------ OABs
@@ -75,6 +93,8 @@ function oabPanel(st, canEdit, redraw) {
         h('div', { class: 'small' }, o.user_name
           ? [icon('user', 13), ` ${o.user_name}${o.user_id === state.me?.id ? ' (você)' : ''} — recebe os prazos e os avisos dos processos desta OAB`]
           : h('span', { class: 'warn-text' }, 'Sem dono no sistema: escolha quem recebe os prazos (Editar)')),
+        h('div', { class: 'small muted', title: (o.variants || []).join('\n') },
+          `Busca pela OAB e pelo nome (${(o.variants || []).length} forma(s), com erros comuns de digitação)`),
         h('div', { class: `small ${o.last_error ? 'bad-text' : 'muted'}` },
           o.last_error ? `Erro na última busca: ${o.last_error}` : o.last_check ? `Buscado em ${fmtDateTime(o.last_check)}` : 'Ainda não buscado',
           o.active ? '' : ' · pausado')),
@@ -99,6 +119,7 @@ async function oabDialog(o, redraw) {
   const user = h('select', { class: 'input', disabled: !state.can.admin, title: state.can.admin ? '' : 'Cada advogado cadastra a própria OAB; só o sócio escolhe outra pessoa' },
     h('option', { value: '' }, '— nenhum —'), team.map((u) => h('option', { value: String(u.id), selected: u.id === owner }, u.name)));
   const active = h('input', { type: 'checkbox', checked: o.active !== 0 });
+  const aliases = h('textarea', { class: 'input', rows: 2, placeholder: 'Ex.: Rafael A. B. Correa' }, o.aliases || '');
   modal({
     title: o.id ? 'Editar OAB' : 'Cadastrar OAB',
     body: h('div', { class: 'form' },
@@ -106,6 +127,8 @@ async function oabDialog(o, redraw) {
       h('div', { class: 'grid2' },
         h('label', { class: 'field' }, h('span', null, 'Número da OAB'), number),
         h('label', { class: 'field' }, h('span', null, 'UF'), uf)),
+      h('label', { class: 'field' }, h('span', null, 'Outras formas do nome (opcional, uma por linha)'), aliases),
+      h('p', { class: 'muted small' }, 'O sistema busca pela OAB e também pelo nome — sem acentos, só primeiro e último nome e com erros comuns de digitação (rr/r, ss/s, z/s, y/i…). Assim acha a publicação mesmo com a OAB errada. Só entra o que tiver o nome parecido com o seu.'),
       h('label', { class: 'field' }, h('span', null, 'Usuário no sistema (recebe os prazos dele)'), user),
       o.id ? h('label', { class: 'check' }, active, ' Buscar intimações desta OAB') : null),
     actions: [
@@ -114,7 +137,7 @@ async function oabDialog(o, redraw) {
       {
         label: 'Salvar', primary: true,
         onClick: async () => {
-          await api('oabs:save', { id: o.id, name: name.value, number: number.value, uf: uf.value, user_id: user.value ? Number(user.value) : null, active: active.checked });
+          await api('oabs:save', { id: o.id, name: name.value, number: number.value, uf: uf.value, user_id: user.value ? Number(user.value) : null, active: active.checked, aliases: aliases.value });
           toast('OAB salva. Clique em “Buscar agora” para trazer as intimações.', 'success', 6000);
           redraw();
           return true;
@@ -221,23 +244,41 @@ async function importDialog(p, redraw) {
 
 function card(i, redraw) {
   const text = h('div', { class: 'intim-text' }, i.text);
-  return h('div', { class: `panel intim intim-${i.status}` },
+  // nome publicado com a OAB diferente da cadastrada (achada pela busca do nome)
+  const pubOab = i.found_by === 'nome' ? i.lawyers.filter((a) => a.name).map((a) => `${a.name}${a.oab ? ` (OAB ${a.oab}${a.uf ? `/${a.uf}` : ''})` : ' (sem OAB)'}`).join(', ') : '';
+  const late = i.status === 'nova' && i.dates && Date.now() > i.dates.start;
+  return h('div', { class: `panel intim intim-${i.status} prio-${i.priority || 'normal'}` },
     h('div', { class: 'intim-head' },
       h('span', { class: 'intim-date' }, day(i.date)),
       h('span', { class: 'status-pill muted' }, i.tribunal || '—'),
+      i.priority === 'alta' ? h('span', { class: 'status-pill bad' }, 'Importante') : null,
       h('b', null, `${i.kind}${i.doc_kind ? ` · ${i.doc_kind}` : ''}`),
       h('span', { class: 'muted small grow' }, i.orgao || ''),
+      late ? h('span', { class: 'status-pill bad', title: 'O prazo já começou a correr e ainda não foi criado' }, 'prazo já correndo') : null,
       i.status === 'prazo' ? h('span', { class: 'status-pill ok' }, `prazo ${day(i.task_due)}`) : i.status === 'lida' ? h('span', { class: 'status-pill muted' }, 'conferida') : h('span', { class: 'status-pill warn' }, 'para conferir')),
+    i.dates ? h('div', { class: 'intim-dates small' },
+      h('span', null, 'Disponibilizada ', h('b', null, day(i.dates.available))),
+      h('span', null, 'Publicada ', h('b', null, day(i.dates.published))),
+      h('span', null, 'Prazo começa ', h('b', null, day(i.dates.start)))) : null,
+    pubOab ? h('div', { class: 'intim-warn small' }, icon('alert', 14), ` Achada pelo nome — na publicação: ${pubOab}. Confira se é mesmo do escritório.`) : null,
     h('div', { class: 'intim-proc small' },
       h('span', { class: 'mono' }, i.process_number || 's/ nº'),
       i.case_id ? [' · ', h('a', { href: '#', onclick: (e) => { e.preventDefault(); openCase(i.case_id, { tab: 'andamentos' }); } }, `${i.case_title}`),
         i.client_name ? [' · ', h('a', { href: '#', onclick: (e) => { e.preventDefault(); openClient(i.client_id); } }, `${i.client_name}`)] : null]
         : h('span', { class: 'muted' }, ' · processo ainda não cadastrado'),
-      i.parties.length ? h('span', { class: 'muted' }, ` · ${i.parties.map((x) => x.name).join(' × ')}`) : null),
+      i.parties.length ? h('span', { class: 'muted' }, ` · ${i.parties.map((x) => x.name).join(' × ')}`) : null,
+      i.dups ? h('span', { class: 'muted', title: 'A mesma publicação saiu mais de uma vez (ex.: para cada advogado); ficou uma só' }, ` · +${i.dups} repetida(s) juntada(s)`) : null),
     text,
     h('div', { class: 'row wrap' },
       h('button', { class: 'btn btn-sm', onclick: () => text.classList.toggle('open') }, 'Ler tudo'),
-      i.link ? h('button', { class: 'btn btn-sm', onclick: () => openExternal(i.link) }, 'Abrir no tribunal') : null,
+      i.link ? h('button', { class: 'btn btn-sm', title: 'Documento da publicação (inteiro teor)', onclick: () => openExternal(i.link) }, 'Inteiro teor') : null,
+      i.process_number ? h('button', {
+        class: 'btn btn-sm', title: 'Copia o nº do processo e abre a consulta do tribunal',
+        onclick: async () => {
+          try { await navigator.clipboard.writeText(i.process_number); toast('Nº do processo copiado: cole na consulta do tribunal', 'info', 5000); } catch { /* sem área de transferência */ }
+          openExternal(i.consulta);
+        },
+      }, `Consultar no ${i.tribunal || 'tribunal'}`) : null,
       h('div', { class: 'grow' }),
       i.status === 'nova' ? h('button', { class: 'btn btn-sm', title: 'Conferida, não gera prazo', onclick: async () => { await api('intimations:set', [i.id], 'lida').catch(errToast); redraw(); } }, 'Conferida, sem prazo') : null,
       i.status !== 'nova' ? h('button', { class: 'btn btn-sm', onclick: async () => { await api('intimations:set', [i.id], 'nova').catch(errToast); redraw(); } }, 'Voltar para conferir') : null,
@@ -246,30 +287,36 @@ function card(i, redraw) {
 
 async function deadlineDialog(i, redraw) {
   const team = await api('team:list').catch(() => []);
-  const days = h('select', { class: 'input' }, [5, 8, 10, 15, 30].map((n) => h('option', { value: String(n), selected: n === 15 }, `${n} dias úteis`)));
+  const sug = await api('intimations:suggest', i.id).catch(() => ({ days: 15, corridos: false, reason: '' }));
+  const days = h('input', { class: 'input', type: 'number', min: 1, max: 365, value: String(sug.days || 5) });
+  const mode = h('select', { class: 'input' }, h('option', { value: 'uteis', selected: !sug.corridos }, 'dias úteis'), h('option', { value: 'corridos', selected: !!sug.corridos }, 'dias corridos (criminal)'));
   const due = h('input', { class: 'input', type: 'datetime-local' });
-  const info = h('div', { class: 'muted small' });
+  const info = h('div', { class: 'intim-dates small' });
   const title = h('input', { class: 'input', value: `Prazo: ${i.doc_kind || i.kind}${i.case_title ? ` — ${i.case_title}` : ` — ${i.process_number}`}` });
   const who = h('select', { class: 'input' }, team.map((u) => h('option', { value: String(u.id), selected: u.id === (i.responsible_id || state.me?.id) }, u.name)));
   const recalc = async () => {
-    const r = await api('intimations:calc', i.id, Number(days.value));
+    const r = await api('intimations:calc', i.id, Number(days.value) || 1, { corridos: mode.value === 'corridos' });
     due.value = toLocalInput(r.due);
-    fill(info, `Disponibilizada em ${day(i.date)} · publicada em ${day(r.published)} · prazo começa no dia útil seguinte.`);
+    fill(info,
+      h('span', null, 'Disponibilizada ', h('b', null, day(r.available))),
+      h('span', null, 'Publicada ', h('b', null, day(r.published))),
+      h('span', null, 'Começa ', h('b', null, day(r.start))),
+      h('span', null, 'Vence ', h('b', null, day(r.due))));
   };
-  days.addEventListener('change', recalc);
+  days.addEventListener('input', recalc);
+  mode.addEventListener('change', recalc);
   await recalc();
-  // sugestão pelo texto ("prazo de 5 dias", "15 (quinze) dias")
-  const m = /(\d{1,2})\s*(?:\([a-zç ]+\)\s*)?dias/i.exec(i.text || '');
-  if (m && [5, 8, 10, 15, 30].includes(Number(m[1]))) { days.value = m[1]; await recalc(); }
   modal({
     title: 'Criar prazo a partir da intimação',
     body: h('div', { class: 'form' },
       h('div', { class: 'intim-text open small' }, i.text),
-      h('div', { class: 'grid2' },
+      sug.reason ? h('div', { class: `intim-suggest small ${sug.event ? 'warn' : ''}` }, icon('help', 14), ` Sugestão: ${sug.event ? '' : `${sug.days} ${sug.corridos ? 'dias corridos' : 'dias úteis'} — `}${sug.reason}`) : null,
+      h('div', { class: 'grid3' },
         h('label', { class: 'field' }, h('span', null, 'Prazo'), days),
+        h('label', { class: 'field' }, h('span', null, 'Contagem'), mode),
         h('label', { class: 'field' }, h('span', null, 'Vence em'), due)),
       info,
-      h('p', { class: 'bad-text small' }, 'Confira a data: feriados locais e suspensões do tribunal não entram na conta. Prazos em dobro (Fazenda, Defensoria, litisconsortes) ajuste à mão.'),
+      h('p', { class: 'bad-text small' }, 'Confira a data: a conta usa os feriados nacionais e o recesso de 20/12 a 20/01; feriados locais e suspensões do tribunal não entram. Prazo em dobro, ajuste à mão.'),
       h('label', { class: 'field' }, h('span', null, 'O que é'), title),
       h('label', { class: 'field' }, h('span', null, 'Responsável'), who)),
     actions: [

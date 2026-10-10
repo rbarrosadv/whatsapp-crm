@@ -33,7 +33,10 @@ import * as leads from '../main/leads.js';
 import * as reports from '../main/reports.js';
 import { receiptPdf, externalSign } from '../main/pdf.js';
 import { PushService, PUSH_KINDS, PUSH_DEFAULTS, pushKindOf } from '../main/push.js';
-import { CourtsService, DATAJUD_PUBLIC_KEY, deadlineFromAvailability, formatCnj, tribunalOf, nameCase } from '../main/courts.js';
+import {
+  CourtsService, DATAJUD_PUBLIC_KEY, formatCnj, tribunalOf, nameCase, deadlineDates, suggestDeadline, intimationPriority,
+  nameVariants, nameMatches, consultaUrl, nextCourtDay,
+} from '../main/courts.js';
 import { computeSteps, suggestedChecklist, docsRequestText, addBusinessDays, STEPS, PARTY_ROLES, DEFAULT_DOCS_TEMPLATE } from '../main/workflow.js';
 
 const DAY = 24 * 3600 * 1000;
@@ -437,6 +440,7 @@ export async function createCore({ dataDir, demo = false, version = '', safeStor
       checkFinanceAndCases();
       checkHearings();
       checkPrescriptions();
+      checkForgottenIntimations();
       // a cada ~10 min traz mudanças de horário feitas no Google
       if (++googleTick % 20 === 1 && google?.status().connected) {
         calSync.agenda(Date.now() - 7 * DAY, Date.now() + 120 * DAY).catch(() => {});
@@ -492,43 +496,70 @@ export async function createCore({ dataDir, demo = false, version = '', safeStor
   // ------------------------------------------------ intimações (DJEN) e andamentos (DataJud)
   let checkingIntimations = null;
   /** Busca as intimações das OABs acompanhadas nos últimos `days` dias. */
+  /**
+   * Busca no DJEN, para cada OAB ativa: pela OAB e pelo nome do advogado (com
+   * as grafias cadastradas e erros comuns de digitação — pega publicação com a
+   * OAB errada ou sem OAB; só entra se o nome publicado bater com o dele).
+   */
   function checkIntimations({ days = 10 } = {}) {
     if (checkingIntimations) return checkingIntimations;
     checkingIntimations = (async () => {
-      const result = { new: 0, errors: [], oabs: 0 };
+      const result = { new: 0, errors: [], oabs: 0, byName: 0 };
       const touched = new Set();
+      let anyOk = false;
+      const from = Date.now() - days * DAY;
+      const to = Date.now();
+      const pause = () => new Promise((r) => setTimeout(r, demo ? 10 : 1000));
+      const ingest = (it, o, foundBy) => {
+        const id = db.addIntimation(it, o.id, 'nova', { foundBy });
+        if (!id) return;
+        result.new++;
+        if (foundBy === 'nome') result.byName++;
+        const row = db.getIntimation(id);
+        const kc = row.case_id ? db.getCase(row.case_id) : null;
+        if (result.new <= 10) {
+          notifyCase(kc, {
+            kind: 'intimation',
+            title: `Intimação${it.doc_kind ? ` (${it.doc_kind})` : ''} — ${kc ? `${kc.client_name || ''}: ${kc.title}` : it.process_number}`,
+            body: `${foundBy === 'nome' ? '[achada pelo nome — confira a OAB] ' : ''}${short(it.text)}`, discreet: 'Nova intimação',
+          }, { fallbackUserId: o.user_id });
+        }
+        if (row.case_id) {
+          db.addMove({ case_id: row.case_id, ts: it.date, text: `${it.kind}${it.doc_kind ? ` (${it.doc_kind})` : ''} — ${it.text.slice(0, 600)}`, source: 'djen', ext_id: `djen:${it.ext_id}` });
+          hintsFor(row.case_id, { text: `${it.doc_kind || ''} ${it.text}`, ts: it.date, ref: `djen:${it.ext_id}` });
+          touched.add(row.case_id);
+        }
+      };
       for (const o of db.listOabs().filter((x) => x.active)) {
         result.oabs++;
+        const errs = [];
         try {
-          const items = await courts.djenByOab({ number: o.number, uf: o.uf, from: Date.now() - days * DAY, to: Date.now() });
-          for (const it of items) {
-            const id = db.addIntimation(it, o.id);
-            if (!id) continue;
-            result.new++;
-            const row = db.getIntimation(id);
-            const kc = row.case_id ? db.getCase(row.case_id) : null;
-            if (result.new <= 10) {
-              notifyCase(kc, {
-                kind: 'intimation',
-                title: `Intimação${it.doc_kind ? ` (${it.doc_kind})` : ''} — ${kc ? `${kc.client_name || ''}: ${kc.title}` : it.process_number}`,
-                body: short(it.text), discreet: 'Nova intimação',
-              }, { fallbackUserId: o.user_id });
+          const items = await courts.djenByOab({ number: o.number, uf: o.uf, from, to });
+          anyOk = true;
+          for (const it of items) ingest(it, o, 'oab');
+        } catch (e) { errs.push(e.message); }
+        // pelo nome (e variações): só as publicações em que o nome do advogado bate
+        const aliases = String(o.aliases || '').split('\n').filter(Boolean);
+        for (const v of nameVariants(o.name, aliases)) {
+          await pause();
+          try {
+            const items = await courts.djenByLawyerName({ name: v, from, to });
+            anyOk = true;
+            for (const it of items) {
+              const mine = (it.lawyers || []).filter((a) => nameMatches(o.name, a.name, aliases));
+              if (!mine.length) continue;
+              const rightOab = mine.some((a) => String(a.oab).replace(/\D/g, '') === String(o.number) && (!a.uf || a.uf.toUpperCase() === o.uf));
+              ingest(it, o, rightOab ? 'oab' : 'nome');
             }
-            if (row.case_id) {
-              db.addMove({ case_id: row.case_id, ts: it.date, text: `${it.kind}${it.doc_kind ? ` (${it.doc_kind})` : ''} — ${it.text.slice(0, 600)}`, source: 'djen', ext_id: `djen:${it.ext_id}` });
-              hintsFor(row.case_id, { text: `${it.doc_kind || ''} ${it.text}`, ts: it.date, ref: `djen:${it.ext_id}` });
-              touched.add(row.case_id);
-            }
-          }
-          db.markOabChecked(o.id, null);
-        } catch (e) {
-          db.markOabChecked(o.id, e.message);
-          result.errors.push(`OAB ${o.number}/${o.uf}: ${e.message}`);
+          } catch (e) { errs.push(`nome "${v}": ${e.message}`); break; }
         }
-        await new Promise((r) => setTimeout(r, demo ? 10 : 1000));
+        db.markOabChecked(o.id, errs.length ? errs.join(' · ') : null);
+        if (errs.length) result.errors.push(`OAB ${o.number}/${o.uf}: ${errs[0]}`);
+        await pause();
       }
       db.setSetting('djenLastRun', Date.now());
       settings.djenLastRun = Date.now();
+      djenHealth(anyOk || !result.oabs, result.errors[0]);
       if (result.new) {
         if (result.new > 10) notify({ kind: 'intimation', title: `${result.new} intimações novas no DJEN`, body: 'Abra Jurídico → Intimações para conferir e criar os prazos.', action: { view: 'legal', tab: 'intimacoes' } });
         send('intimations:changed', null);
@@ -537,6 +568,70 @@ export async function createCore({ dataDir, demo = false, version = '', safeStor
       return result;
     })().finally(() => { checkingIntimations = null; });
     return checkingIntimations;
+  }
+
+  /**
+   * Saúde da busca no DJEN: falhando há mais de 12 h → avisa toda a equipe (uma
+   * vez); quando volta, avisa que voltou. Sem isso, um erro ficaria só na tela.
+   */
+  function djenHealth(ok, error) {
+    if (ok) {
+      settings.djenLastOk = Date.now();
+      db.setSetting('djenLastOk', settings.djenLastOk);
+      if (settings.djenAlerted) {
+        settings.djenAlerted = null;
+        db.setSetting('djenAlerted', null);
+        notify({ kind: 'courts', title: 'Busca de intimações voltou a funcionar', body: 'O DJEN respondeu de novo. Confira Jurídico → Intimações.', action: { view: 'legal', tab: 'intimacoes' } });
+      }
+      return;
+    }
+    const since = Number(settings.djenLastOk || settings.djenFirstFail || 0);
+    if (!settings.djenLastOk && !settings.djenFirstFail) { settings.djenFirstFail = Date.now(); db.setSetting('djenFirstFail', settings.djenFirstFail); }
+    if (since && Date.now() - since > 12 * 3600e3 && !settings.djenAlerted) {
+      settings.djenAlerted = Date.now();
+      db.setSetting('djenAlerted', settings.djenAlerted);
+      notify({
+        kind: 'courts', force: true, title: 'Atenção: a busca de intimações está falhando',
+        body: `O DJEN não responde há mais de 12 horas (${error || 'sem resposta'}). Até voltar, confira as intimações direto no site do DJEN (comunica.pje.jus.br).`,
+        action: { view: 'legal', tab: 'intimacoes' },
+      });
+    }
+  }
+
+  /**
+   * Intimação esquecida: ainda "para conferir" quando o prazo já começou a
+   * correr (1º dia útil depois da publicação) → avisa quem cuida do processo
+   * (ou o dono da OAB) e os sócios, uma vez.
+   */
+  function checkForgottenIntimations() {
+    const hour = new Date().getHours();
+    if (hour < 8 || hour >= 20) return;
+    const list = db.forgottenIntimations(Date.now() - DAY).filter((i) => {
+      const start = nextCourtDay(nextCourtDay(new Date(i.date)));
+      start.setHours(8, 0, 0, 0);
+      return Date.now() >= start.getTime();
+    });
+    if (!list.length) return;
+    db.markIntimationsAlerted(list.map((i) => i.id));
+    const oabs = db.listOabs();
+    const users = auth.listUsers().filter((u) => u.active);
+    const per = new Map();
+    for (const i of list) {
+      const to = new Set(users.filter((u) => u.role === 'socio').map((u) => u.id));
+      if (i.responsible_id) to.add(i.responsible_id);
+      else for (const oid of String(i.oab_ids || '').split(',')) { const o = oabs.find((x) => String(x.id) === oid); if (o?.user_id) to.add(o.user_id); }
+      for (const u of to) { if (!per.has(u)) per.set(u, []); per.get(u).push(i); }
+    }
+    for (const [u, items] of per) {
+      const first = items[0];
+      notify({
+        kind: 'intimation-late',
+        title: items.length === 1 ? 'Intimação sem prazo criado — o prazo já está correndo' : `${items.length} intimações sem prazo criado — os prazos já estão correndo`,
+        body: items.slice(0, 3).map((i) => (i.case_title ? `${i.client_name ? `${i.client_name}: ` : ''}${i.case_title}` : i.process_number)).join(' · '),
+        discreet: 'Intimações sem prazo', action: items.length === 1 && first.case_id ? { view: 'legal', tab: 'intimacoes' } : { view: 'legal', tab: 'intimacoes' },
+      }, { user: u });
+    }
+    send('intimations:changed', null);
   }
 
   /** Andamentos do DataJud de um processo; completa dados vazios da ficha. */
@@ -559,6 +654,7 @@ export async function createCore({ dataDir, demo = false, version = '', safeStor
       if (k.datajud_checked_at && mv.ts > Date.now() - 30 * DAY) hintsFor(caseId, { text: mv.text, ts: mv.ts, ref: mv.ext_id });
     }
     db.markDatajud(caseId, null);
+    db.setDatajudUpdated(caseId, p.updated);
     organizeCase(caseId, { classe: p.classe, assuntos: p.assuntos, live: !!k.datajud_checked_at && newMoves > 0 });
     if (newMoves || Object.keys(fill).length) caseChanged(db.getCase(caseId));
     return { found: true, newMoves, classe: p.classe, updated: p.updated };
@@ -836,15 +932,21 @@ export async function createCore({ dataDir, demo = false, version = '', safeStor
     }, importJob.userId ? { user: importJob.userId } : undefined);
   }
 
+  const HOT_PHASES = new Set(['audiencia', 'instrucao', 'conclusos', 'sentenca', 'recurso', 'superiores', 'transito', 'liquidacao', 'cumprimento', 'pagamento']);
   let datajudRunning = false;
   /** Uma vez por dia: andamentos novos dos processos abertos (um por vez, com pausa). */
   async function datajudDaily() {
     if (datajudRunning) return;
     datajudRunning = true;
     try {
+      // fases em que as coisas acontecem (audiência, sentença, recurso, cumprimento…)
+      // são consultadas a cada 2 h; as outras, a cada 8 h
       const due = db.listCases({ includeClosed: false })
-        .filter((k) => k.process_number && !['consultivo', 'inss', 'extrajudicial'].includes(k.kind) && (!k.datajud_checked_at || Date.now() - k.datajud_checked_at > 6 * 3600e3))
-        .slice(0, 200);
+        .filter((k) => k.process_number && !['consultivo', 'inss', 'extrajudicial'].includes(k.kind))
+        .map((k) => ({ k, hot: HOT_PHASES.has(k.phase) }))
+        .filter(({ k, hot }) => !k.datajud_checked_at || Date.now() - k.datajud_checked_at > (hot ? 2 : 8) * 3600e3)
+        .sort((a, b) => (b.hot - a.hot) || ((a.k.datajud_checked_at || 0) - (b.k.datajud_checked_at || 0)))
+        .slice(0, 200).map((x) => x.k);
       const changed = [];
       for (const k of due) {
         try {
@@ -1500,17 +1602,32 @@ export async function createCore({ dataDir, demo = false, version = '', safeStor
       db.deleteOab(id);
       send('intimations:changed', null);
     },
-    'intimations:list': (_c, opts) => db.listIntimations(opts || {}),
+    'intimations:list': (_c, opts) => db.listIntimations(opts || {}).map((i) => ({
+      ...i, priority: intimationPriority(i), consulta: consultaUrl(i.tribunal),
+      dates: i.date ? deadlineDates(i.date, 1) : null,
+    })),
+    /** Prazo sugerido pelo texto/ato + as datas (disponibilizada, publicada, começa, vence). */
+    'intimations:suggest': (_c, id) => {
+      const it = db.getIntimation(id);
+      if (!it) throw new Error('Intimação não encontrada');
+      const k = it.case_id ? db.getCase(it.case_id) : null;
+      const sug = suggestDeadline({ ...it, area: k?.area || '' });
+      return { ...sug, dates: deadlineDates(it.date || Date.now(), sug.days || 5, { corridos: sug.corridos }) };
+    },
     'intimations:check': async (_c, { days } = {}) => checkIntimations({ days: Math.min(60, Math.max(1, Number(days) || 10)) }),
-    'intimations:status': () => ({ lastRun: Number(settings.djenLastRun) || null, running: !!checkingIntimations, oabs: db.listOabs(), history: historyStatus() }),
+    'intimations:status': () => ({
+      lastRun: Number(settings.djenLastRun) || null, running: !!checkingIntimations, history: historyStatus(),
+      lastOk: Number(settings.djenLastOk) || null, failing: !!settings.djenAlerted,
+      oabs: db.listOabs().map((o) => ({ ...o, variants: nameVariants(o.name, String(o.aliases || '').split('\n').filter(Boolean)) })),
+    }),
     'courts:history': (ctx, { months } = {}) => scanHistory({ months, userId: ctx.user.id }),
     'intimations:set': (ctx, ids, status) => {
       for (const id of ids || []) db.setIntimation(id, { status, handled_by: ctx.user.name, handled_at: Date.now() });
       send('intimations:changed', null);
     },
-    'intimations:calc': (_c, id, days) => {
+    'intimations:calc': (_c, id, days, { corridos = false } = {}) => {
       const it = db.getIntimation(id);
-      return deadlineFromAvailability(it?.date || Date.now(), Math.max(1, Number(days) || 15));
+      return deadlineDates(it?.date || Date.now(), Math.min(365, Math.max(1, Number(days) || 15)), { corridos: !!corridos });
     },
     /** Cria o prazo na agenda a partir da intimação (a data é conferida pela pessoa). */
     'intimations:deadline': (ctx, id, { due_at, title, assignee_id, case_id } = {}) => {

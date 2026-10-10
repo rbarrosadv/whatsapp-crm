@@ -9,7 +9,7 @@ import { fullAddress, sameName } from '../renderer/js/qualify.js';
 
 let db;
 
-const SCHEMA_VERSION = 22;
+const SCHEMA_VERSION = 23;
 
 // Tipos de contato (editáveis). `personal` = não conta como trabalho
 // (fica fora de "Aguardando resposta" e dos avisos de conversa esquecida).
@@ -514,6 +514,12 @@ function migrate() {
   `);
   // versão 22: cópia das pastas do OneDrive (abrem na hora; conferidas em segundo plano)
   db.exec('CREATE TABLE IF NOT EXISTS doc_tree (dir TEXT PRIMARY KEY, at INTEGER NOT NULL, list TEXT NOT NULL)');
+  // versão 23: busca pelo nome do advogado (outras grafias), intimações repetidas
+  // juntadas, aviso de intimação esquecida, data dos dados do tribunal
+  addColumn('oabs', 'aliases', 'TEXT');
+  for (const [c, t] of [['found_by', 'TEXT'], ['hash', 'TEXT'], ['dup_key', 'TEXT'], ['dup_of', 'INTEGER'], ['alerted_at', 'INTEGER'], ['pub_lawyers', 'TEXT']]) addColumn('intimations', c, t);
+  db.exec('CREATE INDEX IF NOT EXISTS intimations_dup ON intimations(dup_key)');
+  addColumn('cases', 'datajud_updated_at', 'INTEGER');
 
   const version = Number(get('SELECT value FROM meta WHERE key = ?', 'schema')?.value || 0);
   if (version < 1) seedDefaults();
@@ -1957,11 +1963,13 @@ export function saveOab(o) {
   if (!String(o.name || '').trim() || !number || !/^[A-Z]{2}$/.test(uf)) throw new Error('Informe nome, número da OAB e UF (ex.: MT).');
   const dup = get('SELECT id FROM oabs WHERE number = ? AND uf = ?', number, uf);
   if (dup && dup.id !== o.id) throw new Error('Esta OAB já está cadastrada.');
+  // outras grafias do nome (uma por linha) para a busca pelo nome no DJEN
+  const aliases = String(o.aliases || '').split(/[\n;]+/).map((x) => x.trim()).filter(Boolean).slice(0, 5).join('\n') || null;
   if (o.id) {
-    run('UPDATE oabs SET name = ?, number = ?, uf = ?, user_id = ?, active = ? WHERE id = ?', o.name.trim(), number, uf, o.user_id || null, o.active === false ? 0 : 1, o.id);
+    run('UPDATE oabs SET name = ?, number = ?, uf = ?, user_id = ?, active = ?, aliases = ? WHERE id = ?', o.name.trim(), number, uf, o.user_id || null, o.active === false ? 0 : 1, aliases, o.id);
     return o.id;
   }
-  return Number(run('INSERT INTO oabs (name, number, uf, user_id) VALUES (?, ?, ?, ?)', o.name.trim(), number, uf, o.user_id || null).lastInsertRowid);
+  return Number(run('INSERT INTO oabs (name, number, uf, user_id, aliases) VALUES (?, ?, ?, ?, ?)', o.name.trim(), number, uf, o.user_id || null, aliases).lastInsertRowid);
 }
 export function deleteOab(id) { run('DELETE FROM oabs WHERE id = ?', id); }
 export function markOabChecked(id, error) { run('UPDATE oabs SET last_check = ?, last_error = ? WHERE id = ?', now(), error || null, id); }
@@ -1974,21 +1982,56 @@ export function caseByProcessNumber(num) {
   return rows.find((r) => digitsOf(r.process_number) === d)?.id || null;
 }
 
-/** Grava a intimação se ainda não existe; devolve o id novo (ou null se já tinha). */
-/** Grava a publicação do DJEN (`status` 'historico' = antiga, achada na busca do histórico: não vai para "conferir"). */
-export function addIntimation(i, oabId, status = 'nova') {
-  const have = get('SELECT id, oab_ids FROM intimations WHERE ext_id = ?', i.ext_id);
+/** Chave das publicações repetidas: mesmo processo, mesmo dia, mesmo texto. */
+function dupKey(i) {
+  const t = String(i.text || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase().replace(/[^a-z0-9]/g, '').slice(0, 600);
+  if (!t || !digitsOf(i.process_number)) return null;
+  let h = 0;
+  for (let k = 0; k < t.length; k++) h = (Math.imul(h, 31) + t.charCodeAt(k)) | 0;
+  const d = i.date ? new Date(i.date).toISOString().slice(0, 10) : '';
+  return `${digitsOf(i.process_number)}|${d}|${(h >>> 0).toString(36)}|${t.length}`;
+}
+
+/**
+ * Grava a publicação do DJEN; devolve o id novo (ou null se já tinha).
+ * `status` 'historico' = antiga, achada na busca do histórico (não vai para "conferir").
+ * `foundBy` 'oab' | 'nome' (achada só pelo nome: a OAB na publicação está errada ou falta).
+ * A mesma decisão publicada de novo (outra comunicação, mesmo texto) entra como 'repetida' da 1ª.
+ */
+export function addIntimation(i, oabId, status = 'nova', { foundBy = 'oab' } = {}) {
+  const have = get('SELECT id, oab_ids, found_by, dup_of FROM intimations WHERE ext_id = ?', i.ext_id);
+  const mergeOab = (row) => {
+    const ids = new Set(String(row.oab_ids || '').split(',').filter(Boolean));
+    if (oabId && !ids.has(String(oabId))) { ids.add(String(oabId)); run('UPDATE intimations SET oab_ids = ? WHERE id = ?', [...ids].join(','), row.id); }
+  };
   if (have) {
-    const ids = new Set(String(have.oab_ids || '').split(',').filter(Boolean));
-    if (oabId && !ids.has(String(oabId))) { ids.add(String(oabId)); run('UPDATE intimations SET oab_ids = ? WHERE id = ?', [...ids].join(','), have.id); }
+    mergeOab(have);
+    if (foundBy === 'oab' && have.found_by === 'nome') run("UPDATE intimations SET found_by = 'oab' WHERE id = ?", have.id);
     return null;
   }
+  const key = dupKey(i);
+  const orig = key ? get('SELECT id, oab_ids FROM intimations WHERE dup_key = ? AND dup_of IS NULL ORDER BY id LIMIT 1', key) : null;
+  if (orig) mergeOab(orig);
   const caseId = caseByProcessNumber(i.process_number);
-  return Number(run(`INSERT INTO intimations (ext_id, oab_ids, date, tribunal, kind, doc_kind, orgao, classe, process_number, process_digits, text, link, parties, lawyers, case_id, status, created_at)
-                     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+  const st = orig ? 'repetida' : status === 'historico' ? 'historico' : 'nova';
+  const id = Number(run(`INSERT INTO intimations (ext_id, oab_ids, date, tribunal, kind, doc_kind, orgao, classe, process_number, process_digits, text, link, parties, lawyers, case_id, status, created_at, found_by, hash, dup_key, dup_of)
+                     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
   i.ext_id, oabId ? String(oabId) : null, i.date, i.tribunal, i.kind, i.doc_kind || null, i.orgao, i.classe, i.process_number, digitsOf(i.process_number),
-  i.text, i.link, JSON.stringify(i.parties || []), JSON.stringify(i.lawyers || []), caseId, status === 'historico' ? 'historico' : 'nova', now()).lastInsertRowid);
+  i.text, i.link, JSON.stringify(i.parties || []), JSON.stringify(i.lawyers || []), caseId, st, now(), foundBy, i.hash || null, key, orig?.id || null).lastInsertRowid);
+  return orig ? null : id;
 }
+
+/** Intimações ainda "para conferir" disponibilizadas antes de `before` e ainda não avisadas. */
+export function forgottenIntimations(before) {
+  return all(`SELECT i.id, i.date, i.process_number, i.oab_ids, i.case_id, c.title AS case_title, c.responsible_id,
+                (SELECT name FROM clients WHERE id = c.client_id) AS client_name
+              FROM intimations i LEFT JOIN cases c ON c.id = i.case_id
+              WHERE i.status = 'nova' AND i.alerted_at IS NULL AND i.date < ? ORDER BY i.date`, before);
+}
+export function markIntimationsAlerted(ids) {
+  tx(() => ids.forEach((id) => run('UPDATE intimations SET alerted_at = ? WHERE id = ?', now(), id)));
+}
+export function setDatajudUpdated(caseId, ts) { if (ts) run('UPDATE cases SET datajud_updated_at = ? WHERE id = ?', ts, caseId); }
 
 const intimationRow = (r) => (r ? {
   ...r, parties: JSON.parse(r.parties || '[]'), lawyers: JSON.parse(r.lawyers || '[]'),
@@ -1998,10 +2041,11 @@ export function listIntimations({ status, caseId, limit = 300 } = {}) {
   const where = [];
   const args = [];
   if (status === 'abertas') where.push("i.status = 'nova'");
-  else if (status) { where.push('i.status = ?'); args.push(status); }
+  else if (status) { where.push('i.status = ?'); args.push(status); } else where.push("i.status <> 'repetida'");
   if (caseId) { where.push('i.case_id = ?'); args.push(caseId); }
   return all(`SELECT i.*, c.title AS case_title, c.client_id, (SELECT name FROM clients WHERE id = c.client_id) AS client_name,
-                c.responsible_id, t.due_at AS task_due
+                c.responsible_id, c.area AS case_area, t.due_at AS task_due,
+                (SELECT COUNT(*) FROM intimations d WHERE d.dup_of = i.id) AS dups
               FROM intimations i LEFT JOIN cases c ON c.id = i.case_id LEFT JOIN tasks t ON t.id = i.task_id
               ${where.length ? `WHERE ${where.join(' AND ')}` : ''} ORDER BY i.date DESC, i.id DESC LIMIT ?`, ...args, limit).map(intimationRow);
 }

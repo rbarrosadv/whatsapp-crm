@@ -89,3 +89,45 @@ test('nomes em maiúsculas do DJEN viram nome próprio', () => {
   assert.equal(nameCase('ÉLISA DA SILVA E SOUZA'), 'Élisa da Silva e Souza');
   assert.equal(nameCase('Maria de Tal'), 'Maria de Tal');
 });
+
+test('busca pelo nome: variações (sem acento, 1º e último nome, erros de digitação) e comparação tolerante', async () => {
+  const { nameVariants, nameMatches } = await import('../src/main/courts.js');
+  const v = nameVariants('Rafael Augusto de Barros Corrêa', ['Rafael A. B. Correa']);
+  assert.ok(v.includes('RAFAEL AUGUSTO DE BARROS CORREA'), 'sem acento');
+  assert.ok(v.includes('RAFAEL CORREA'), '1º e último nome');
+  assert.ok(v.includes('RAFAEL A. B. CORREA'), 'grafia cadastrada');
+  assert.ok(v.some((x) => x === 'RAFAEL COREA'), 'erro comum: rr/r');
+  assert.ok(v.length <= 6, 'poucas consultas por advogado');
+  assert.ok(nameMatches('Rafael Augusto de Barros Corrêa', 'RAFAEL AUGUSTO DE BAROS CORREA'), 'uma letra a menos');
+  assert.ok(nameMatches('Rafael Augusto de Barros Corrêa', 'RAFAEL A. B. CORREA'), 'abreviado');
+  assert.ok(nameMatches('Rafael Augusto de Barros Corrêa', 'RAPHAEL AUGUSTO BARROS CORREA'), 'ph/f');
+  assert.ok(!nameMatches('Rafael Augusto de Barros Corrêa', 'RAFAELA SOUZA CORREA'), 'outra pessoa');
+  assert.ok(!nameMatches('Rafael Augusto de Barros Corrêa', 'MARIA AUGUSTA CORREA'));
+  assert.ok(!nameMatches('Rafael Augusto de Barros Corrêa', 'RAFAELA CORREA'), 'Rafael ≠ Rafaela');
+});
+
+test('prazo sugerido pelo texto e pelo ato; datas de disponibilização, publicação, início e vencimento', async () => {
+  const { suggestDeadline, deadlineDates, intimationPriority, consultaUrl } = await import('../src/main/courts.js');
+  assert.equal(suggestDeadline({ text: 'Intime-se para, no prazo de 5 (cinco) dias, manifestar-se.' }).days, 5);
+  assert.equal(suggestDeadline({ text: 'Manifeste-se a parte autora em quinze dias.' }).days, 15);
+  assert.equal(suggestDeadline({ text: 'Cumpra-se em 48 horas.' }).days, 2);
+  assert.equal(suggestDeadline({ text: 'Julgo procedente.', doc_kind: 'Sentença' }).days, 15);
+  assert.equal(suggestDeadline({ text: 'Julgo procedente.', doc_kind: 'Sentença', tribunal: 'TRT23' }).days, 8, 'trabalhista: 8 dias');
+  assert.equal(suggestDeadline({ text: 'Julgo procedente.', doc_kind: 'Sentença', classe: 'PROCEDIMENTO DO JUIZADO ESPECIAL CÍVEL' }).days, 10, 'juizado: 10 dias');
+  const crim = suggestDeadline({ text: 'Apresente a defesa.', classe: 'AÇÃO PENAL - PROCEDIMENTO ORDINÁRIO' });
+  assert.equal(crim.corridos, true, 'criminal em dias corridos');
+  assert.equal(suggestDeadline({ text: 'Designo audiência de conciliação para 10/11/2026.', doc_kind: 'Intimação' }).event, true, 'audiência vai para a agenda');
+  assert.match(suggestDeadline({ text: 'Vista às partes.' }).reason, /218/);
+  // disponibilizada sexta 09/10/2026; segunda 12/10 é feriado → publicada terça 13; começa 14; 15 dias úteis (02/11 feriado) → 04/11
+  const d = deadlineDates(new Date(2026, 9, 9, 12).getTime(), 15);
+  const ymd = (ts) => new Date(ts).toISOString().slice(0, 10);
+  assert.equal(ymd(d.published), '2026-10-13');
+  assert.equal(ymd(d.start), '2026-10-14');
+  assert.equal(new Date(d.due).getDate(), 4);
+  assert.equal(new Date(d.due).getMonth(), 10);
+  const c = deadlineDates(new Date(2026, 9, 9, 12).getTime(), 5, { corridos: true });
+  assert.equal(new Date(c.due).getDate(), 19, 'corridos: 14 a 18 (domingo) → vence na segunda 19');
+  assert.equal(intimationPriority({ doc_kind: 'Sentença', text: 'Julgo procedente' }), 'alta');
+  assert.equal(intimationPriority({ doc_kind: 'Ato Ordinatório', text: 'Remessa dos autos à contadoria.' }), 'rotina');
+  assert.equal(consultaUrl('TRT23'), 'https://pje.trt23.jus.br/consultaprocessual/');
+});

@@ -424,6 +424,20 @@ export function demoCourtsFetch(getCases) {
         }],
       });
     }
+    if (u.host === 'comunicaapi.pje.jus.br' && u.searchParams.get('nomeAdvogado')) {
+      // busca pelo nome: uma publicação com o nome digitado errado e a OAB faltando um dígito
+      if (u.searchParams.get('pagina') !== '1') return json({ status: 'success', count: 0, items: [] });
+      return json({
+        status: 'success', count: 1,
+        items: [{
+          id: 900300, hash: 'demoHash900300', data_disponibilizacao: day(3), siglaTribunal: 'TRT23', tipoComunicacao: 'Intimação', tipoDocumento: 'Sentença',
+          nomeOrgao: '2ª Vara do Trabalho de Cuiabá', nomeClasse: 'AÇÃO TRABALHISTA - RITO ORDINÁRIO', numeroprocessocommascara: '0000456-12.2026.5.23.0002',
+          texto: 'Ante o exposto, julgo PARCIALMENTE PROCEDENTES os pedidos. Custas pela reclamada. Intimem-se.', link: 'https://comunica.pje.jus.br/',
+          destinatarios: [{ nome: 'JOAO BATISTA LEMOS', polo: 'A' }, { nome: 'TRANSPORTES RAPIDO LTDA', polo: 'P' }],
+          destinatarioadvogados: [{ advogado: { nome: 'RAFAEL AUGUSTO DE BAROS CORREA', numero_oab: '1427', uf_oab: 'MT' } }],
+        }],
+      });
+    }
     if (u.host === 'comunicaapi.pje.jus.br') {
       if (u.searchParams.get('pagina') !== '1') return json({ status: 'success', count: 0, items: [] });
       const known = getCases().filter((k) => k.process_number).slice(0, 2);

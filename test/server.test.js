@@ -403,7 +403,7 @@ test('avisos de andamento novo: vão para o responsável, abrem o processo e res
   try {
     // simula andamento novo desde a última consulta
     db.run("DELETE FROM case_moves WHERE case_id = ? AND source = 'datajud' AND text LIKE 'Juntada%'", id);
-    db.run('UPDATE cases SET datajud_checked_at = ? WHERE process_number IS NOT NULL', Date.now() - 7 * 3600e3);
+    db.run('UPDATE cases SET datajud_checked_at = ? WHERE process_number IS NOT NULL', Date.now() - 9 * 3600e3);
     await srv.core.runCourts();
     const mine = got.filter((g) => g.data.action?.case === id);
     assert.equal(mine.length, 1, 'um aviso para este processo');
@@ -414,14 +414,14 @@ test('avisos de andamento novo: vão para o responsável, abrem o processo e res
     await c.call('settings:set', 'notifyCourts', 'off');
     got.length = 0;
     db.run("DELETE FROM case_moves WHERE case_id = ? AND source = 'datajud' AND text LIKE 'Juntada%'", id);
-    db.run('UPDATE cases SET datajud_checked_at = ? WHERE id = ?', Date.now() - 7 * 3600e3, id);
+    db.run('UPDATE cases SET datajud_checked_at = ? WHERE id = ?', Date.now() - 9 * 3600e3, id);
     await srv.core.runCourts();
     assert.equal(got.filter((g) => g.data.action?.case === id && g.to.user === me.id).length, 0);
     // escritório manda avisar toda a equipe: todos recebem (menos quem escolheu "não avisar")
     await c.call('settings:set', 'courtsNotifyAll', true);
     got.length = 0;
     db.run("DELETE FROM case_moves WHERE case_id = ? AND source = 'datajud' AND text LIKE 'Juntada%'", id);
-    db.run('UPDATE cases SET datajud_checked_at = ? WHERE id = ?', Date.now() - 7 * 3600e3, id);
+    db.run('UPDATE cases SET datajud_checked_at = ? WHERE id = ?', Date.now() - 9 * 3600e3, id);
     await srv.core.runCourts();
     const users = (await c.call('users:list')).filter((u) => u.active && u.id !== me.id);
     const to = new Set(got.filter((g) => g.data.action?.case === id).map((g) => g.to.user));
@@ -982,6 +982,64 @@ test('dia a dia: intimação com audiência vira sugestão para a agenda; senten
   await assert.rejects(c.call('hints:sendClient', sent.id, msg.text, { via: 'whatsapp' }), /não tem WhatsApp/);
   await c.call('hints:sendClient', sent.id, msg.text, { via: 'copy' });
   assert.equal((await c.call('cases:full', caseId)).hints.length, 0, 'sugestões resolvidas saem da ficha');
+});
+
+test('intimações: busca pelo nome acha publicação com OAB errada, junta repetidas, sugere prazo e avisa a esquecida', async () => {
+  const c = client();
+  await c.req('/auth/login', { body: { login: 'barros', password: 'segredo1' } });
+  const me = (await c.call('bootstrap')).me;
+  const oab = (await c.call('oabs:list')).find((o) => o.number === '14271');
+  await c.call('oabs:save', { ...oab, name: 'Rafael Augusto de Barros Correa', aliases: 'Rafael A. B. Correa' });
+  const day = new Date(Date.now() - 2 * 864e5).toISOString().slice(0, 10);
+  const base = { data_disponibilizacao: day, siglaTribunal: 'TRT23', tipoComunicacao: 'Intimação', nomeOrgao: '2ª Vara do Trabalho', numeroprocessocommascara: '0000777-12.2026.5.23.0002', destinatarios: [] };
+  const queries = [];
+  const saved = srv.core.courts.fetch;
+  srv.core.courts.fetch = async (url) => {
+    const u = new URL(url);
+    queries.push(Object.fromEntries(u.searchParams));
+    let items = [];
+    if (u.searchParams.get('pagina') === '1' && u.searchParams.get('nomeAdvogado')) {
+      items = [
+        { ...base, id: 'nome-1', tipoDocumento: 'Sentença', texto: 'Julgo PARCIALMENTE PROCEDENTES os pedidos.', destinatarioadvogados: [{ advogado: { nome: 'RAFAEL AUGUSTO DE BAROS CORREA', numero_oab: '1427', uf_oab: 'MT' } }] },
+        // a mesma sentença publicada de novo (outra comunicação, mesmo texto)
+        { ...base, id: 'nome-2', tipoDocumento: 'Sentença', texto: 'Julgo PARCIALMENTE PROCEDENTES os pedidos.', destinatarioadvogados: [{ advogado: { nome: 'RAFAEL AUGUSTO DE BAROS CORREA', numero_oab: '', uf_oab: '' } }] },
+        // homônimo parcial de outra pessoa: não entra
+        { ...base, id: 'nome-3', tipoDocumento: 'Despacho', texto: 'Vista.', destinatarioadvogados: [{ advogado: { nome: 'RAFAELA CORREA LIMA', numero_oab: '999', uf_oab: 'SP' } }] },
+      ];
+    }
+    return new Response(JSON.stringify({ count: items.length, items }), { status: 200, headers: { 'Content-Type': 'application/json' } });
+  };
+  try { await c.call('intimations:check', { days: 5 }); } finally { srv.core.courts.fetch = saved; }
+  assert.ok(queries.some((q) => q.numeroOab === '14271'), 'busca pela OAB');
+  assert.ok(queries.some((q) => q.nomeAdvogado === 'RAFAEL CORREA'), 'busca pelo nome (1º e último)');
+  assert.ok(queries.some((q) => q.nomeAdvogado === 'RAFAEL A. B. CORREA'), 'busca pela grafia cadastrada');
+  const all = await c.call('intimations:list', {});
+  const found = all.filter((i) => i.process_number === '0000777-12.2026.5.23.0002');
+  assert.equal(found.length, 1, 'repetida juntada, homônimo fora');
+  const it = found[0];
+  assert.equal(it.found_by, 'nome', 'marcada como achada pelo nome (OAB errada)');
+  assert.equal(it.dups, 1);
+  assert.equal(it.priority, 'alta');
+  assert.ok(it.dates.published > it.dates.available && it.dates.start > it.dates.published);
+  assert.match(it.consulta, /trt23/);
+  const sug = await c.call('intimations:suggest', it.id);
+  assert.equal(sug.days, 8, 'sentença trabalhista: 8 dias');
+  assert.ok(sug.dates.due > sug.dates.start);
+  const calc = await c.call('intimations:calc', it.id, 5, { corridos: true });
+  assert.ok(calc.due > calc.start);
+  // esquecida: o prazo já começou e ninguém criou → aviso para o sócio (uma vez)
+  db.run('UPDATE intimations SET date = ? WHERE id = ?', Date.now() - 6 * 864e5, it.id);
+  const got = [];
+  const listen = (ch, data, to) => { if (ch === 'notify' && data.kind === 'intimation-late') got.push({ data, to }); };
+  srv.core.events.on('event', listen);
+  const realHours = Date.prototype.getHours;
+  Date.prototype.getHours = function () { return 10; }; // horário comercial
+  try {
+    srv.core.runChecks();
+    srv.core.runChecks();
+  } finally { Date.prototype.getHours = realHours; srv.core.events.off('event', listen); }
+  assert.ok(got.some((g) => g.to.user === me.id && /sem prazo criado/.test(g.data.title)), 'sócio avisado');
+  assert.equal(got.filter((g) => g.to.user === me.id).length, 1, 'avisa uma vez só');
 });
 
 test('cadastro: sugere a conversa do WhatsApp, salva o contato (opção), pasta vai e volta do arquivo morto', async () => {

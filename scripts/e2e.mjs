@@ -794,7 +794,16 @@ try {
   await page.click('.view-legal button:has-text("Buscar agora")');
   await page.waitForSelector('.intim.intim-nova', { timeout: 15000 });
   check(await page.locator('.intim.intim-nova').count() >= 2, 'intimações do DJEN para conferir');
+  await page.waitForSelector('.intim:has-text("0000456-12.2026.5.23.0002") .intim-warn:has-text("Achada pelo nome")');
+  check(true, 'busca pelo nome acha publicação com o nome digitado errado e a OAB errada');
+  check(await page.locator('.intim .intim-dates:has-text("Publicada")').count() >= 2, 'mostra disponibilização, publicação e início do prazo');
   await shot(page, '05k-intimacoes');
+  await page.locator('.intim', { hasText: '0000456-12.2026.5.23.0002' }).locator('button:has-text("Criar prazo")').click();
+  await page.waitForSelector('.modal .intim-suggest:has-text("recurso ordinário em 8 dias")');
+  check(await page.locator('.modal .field:has-text("Prazo") input').inputValue() === '8', 'prazo sugerido pelo ato (sentença trabalhista: 8 dias)');
+  check(await page.locator('.modal .intim-dates:has-text("Vence")').count() === 1, 'janela do prazo mostra as quatro datas');
+  await shot(page, '05k-prazo-sugerido');
+  await page.click('.modal button:has-text("Cancelar")');
   await page.locator('.notify-who select').selectOption('all');
   await page.waitForFunction(() => document.querySelector('.notify-who select')?.value === 'all');
   check(await page.evaluate(() => window.api.call('settings:get').then((s) => s.courtsNotifyAll === true)), 'intimações: opção de avisar toda a equipe');

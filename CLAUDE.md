@@ -84,7 +84,7 @@ Motor (`src/main`, sem Electron apesar do nome da pasta):
   `payments`, `case_docs`, `users`, `sessions`, `doc_index`, `clients`,
   `case_parties`, `case_moves`, `case_steps`, `case_checklist`, `oabs`,
   `intimations`, `expenses`, `incomes`, `leads`, `lead_contacts`, `push_subs`, `case_hints`, `doc_recent`, `doc_ocr`, `case_phases`, `doc_tree` (migrações por versão em
-  `migrate()`; `meta.schema` guarda a versão atual — v22).
+  `migrate()`; `meta.schema` guarda a versão atual — v23).
 - `docs.js` — `DocsService`: pasta "BARROS ADVOGADOS" do escritório, sempre
   por caminho relativo (`clients.folder`, `cases.folder`, conferido por
   `safeRel` — sem `..`), sobre um **armazenamento** (`storage.js`):
@@ -168,7 +168,28 @@ Motor (`src/main`, sem Electron apesar do nome da pasta):
   `deadlineFromAvailability` = publicação no dia útil seguinte à
   disponibilização + N dias úteis (feriados nacionais, Carnaval, Sexta Santa,
   Corpus Christi, recesso 20/12–20/01; locais não — a tela pede para conferir);
-  `nameCase` (nomes do DJEN vêm em maiúsculas). **O ambiente de
+  `nameCase` (nomes do DJEN vêm em maiúsculas).
+  **Busca pelo nome** (v23): além da OAB, `checkIntimations` busca `nomeAdvogado`
+  com `nameVariants(oabs.name, oabs.aliases)` (sem acento, 1º+último, grafias
+  cadastradas, erros comuns rr/r, ss/s, z/s, y/i, ph/f; ≤ 6 por OAB, 1 s entre
+  consultas) e só aceita se `nameMatches` (1º nome rígido, sobrenome com 1–2
+  letras de diferença "pelo som") — OAB publicada diferente → `found_by='nome'`
+  (faixa "Achada pelo nome — confira"). O DJEN não busca por CPF. **Repetidas**:
+  `dup_key` (processo + dia + texto) → `status='repetida'`, `dup_of`, contagem
+  `dups`. **Prazo sugerido** (`suggestDeadline`: "prazo de N (extenso) dias",
+  horas, ou pelo ato — sentença 15 / trabalhista 8 / juizado 10 / criminal em
+  dias corridos (`isCriminal`), citação 15, embargos 5, sem nada 5 (CPC 218 §3º);
+  audiência = `event`, vai para a agenda) e `deadlineDates` (disponibilizada →
+  publicada → começa → vence; só feriados nacionais + recesso, por escolha do
+  escritório) em `intimations:suggest/calc`. `intimationPriority` (alta | normal |
+  rotina — rotina recolhida com "Conferir todas"), `consultaUrl(tribunal)` (botão
+  que copia o nº e abre a consulta; "Inteiro teor" = `link` do DJEN).
+  **Intimação esquecida** (`checkForgottenIntimations`, 8h–20h): ainda "para
+  conferir" quando o prazo já começou → aviso `intimation-late` ao responsável (ou
+  dono da OAB) e aos sócios, uma vez (`alerted_at`). **DJEN fora** (`djenHealth`):
+  falhando há > 12 h → aviso a todos (`force`) e faixa na tela; avisa quando volta.
+  DataJud: fases quentes (`HOT_PHASES`: audiência … cumprimento) a cada 2 h, as
+  outras a cada 8 h; `cases.datajud_updated_at` = "dados do tribunal atualizados até". **O ambiente de
   desenvolvimento na nuvem não alcança esses hosts** (proxy): testes usam
   respostas no formato real (`test/courts.test.js`) e o demo usa
   `demoCourtsFetch` (`demo.js`). No servidor (`core.js`): `checkIntimations`
