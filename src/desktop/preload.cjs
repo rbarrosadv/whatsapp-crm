@@ -19,6 +19,8 @@ contextBridge.exposeInMainWorld('desktop', {
   getSetting: (key) => call('getSetting', key),
   setSetting: (key, value) => call('setSetting', key, value),
   openNotificationSettings: () => call('openNotificationSettings'),
+  // busca nos tribunais por este computador (Plano B, só endereços do CNJ)
+  courtFetch: (req) => call('courtFetch', req),
   // certificado digital A3 (token/cartão) deste computador
   certs: {
     list: () => call('certs:list'),

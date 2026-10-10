@@ -30,7 +30,7 @@ export function mountSettings(el) {
 // configurações que valem para o escritório todo (só sócio muda)
 const OFFICE_KEYS = ['courtsNotifyAll', 'sendReadReceipts', 'forgottenHours', 'chargeTemplate', 'pixKey', 'paymentNoticeDays',
   'staleCaseDays', 'googleSync', 'googleCalendarId', 'signMessages', 'docsRequestTemplate', 'datajudKey',
-  'officeName', 'officeDoc', 'officeAddress', 'officeCity', 'idleCaseDays', 'prescriptionYears', 'clientUpdateTemplate', 'waSaveContacts', 'docsOcr', 'phaseConfig'];
+  'officeName', 'officeDoc', 'officeAddress', 'officeCity', 'idleCaseDays', 'prescriptionYears', 'clientUpdateTemplate', 'waSaveContacts', 'docsOcr', 'phaseConfig', 'internalDays', 'secretCheckDays', 'monthlySummaryTemplate'];
 
 function toggle(key, label, hint, def = true) {
   const val = state.settings[key] ?? def;
@@ -483,7 +483,22 @@ function render() {
             placeholder: 'Olá, {nome}! Passando para dar notícia do seu processo{assunto}: {andamento}',
             onchange: (e) => setSetting('clientUpdateTemplate', e.target.value.trim() || null).catch(errToast),
           }, state.settings.clientUpdateTemplate || '')),
-        h('p', { class: 'muted small' }, 'Campos: {nome} {nome_completo} {processo} {assunto} {andamento} {data}. O {andamento} já vem explicado em linguagem simples (ex.: "saiu a sentença do processo…"); você sempre revisa antes de enviar.')),
+        h('p', { class: 'muted small' }, 'Campos: {nome} {nome_completo} {processo} {assunto} {andamento} {data}. O {andamento} já vem explicado em linguagem simples (ex.: "saiu a sentença do processo…"); você sempre revisa antes de enviar.'),
+        h('label', { class: 'toggle-row' }, h('div', null, h('div', null, 'Prazo interno'), h('div', { class: 'muted small' }, 'Quantos dias úteis antes do prazo fatal a peça deve estar pronta (vira o "interno" de cada prazo e tem aviso próprio).')),
+          h('select', { class: 'input select-sm', disabled: !state.can.admin, onchange: (e) => setSetting('internalDays', Number(e.target.value)).catch(errToast) },
+            [[0, 'Sem prazo interno'], [1, '1 dia útil antes'], [2, '2 dias úteis antes'], [3, '3 dias úteis antes'], [5, '5 dias úteis antes']].map(([v, l]) =>
+              h('option', { value: v, selected: Number(state.settings.internalDays ?? 2) === v }, l)))),
+        h('label', { class: 'toggle-row' }, h('div', null, h('div', null, 'Segredo de justiça: conferir no site do tribunal'), h('div', { class: 'muted small' }, 'Padrão para os processos marcados como sigilosos (cada processo pode ter o seu).')),
+          h('select', { class: 'input select-sm', disabled: !state.can.admin, onchange: (e) => setSetting('secretCheckDays', Number(e.target.value)).catch(errToast) },
+            [[7, 'A cada 7 dias'], [15, 'A cada 15 dias'], [30, 'A cada 30 dias']].map(([v, l]) =>
+              h('option', { value: v, selected: Number(state.settings.secretCheckDays ?? 15) === v }, l)))),
+        h('label', { class: 'field' }, h('span', null, 'Resumo do mês para o cliente'),
+          h('textarea', {
+            class: 'input', rows: 4, disabled: !state.can.admin,
+            placeholder: 'Olá, {nome}! Segue o resumo de {mes} dos seus processos com o escritório:\n\n{processos}\n\nQualquer dúvida, estamos à disposição.',
+            onchange: (e) => setSetting('monthlySummaryTemplate', e.target.value.trim() || null).catch(errToast),
+          }, state.settings.monthlySummaryTemplate || '')),
+        h('p', { class: 'muted small' }, 'Campos: {nome} {nome_completo} {mes} {processos}. Do dia 1 ao 10 o Hoje lista os clientes para enviar; também na ficha do cliente (menu ⋮).')),
 
       state.can.configure && section('Funis e etapas',
         h('p', { class: 'muted small' }, 'Cada funil tem suas etapas (colunas do quadro). Ex.: Atendimento → Novo, Proposta, Fechado.'),

@@ -99,7 +99,11 @@ export async function caseDetail(el, caseId, opts = {}) {
     actions.length ? h('div', { class: 'row wrap' }, actions) : null);
   const nextBox = next
     ? box(daysTo(next.due_at) <= 3 ? 'red' : '', 'Próximo compromisso', next.title, `${fmtDateTime(next.due_at)} · ${dueText(next.due_at)}${next.assignee_name ? ` · ${first(next.assignee_name)}` : ''}`,
-      h('button', { class: 'btn btn-sm btn-primary', onclick: () => api('tasks:save', { id: next.id, done: true }).then(() => { toast('Concluído', 'success'); redraw(); }).catch(errToast) }, 'Concluir'))
+      h('button', {
+        class: 'btn btn-sm btn-primary',
+        onclick: () => (next.kind === 'prazo' ? import('./crmpanel.js').then((x) => x.completeDialog({ ...next, case_id: next.case_id || caseId }, redraw))
+          : api('tasks:save', { id: next.id, done: true }).then(() => { toast('Concluído', 'success'); redraw(); }).catch(errToast)),
+      }, 'Concluir'))
     : box('', 'Próximo compromisso', closed ? 'Processo encerrado' : 'Nenhum prazo aberto', null,
       closed ? null : h('button', { class: 'btn btn-sm', onclick: () => import('./crmpanel.js').then((x) => x.taskDialog({ jid: k.jid, case_id: k.id, kind: 'prazo' })) }, 'Criar prazo'));
   let novBox;

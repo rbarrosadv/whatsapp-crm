@@ -249,6 +249,25 @@ export async function openCase(id, { tab = 'geral' } = {}) {
       h('p', { class: 'muted small' }, `Aberto em ${fmtDateTime(k.created_at)}. As alterações são salvas sozinhas.`));
   }
 
+  /** Segredo de justiça: o DataJud não mostra — lembrete de conferir no site do tribunal. */
+  function secretBlock() {
+    if (k.kind === 'inss' || k.kind === 'consultivo') return null;
+    const notFound = /não encontrado/i.test(k.datajud_error || '');
+    const days = h('select', {
+      class: 'input select-sm',
+      onchange: (e) => api('cases:save', { id, secret_check_days: e.target.value }).then(reload).catch(errToast),
+    }, [[7, 'a cada 7 dias'], [15, 'a cada 15 dias'], [30, 'a cada 30 dias'], [0, 'sem lembrete']].map(([v, l]) => h('option', { value: v, selected: Number(k.secret_check_days ?? 15) === v }, l)));
+    return h('div', { class: `secret-box ${k.secret ? 'on' : ''}` },
+      h('label', { class: 'check' },
+        h('input', { type: 'checkbox', checked: !!k.secret, onchange: (e) => api('cases:save', { id, secret: e.target.checked }).then(reload).catch(errToast) }),
+        ' Segredo de justiça (não aparece no DataJud)'),
+      k.secret ? [
+        h('span', { class: 'small' }, 'Conferir no site do tribunal '), days,
+        h('button', { class: 'btn btn-sm', onclick: () => api('cases:secretChecked', id).then(() => { toast('Conferência registrada', 'success'); reload(); }).catch(errToast) }, [icon('check', 15), 'Conferi hoje']),
+        h('span', { class: 'muted small' }, k.secret_checked_at ? `conferido em ${new Date(k.secret_checked_at).toLocaleDateString('pt-BR')}` : 'ainda não conferido'),
+      ] : notFound ? h('span', { class: 'warn-text small' }, 'Não encontrado no DataJud: se o processo for sigiloso, marque aqui para o sistema lembrar de conferir no tribunal.') : null);
+  }
+
   /** INSS: benefício, situação (exigência → prazo de 30 dias), conferência no Meu INSS. */
   function inssBlock() {
     const save = (field) => (e) => api('cases:save', { id, [field]: e.target.value }).catch(errToast);
@@ -423,7 +442,8 @@ export async function openCase(id, { tab = 'geral' } = {}) {
           h('span', { class: `small ${k.datajud_error ? 'bad-text' : 'muted'}` },
             k.datajud_checked_at ? `Consultado em ${fmtDateTime(k.datajud_checked_at)}${k.datajud_error ? ` — ${k.datajud_error}` : ''}` : 'Andamentos do DataJud e intimações do DJEN entram aqui sozinhos.'),
           k.datajud_updated_at ? h('span', { class: 'small datajud-fresh', title: 'O DataJud recebe os dados dos tribunais com atraso; o que aconteceu depois desta data pode ainda não aparecer aqui' },
-            `Dados do tribunal atualizados até ${fmtDateTime(k.datajud_updated_at)}`) : null)),
+            `Dados do tribunal atualizados até ${fmtDateTime(k.datajud_updated_at)}`) : null),
+        secretBlock()),
       full.moves.length ? h('div', { class: 'timeline' }, full.moves.map((mv) => h('div', { class: `tl-item src-${mv.source}` },
         h('div', { class: 'tl-date' }, new Date(mv.ts).toLocaleDateString('pt-BR')),
         h('div', { class: 'grow' }, h('div', { class: 'tl-text' }, mv.text),

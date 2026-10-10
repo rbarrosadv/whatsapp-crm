@@ -12,6 +12,7 @@ let showDone = false;
 let kind = '';
 let who = 'all'; // all | me | <id>
 let team = [];
+let showLoad = false;
 
 export function mountTasks(el) {
   root = el;
@@ -60,9 +61,28 @@ async function render() {
           h('option', { value: 'me', selected: who === 'me' }, 'Só os meus'),
           team.filter((u) => u.id !== state.me?.id).map((u) => h('option', { value: String(u.id), selected: who === String(u.id) }, u.name))),
         h('label', { class: 'check' }, h('input', { type: 'checkbox', checked: showDone, onchange: (e) => { showDone = e.target.checked; render(); } }), ' Concluídos'),
+        h('button', { class: `btn ${showLoad ? 'active' : ''}`, title: 'Prazos de cada pessoa: atrasados, esta semana, próxima, 30 dias', onclick: () => { showLoad = !showLoad; render(); } }, [icon('users', 15), 'Carga por pessoa']),
         h('button', { class: 'btn btn-primary', onclick: () => taskDialog({ kind: kind || undefined }) }, [icon('plus', 15), 'Novo']))),
+    showLoad ? await loadPanel() : null,
     tasks.length ? h('div', { class: 'task-groups' }, groups.filter(([, l]) => l.length).map(([title, list]) =>
       h('div', { class: 'task-group' }, h('h3', null, `${title} (${list.length})`), list.map((t) => taskRow(t, { showChat: true })))))
       : emptyState(icon('check', 16), 'Nada por aqui', 'Prazos, audiências, reuniões e tarefas aparecem aqui e no calendário. Cada um com responsável e aviso na hora.'),
   );
+}
+
+/** Carga de prazos por pessoa (clicar no nome filtra a lista pelos prazos dela). */
+async function loadPanel() {
+  const d = new Date(); d.setHours(0, 0, 0, 0); d.setDate(d.getDate() - ((d.getDay() + 6) % 7));
+  const rows = await api('tasks:load', { weekStart: d.getTime() }).catch(() => []);
+  const max = Math.max(1, ...rows.map((r) => r.week + r.next));
+  const cell = (n, cls = '') => h('td', { class: `num ${n && cls ? cls : ''}` }, n || '—');
+  return h('div', { class: 'panel load-panel' },
+    h('div', { class: 'panel-head' }, h('h3', null, 'Carga de prazos por pessoa'),
+      h('span', { class: 'muted small' }, 'Prazos em aberto (audiências à parte). Clique no nome para ver os prazos dela.')),
+    h('div', { class: 'table-wrap' }, h('table', { class: 'table' },
+      h('thead', null, h('tr', null, ['Pessoa', 'Atrasados', 'Esta semana', 'Próxima semana', 'Próximos 30 dias', 'Audiências (30 dias)', ''].map((t) => h('th', null, t)))),
+      h('tbody', null, rows.map((r) => h('tr', null,
+        h('td', null, r.id ? h('a', { href: '#', onclick: (e) => { e.preventDefault(); who = r.id === state.me?.id ? 'me' : String(r.id); kind = 'prazo'; showLoad = false; render(); } }, r.name) : h('span', { class: 'warn-text' }, r.name)),
+        cell(r.late, 'bad-text'), cell(r.week), cell(r.next), cell(r.month), cell(r.hearings),
+        h('td', { class: 'load-bar-cell' }, h('div', { class: 'load-bar' }, h('span', { style: { width: `${Math.round(((r.week + r.next) / max) * 100)}%` } })))))))));
 }

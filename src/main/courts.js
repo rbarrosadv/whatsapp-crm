@@ -91,6 +91,23 @@ export function nextCourtDay(d, opts) {
   return x;
 }
 
+/** `n` dias úteis antes de `ts` (prazo interno). */
+export function courtDaysBefore(ts, n) {
+  const d = new Date(ts);
+  for (let k = 0; k < n;) { d.setDate(d.getDate() - 1); if (isCourtDay(d)) k++; }
+  return d;
+}
+
+/** Quantos dias úteis faltam até `ts` (0 = hoje; -1 = já passou o dia). */
+export function courtDaysUntil(ts, from = Date.now()) {
+  const a = new Date(from); a.setHours(0, 0, 0, 0);
+  const b = new Date(ts); b.setHours(0, 0, 0, 0);
+  if (b < a) return -1;
+  let n = 0;
+  for (const d = new Date(a); d < b;) { d.setDate(d.getDate() + 1); if (isCourtDay(d)) n++; }
+  return n;
+}
+
 /**
  * Prazo de uma intimação do DJEN: considera-se publicada no 1º dia útil após a
  * disponibilização, e o prazo começa no 1º dia útil seguinte à publicação
@@ -279,6 +296,20 @@ export function nameMatches(target, published, extra = []) {
   return false;
 }
 
+/**
+ * A parte publicada é este cliente? Empresa: o nome sem "LTDA", "S/A", "ME"…
+ * igual; pessoa: como `nameMatches`.
+ */
+export function partyMatches(clientName, partyName) {
+  const strip = (s) => foldText(s).replace(/[^a-z0-9 ]/g, ' ')
+    .replace(/\b(ltda|limitada|s ?a|sa|me|epp|eireli|cia|companhia|e cia|ss|s s)\b/g, ' ').replace(/\s+/g, ' ').trim();
+  const a = strip(clientName);
+  const b = strip(partyName);
+  if (!a || !b) return false;
+  if (a === b) return true;
+  return nameMatches(clientName, partyName);
+}
+
 // ------------------------------------------------------------ consulta no site do tribunal
 
 /** Página de consulta processual do tribunal (o nº é copiado para colar). */
@@ -413,6 +444,11 @@ export class CourtsService {
   /** Intimações de uma OAB num período. */
   djenByOab({ number, uf, from, to, maxPages = 10 }) {
     return this.djenSearch({ numeroOab: cnjDigits(number), ufOab: String(uf || '').toUpperCase() }, { from, to, maxPages });
+  }
+
+  /** Publicações em que a pessoa/empresa é parte (vigiar clientes). */
+  djenByParty({ name, from, to, maxPages = 2 }) {
+    return this.djenSearch({ nomeParte: name }, { from, to, maxPages });
   }
 
   /** Intimações pelo nome do advogado (pega publicação com a OAB errada ou sem OAB). */

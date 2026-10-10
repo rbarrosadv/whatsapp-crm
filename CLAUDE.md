@@ -84,7 +84,7 @@ Motor (`src/main`, sem Electron apesar do nome da pasta):
   `payments`, `case_docs`, `users`, `sessions`, `doc_index`, `clients`,
   `case_parties`, `case_moves`, `case_steps`, `case_checklist`, `oabs`,
   `intimations`, `expenses`, `incomes`, `leads`, `lead_contacts`, `push_subs`, `case_hints`, `doc_recent`, `doc_ocr`, `case_phases`, `doc_tree` (migrações por versão em
-  `migrate()`; `meta.schema` guarda a versão atual — v23).
+  `migrate()`; `meta.schema` guarda a versão atual — v24).
 - `docs.js` — `DocsService`: pasta "BARROS ADVOGADOS" do escritório, sempre
   por caminho relativo (`clients.folder`, `cases.folder`, conferido por
   `safeRel` — sem `..`), sobre um **armazenamento** (`storage.js`):
@@ -189,7 +189,36 @@ Motor (`src/main`, sem Electron apesar do nome da pasta):
   dono da OAB) e aos sócios, uma vez (`alerted_at`). **DJEN fora** (`djenHealth`):
   falhando há > 12 h → aviso a todos (`force`) e faixa na tela; avisa quando volta.
   DataJud: fases quentes (`HOT_PHASES`: audiência … cumprimento) a cada 2 h, as
-  outras a cada 8 h; `cases.datajud_updated_at` = "dados do tribunal atualizados até". **O ambiente de
+  outras a cada 8 h; `cases.datajud_updated_at` = "dados do tribunal atualizados até".
+  **Prazos (v24)**: `tasks.internal_at` = prazo interno (`setInternal`, N dias úteis
+  antes — `internalDays`, padrão 2 — às 18h; `courtDaysBefore`); `checkDeadlines`
+  (7h–21h) avisa por níveis em `tasks.warn_level`: 1 = 3 dias úteis antes, 2 = dia do
+  interno, 3 = véspera, 4 = no dia, 5 = vencido sem conclusão (também aos sócios);
+  remarcar zera. Prazos não usam o lembrete comum (`dueTasksToNotify` exclui). Concluir
+  prazo de processo abre `completeDialog` (crmpanel) → `tasks:complete(id, {tokens,
+  note})`: arquivo vai para os documentos/pasta do processo (`cases:addFiles`) e
+  `tasks.proof` guarda arquivos, observação, quem e quando. **Plano B** (`relay` no
+  core): `courtsFetch` tenta direto; 401/403/erro com app de desktop aberto →
+  `relay:fetch` para a janela registrada (`relay:register`, `js/relay.js`), que busca
+  pelo `desktop.courtFetch` (main.js: só https em comunicaapi.pje.jus.br e
+  api-publica.datajud.cnj.jus.br) e devolve em `relay:done`; após uma recusa vai pelo
+  app por 24 h (`relay:status`, faixa na tela de Intimações). **Segredo de justiça**:
+  `cases.secret` (DataJud não consulta), `secret_check_days` (padrão `secretCheckDays`
+  15), `cases:secretChecked`, lista no Hoje (`today:summary.secrets`). **Vigiar
+  clientes**: `clients.djen_watch` (null = empresa sim, pessoa não; menu ⋮ da ficha,
+  `clients:watch`) → `checkIntimations` busca `nomeParte` (`djenByParty`, ≤ 2 páginas,
+  1 s entre clientes), `partyMatches` (sem LTDA/S.A./ME…), só processo que o escritório
+  não conhece (`processKnown`) → intimação `status='cliente'` com `client_id` (fora de
+  "Processos encontrados"; painel próprio com Cadastrar/Ignorar) e aviso
+  `client-watch`. **Pauta de julgamento**: `sessionFromText` (importer.js) → sugestão
+  "Pôr na agenda"; `hints:hearing` de sessão também cria a tarefa "Pedir sustentação
+  oral" (virtual 2 dias úteis antes, presencial 1). Andamento manual também gera
+  sugestão de agenda (`agendaOnly`). **Carga por pessoa**: `tasks:load` (atrasados,
+  semana, próxima, 30 dias, audiências) na Agenda em lista. **Resumo do mês**:
+  `monthlySummaryText` (mês anterior: fase + andamentos sem rotina + próxima audiência,
+  modelo `monthlySummaryTemplate` com `{nome}` `{mes}` `{processos}`),
+  `clients:monthlySummary/sendSummary` (WhatsApp ou copiar; `clients.summary_sent_at`),
+  Hoje do dia 1 ao 10 (`today:summary.monthly`) e ficha do cliente (⋮); `views/summary.js`. **O ambiente de
   desenvolvimento na nuvem não alcança esses hosts** (proxy): testes usam
   respostas no formato real (`test/courts.test.js`) e o demo usa
   `demoCourtsFetch` (`demo.js`). No servidor (`core.js`): `checkIntimations`

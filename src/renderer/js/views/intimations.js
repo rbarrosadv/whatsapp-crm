@@ -16,11 +16,13 @@ export async function renderIntimations(el, redraw) {
   let st;
   let list;
   let unknown;
+  let watched;
   try {
-    [st, list, unknown] = await Promise.all([
+    [st, list, unknown, watched] = await Promise.all([
       api('intimations:status'),
       api('intimations:list', filter === 'todas' ? {} : { status: filter }),
       api('courts:unknown'),
+      api('intimations:list', { status: 'cliente' }),
     ]);
   } catch (e) { errToast(e); return; }
   const canEdit = state.me?.role !== 'estagiario';
@@ -45,6 +47,7 @@ export async function renderIntimations(el, redraw) {
       h('button', { class: 'btn btn-sm', onclick: () => openExternal('https://comunica.pje.jus.br/') }, 'Abrir o DJEN')) : null,
     oabPanel(st, canEdit, redraw),
     st.oabs.some((o) => o.active) ? historyPanel(st.history, redraw) : null,
+    watched.length ? watchPanel(watched, redraw) : null,
     unknown.length ? unknownPanel(unknown, redraw) : null,
     h('div', { class: 'row wrap intim-tools' },
       st.oabs.length > 1 ? h('div', { class: 'segmented' },
@@ -100,6 +103,10 @@ function oabPanel(st, canEdit, redraw) {
           o.active ? '' : ' · pausado')),
       canEdit && (state.can.admin || !o.user_id || o.user_id === state.me?.id) ? h('button', { class: 'btn btn-sm', onclick: () => oabDialog(o, redraw) }, 'Editar') : null)))
       : h('p', { class: 'muted' }, 'Cadastre a OAB de cada advogado(a) do escritório. O sistema busca as intimações publicadas no DJEN em nome de cada um.'),
+    st.relay ? h('div', { class: `small ${st.relay.viaApp ? 'warn-text' : 'muted'}`, title: st.relay.lastDirectError ? `Último erro do servidor: ${st.relay.lastDirectError}` : '' },
+      st.relay.viaApp ? `O tribunal recusou o servidor: as buscas estão indo pelo app do escritório (${st.relay.apps.join(', ') || 'nenhum aberto agora'}).`
+        : st.relay.apps.length ? `Reserva: se o tribunal recusar o servidor, o app aberto em ${st.relay.apps.length} computador(es) faz a busca.`
+          : 'Reserva: abra o app de desktop no escritório para ele buscar se o tribunal recusar o servidor.') : null,
     h('div', { class: 'row wrap notify-who' },
       h('span', { class: 'small' }, 'Quem recebe o aviso das intimações:'),
       h('select', {
@@ -192,9 +199,25 @@ function unknownPanel(list, redraw) {
       h('button', { class: 'btn btn-sm', title: 'Não é do escritório / não acompanhar', onclick: async () => { await api('courts:ignore', p.process_digits).catch(errToast); redraw(); } }, 'Ignorar'))));
 }
 
+// ------------------------------------------------------------ clientes vigiados
+
+function watchPanel(list, redraw) {
+  return h('div', { class: 'panel watch-panel' },
+    h('div', { class: 'panel-head' }, h('h3', null, `Clientes em ${list.length} processo(s) que o escritório não acompanha`)),
+    h('p', { class: 'muted small' }, 'O sistema procura no DJEN os clientes vigiados (empresas, por padrão; mude na ficha do cliente, menu ⋮). Pode ser uma ação nova contra o cliente, antes da citação.'),
+    list.map((i) => h('div', { class: 'unknown-row' },
+      h('div', { class: 'grow' },
+        h('div', null, h('b', { class: 'mono' }, i.process_number), h('span', { class: 'muted small' }, ` · ${i.tribunal || ''} · ${i.classe || ''} · ${day(i.date)}`)),
+        h('div', { class: 'small' }, i.parties.map((x) => `${x.name}${x.polo === 'A' ? ' (autor)' : x.polo === 'P' ? ' (réu)' : ''}`).join(' × ') || '—'),
+        h('div', { class: 'muted small intim-text' }, i.text)),
+      h('button', { class: 'btn btn-sm btn-primary', onclick: () => importDialog({ ...i, last: i.date }, redraw) }, 'Cadastrar'),
+      h('button', { class: 'btn btn-sm', onclick: () => openExternal(i.consulta) }, 'Ver no tribunal'),
+      h('button', { class: 'btn btn-sm', title: 'Não acompanhar', onclick: async () => { await api('intimations:set', [i.id], 'ignorada').catch(errToast); redraw(); } }, 'Ignorar'))));
+}
+
 async function importDialog(p, redraw) {
   const clients = await api('clients:list', {}).catch(() => []);
-  let chosen = null; // { id } ou { name }
+  let chosen = p.client_id ? { id: p.client_id } : null; // { id } ou { name }
   const box = h('div', { class: 'picker-list short' });
   const search = h('input', { class: 'input', type: 'search', placeholder: 'Procurar cliente já cadastrado…' });
   const role = h('select', { class: 'input' }, h('option', { value: 'autor' }, 'Autor / requerente'), h('option', { value: 'reu' }, 'Réu / requerido'), h('option', { value: '' }, 'Outro'));

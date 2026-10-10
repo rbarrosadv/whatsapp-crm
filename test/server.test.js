@@ -1042,6 +1042,117 @@ test('intimações: busca pelo nome acha publicação com OAB errada, junta repe
   assert.equal(got.filter((g) => g.to.user === me.id).length, 1, 'avisa uma vez só');
 });
 
+test('prazos: interno e avisos escalonados, comprovante; plano B pelo app; segredo de justiça; vigiar clientes; pauta; carga; resumo do mês', async () => {
+  const c = client();
+  await c.req('/auth/login', { body: { login: 'barros', password: 'segredo1' } });
+  const me = (await c.call('bootstrap')).me;
+  const cid = await c.call('clients:save', { name: 'Empresa Vigiada Ltda', kind: 'pj' });
+  const caseId = await c.call('cases:save', { client_id: cid, title: 'Cobrança', responsible_id: me.id });
+  await c.call('cases:save', { id: caseId, process_number: '1005555-11.2026.8.11.0041' });
+  const realHours = Date.prototype.getHours;
+  Date.prototype.getHours = function () { return 10; };
+  const got = [];
+  const listen = (ch, data, to) => { if (ch === 'notify') got.push({ data, to }); };
+  srv.core.events.on('event', listen);
+  try {
+    // 1) prazo fatal em 2 dias úteis → interno calculado; aviso "em 3 dias úteis"/interno; vencido avisa sócio
+    const { addBusinessDays } = await import('../src/main/workflow.js');
+    const due = addBusinessDays(Date.now(), 5);
+    const tid = await c.call('tasks:save', { case_id: caseId, kind: 'prazo', title: 'Contestação', due_at: due });
+    let t = (await c.call('tasks:list', { caseId })).find((x) => x.id === tid);
+    assert.ok(t.internal_at && t.internal_at < due, 'prazo interno antes do fatal');
+    db.run('UPDATE tasks SET due_at = ?, warn_level = 0 WHERE id = ?', Date.now() - 3600e3, tid);
+    srv.core.runChecks();
+    const late = got.filter((g) => g.data.kind === 'deadline' && /vencido sem conclusão/.test(g.data.title));
+    assert.ok(late.some((g) => g.to.user === me.id), 'vencido avisa o sócio');
+    const n = got.length;
+    srv.core.runChecks();
+    assert.equal(got.filter((g) => g.data.kind === 'deadline').length, got.slice(0, n).filter((g) => g.data.kind === 'deadline').length, 'não repete');
+    // 2) concluir com comprovante: vai para os documentos do processo
+    const up = await c.req('/upload', { raw: Buffer.from('%PDF-1.4 protocolo'), headers: { 'X-File-Name': 'protocolo.pdf' } });
+    const token = up.json.token;
+    await c.call('tasks:complete', tid, { tokens: [token], note: 'protocolado no PJe' });
+    t = (await c.call('tasks:list', { caseId, includeDone: true })).find((x) => x.id === tid);
+    assert.equal(t.done, 1);
+    assert.deepEqual(JSON.parse(t.proof).files, ['protocolo.pdf']);
+    assert.ok(db.listCaseDocs(caseId).some((d) => d.name === 'protocolo.pdf'), 'comprovante nos documentos');
+
+    // 3) plano B: o tribunal recusa o servidor (403) → o app do escritório busca
+    const conn = 'app-escritorio-1';
+    await srv.core.call('relay:register', [], { user: me, conn });
+    srv.core.relay.direct = async () => new Response('forbidden', { status: 403 });
+    const relayed = [];
+    const answer = (ch, data, to) => {
+      if (ch !== 'relay:fetch' || to?.conn !== conn) return;
+      relayed.push(data.url);
+      setTimeout(() => srv.core.call('relay:done', [data.id, { status: 200, body: JSON.stringify({ count: 0, items: [] }), contentType: 'application/json' }], { user: me, conn }), 5);
+    };
+    srv.core.events.on('event', answer);
+    try {
+      const r = await srv.core.courtsFetch('https://comunicaapi.pje.jus.br/api/v1/comunicacao?numeroOab=1&ufOab=MT');
+      assert.equal(r.status, 200);
+      assert.deepEqual(await r.json(), { count: 0, items: [] });
+      assert.equal(relayed.length, 1, 'pediu ao app');
+      assert.equal((await c.call('relay:status')).viaApp, true, 'passa a ir pelo app');
+    } finally { srv.core.events.off('event', answer); srv.core.relay.direct = null; srv.core.dropConn(conn); srv.core.relay.preferUntil = 0; }
+
+    // 4) segredo de justiça: não consulta o DataJud e aparece no Hoje para conferir
+    await c.call('cases:save', { id: caseId, secret: true, secret_check_days: 7 });
+    db.run('UPDATE cases SET created_at = ?, secret_checked_at = NULL WHERE id = ?', Date.now() - 10 * 864e5, caseId);
+    const range = { dayStart: Date.now() - 864e5, dayEnd: Date.now() + 864e5, weekStart: Date.now() - 864e5, weekEnd: Date.now() + 7 * 864e5, scope: 'all' };
+    assert.ok((await c.call('today:summary', range)).secrets.some((x) => x.id === caseId), 'segredo no Hoje');
+    await c.call('cases:secretChecked', caseId);
+    assert.ok(!(await c.call('today:summary', range)).secrets.some((x) => x.id === caseId), 'conferido sai da lista');
+
+    // 5) vigiar clientes: empresa aparece em processo que o escritório não acompanha
+    const saved = srv.core.courts.fetch;
+    const day = new Date(Date.now() - 864e5).toISOString().slice(0, 10);
+    srv.core.courts.fetch = async (url) => {
+      const u = new URL(url);
+      const items = u.searchParams.get('pagina') === '1' && u.searchParams.get('nomeParte') === 'EMPRESA VIGIADA LTDA' ? [{
+        id: 'vig-1', data_disponibilizacao: day, siglaTribunal: 'TJMT', tipoComunicacao: 'Citação', tipoDocumento: 'Despacho', nomeOrgao: '4ª Vara',
+        numeroprocessocommascara: '0809999-55.2026.8.11.0041', texto: 'Cite-se a requerida.',
+        destinatarios: [{ nome: 'FORNECEDOR XYZ', polo: 'A' }, { nome: 'EMPRESA VIGIADA LTDA.', polo: 'P' }], destinatarioadvogados: [],
+      }] : [];
+      return new Response(JSON.stringify({ count: items.length, items }), { status: 200, headers: { 'Content-Type': 'application/json' } });
+    };
+    try { await c.call('intimations:check', { days: 3 }); } finally { srv.core.courts.fetch = saved; }
+    const w = await c.call('intimations:list', { status: 'cliente' });
+    assert.ok(w.some((i) => i.process_number === '0809999-55.2026.8.11.0041' && i.client_id === cid), 'processo novo do cliente');
+    assert.ok(got.some((g) => g.data.kind === 'client-watch'), 'aviso de cliente em processo novo');
+    await c.call('clients:watch', cid, false);
+    assert.equal((await c.call('clients:get', cid)).djen_watch, 0);
+
+    // 6) pauta de julgamento → sugestão; pôr na agenda cria a sessão e o lembrete da sustentação oral
+    const dt = new Date(Date.now() + 40 * 864e5);
+    const ds = `${String(dt.getDate()).padStart(2, '0')}/${String(dt.getMonth() + 1).padStart(2, '0')}/${dt.getFullYear()}`;
+    await c.call('moves:add', { case_id: caseId, text: `Processo incluído em pauta da Sessão Virtual de ${ds}.`, ts: Date.now() });
+    const hint = (await c.call('cases:full', caseId)).hints.find((x) => /Sessão de julgamento/.test(x.title));
+    assert.ok(hint, 'pauta vira sugestão');
+    await c.call('hints:hearing', hint.id, {});
+    const ts = await c.call('tasks:list', { caseId });
+    assert.ok(ts.some((x) => x.kind === 'audiencia' && /Sessão de julgamento/.test(x.title)));
+    assert.ok(ts.some((x) => /sustentação oral/.test(x.title) && x.due_at < hint.ts), 'lembrete da sustentação antes da sessão');
+
+    // 7) carga de prazos por pessoa
+    await c.call('tasks:save', { case_id: caseId, kind: 'prazo', title: 'Réplica', due_at: Date.now() + 2 * 864e5, assignee_id: me.id });
+    const load = await c.call('tasks:load', { weekStart: Date.now() - 864e5 });
+    assert.ok(load.find((x) => x.id === me.id).week >= 1);
+
+    // 8) resumo do mês: rascunho com o processo; enviar por outro meio marca
+    db.run('INSERT INTO case_moves (case_id, ts, text, source, created_at) VALUES (?, ?, ?, ?, ?)', caseId, new Date(new Date().getFullYear(), new Date().getMonth() - 1, 15).getTime(), 'Sentença: julgado procedente o pedido', 'datajud', Date.now());
+    const sum = await c.call('clients:monthlySummary', cid);
+    assert.match(sum.text, /Empresa Vigiada Ltda! Segue o resumo de/);
+    assert.match(sum.text, /Cobrança \(processo 1005555-11\.2026\.8\.11\.0041\)/);
+    assert.match(sum.text, /julgado procedente/);
+    await c.call('clients:sendSummary', cid, sum.text, { via: 'copy' });
+    assert.ok((await c.call('clients:get', cid)).summary_sent_at);
+  } finally {
+    Date.prototype.getHours = realHours;
+    srv.core.events.off('event', listen);
+  }
+});
+
 test('cadastro: sugere a conversa do WhatsApp, salva o contato (opção), pasta vai e volta do arquivo morto', async () => {
   const c = client();
   await c.req('/auth/login', { body: { login: 'barros', password: 'segredo1' } });

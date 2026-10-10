@@ -2,7 +2,7 @@
 // notas e histórico.
 import {
   h, clear, fill, fmtDateTime, fmtDue, fmtMoney, fmtDuration, formatPhone, phoneOf, toLocalInput, fromLocalInput,
-  modal, errToast, toast, confirmDialog, debounce,
+  modal, errToast, toast, confirmDialog, debounce, pickFiles, uploadFiles,
 } from '../util.js';
 import { state, on, emit, api, stageById, openChat, openClient, openLead, typeById } from '../store.js';
 import { leadDialog } from './commercial.js';
@@ -207,6 +207,12 @@ export function taskRow(t, { showChat = false } = {}) {
     h('input', {
       type: 'checkbox', checked: !!t.done,
       onchange: async (e) => {
+        // prazo de processo: concluir pede o comprovante (protocolo/petição)
+        if (e.target.checked && t.kind === 'prazo' && t.case_id) {
+          e.target.checked = false;
+          completeDialog(t);
+          return;
+        }
         try { await api('tasks:save', { id: t.id, done: e.target.checked }); emitTasks(); } catch (err) { errToast(err); }
       },
     }),
@@ -217,7 +223,9 @@ export function taskRow(t, { showChat = false } = {}) {
           : showChat && t.lead_id ? h('a', { class: 'link', onclick: (e) => { e.stopPropagation(); openLead(t.lead_id); } }, ` · ${t.lead_name} (interessado)`)
           : showChat && chat ? h('a', { class: 'link', onclick: (e) => { e.stopPropagation(); openChat(chat.jid); } }, ` · ${chat.display_name}`) : null,
         t.case_title ? h('a', { class: 'link', onclick: (e) => { e.stopPropagation(); openCase(t.case_id, { tab: 'prazos' }); } }, ` · ${t.case_title}`) : null,
-        t.assignee_name && t.assignee_id !== state.me?.id ? ` · ${t.assignee_name}` : null)),
+        t.assignee_name && t.assignee_id !== state.me?.id ? ` · ${t.assignee_name}` : null,
+        t.kind === 'prazo' && t.internal_at && !t.done ? h('span', { class: `internal-pill ${t.internal_at < Date.now() ? 'late' : ''}`, title: 'Prazo interno: a peça deve estar pronta até aqui' }, ` · interno ${fmtDue(t.internal_at)}`) : null,
+        t.done && t.proof ? h('span', { class: 'muted', title: proofText(t.proof) }, ' · com comprovante') : null)),
     h('button', {
       class: 'icon-btn small', title: 'Excluir',
       onclick: async () => { await api('tasks:delete', t.id).catch(errToast); emitTasks(); },
@@ -226,6 +234,50 @@ export function taskRow(t, { showChat = false } = {}) {
 
 function emitTasks() {
   emit('tasks');
+}
+
+function proofText(p) {
+  try { const x = JSON.parse(p); return `${x.files?.length ? `Comprovante: ${x.files.join(', ')}` : 'Sem arquivo'}${x.note ? ` — ${x.note}` : ''} · ${x.by || ''}`; } catch { return ''; }
+}
+
+/** Concluir um prazo: anexar o protocolo/petição (vai para os documentos do processo) ou concluir sem. */
+export function completeDialog(t, onDone) {
+  let files = [];
+  const list = h('div', { class: 'muted small' }, 'Nenhum arquivo escolhido.');
+  const note = h('input', { class: 'input', placeholder: 'Ex.: protocolado no PJe às 15h, nº do protocolo…' });
+  const pick = h('button', {
+    class: 'btn', onclick: async () => {
+      const chosen = await pickFiles({ multiple: true });
+      if (chosen?.length) { files = [...chosen]; fill(list, files.map((f) => h('div', null, f.name))); }
+    },
+  }, [icon('plus', 15), 'Escolher arquivo(s)']);
+  modal({
+    title: 'Concluir prazo',
+    body: h('div', { class: 'form' },
+      h('p', null, h('b', null, t.title), t.case_title ? h('span', { class: 'muted' }, ` · ${t.case_title}`) : null),
+      h('p', { class: 'muted small' }, 'Anexe o protocolo ou a petição: o arquivo vai para os documentos do processo e fica registrado quem cumpriu e quando.'),
+      h('div', { class: 'row' }, pick), list,
+      h('label', { class: 'field' }, h('span', null, 'Observação (opcional)'), note)),
+    actions: [
+      { label: 'Cancelar' },
+      {
+        label: 'Concluir sem comprovante',
+        onClick: async () => { await api('tasks:complete', t.id, { note: note.value }); emitTasks(); onDone?.(); return true; },
+      },
+      {
+        label: 'Concluir com comprovante', primary: true,
+        onClick: async () => {
+          if (!files.length) { toast('Escolha o arquivo do protocolo (ou conclua sem comprovante)', 'error'); return false; }
+          const tokens = await uploadFiles(files);
+          await api('tasks:complete', t.id, { tokens, note: note.value });
+          toast('Prazo concluído; comprovante nos documentos do processo', 'success');
+          emitTasks();
+          onDone?.();
+          return true;
+        },
+      },
+    ],
+  });
 }
 
 export function taskDialog(task = {}) {

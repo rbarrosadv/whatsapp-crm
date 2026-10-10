@@ -319,6 +319,20 @@ ipcMain.handle('desktop', async (_e, action, ...args) => {
       return cms.toString('base64');
     }
     case 'openNotificationSettings': if (process.platform === 'win32') shell.openExternal('ms-settings:notifications'); return null;
+    // Plano B dos tribunais: se o DJEN/DataJud recusar o servidor (ex.: bloqueio de
+    // servidores na nuvem), o servidor pede para este computador buscar. Só os
+    // endereços públicos do CNJ; nada mais pode ser pedido por aqui.
+    case 'courtFetch': {
+      const req = args[0] || {};
+      const u = new URL(String(req.url || ''));
+      if (u.protocol !== 'https:' || !['comunicaapi.pje.jus.br', 'api-publica.datajud.cnj.jus.br'].includes(u.hostname)) throw new Error('endereço não permitido');
+      const method = req.method === 'POST' ? 'POST' : 'GET';
+      const headers = {};
+      for (const [k, v] of Object.entries(req.headers || {})) if (/^(authorization|content-type|accept)$/i.test(k)) headers[k] = String(v);
+      const r = await fetch(u, { method, headers, body: method === 'POST' ? String(req.body || '') : undefined, signal: AbortSignal.timeout(30000) });
+      const body = await r.text();
+      return { status: r.status, body: body.slice(0, 20 * 1024 * 1024), contentType: r.headers.get('content-type') || '' };
+    }
     // tela de primeira vez / sem conexão
     case 'setup:get': return { mode: config.mode || null, url: config.url || '', hasLocalData: fs.existsSync(path.join(DATA_DIR, 'crm.sqlite')) };
     case 'setup:choose': {

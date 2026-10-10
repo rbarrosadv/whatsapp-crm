@@ -424,6 +424,22 @@ export function demoCourtsFetch(getCases) {
         }],
       });
     }
+    if (u.host === 'comunicaapi.pje.jus.br' && u.searchParams.get('nomeParte')) {
+      // vigiar clientes: uma ação nova contra o cliente, em processo que o escritório não acompanha
+      if (u.searchParams.get('pagina') !== '1') return json({ status: 'success', count: 0, items: [] });
+      const name = u.searchParams.get('nomeParte');
+      const n = [...name].reduce((a, ch) => (a * 31 + ch.charCodeAt(0)) % 9000, 7) + 1000;
+      return json({
+        status: 'success', count: 1,
+        items: [{
+          id: 900400 + n, data_disponibilizacao: day(1), siglaTribunal: 'TJMT', tipoComunicacao: 'Citação', tipoDocumento: 'Despacho',
+          nomeOrgao: '4ª Vara Cível de Cuiabá', nomeClasse: 'PROCEDIMENTO COMUM CÍVEL', numeroprocessocommascara: `080${n}-55.2026.8.11.0041`,
+          texto: 'Cite-se a parte requerida para, querendo, apresentar contestação no prazo de 15 dias.', link: 'https://comunica.pje.jus.br/',
+          destinatarios: [{ nome: 'CONDOMINIO EDIFICIO SOL NASCENTE', polo: 'A' }, { nome: name, polo: 'P' }],
+          destinatarioadvogados: [{ advogado: { nome: 'ADVOGADO DA OUTRA PARTE', numero_oab: '99999', uf_oab: 'MT' } }],
+        }],
+      });
+    }
     if (u.host === 'comunicaapi.pje.jus.br' && u.searchParams.get('nomeAdvogado')) {
       // busca pelo nome: uma publicação com o nome digitado errado e a OAB faltando um dígito
       if (u.searchParams.get('pagina') !== '1') return json({ status: 'success', count: 0, items: [] });

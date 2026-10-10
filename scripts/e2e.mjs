@@ -791,8 +791,12 @@ try {
   await page.click('.modal button:has-text("Salvar")');
   await page.waitForSelector('.oab-row:has-text("OAB 14.271/MT")');
   check(true, 'OAB cadastrada (14.271/MT)');
+  // vigiar um cliente no DJEN (empresa por padrão; aqui liga para uma pessoa)
+  await page.evaluate(async () => { const [cl] = await window.api.call('clients:list', { q: 'carlos' }); await window.api.call('clients:watch', cl.id, true); });
   await page.click('.view-legal button:has-text("Buscar agora")');
   await page.waitForSelector('.intim.intim-nova', { timeout: 15000 });
+  await page.waitForSelector('.watch-panel .unknown-row', { timeout: 15000 });
+  check(true, 'vigiar clientes: processo novo em que o cliente é parte');
   check(await page.locator('.intim.intim-nova').count() >= 2, 'intimações do DJEN para conferir');
   await page.waitForSelector('.intim:has-text("0000456-12.2026.5.23.0002") .intim-warn:has-text("Achada pelo nome")');
   check(true, 'busca pelo nome acha publicação com o nome digitado errado e a OAB errada');
@@ -818,6 +822,22 @@ try {
   await page.click('.modal button:has-text("Criar prazo na Agenda")');
   await page.waitForSelector('.toast:has-text("Prazo criado")');
   check(true, 'intimação vira prazo na Agenda');
+  // agenda em lista: prazo com o interno, carga por pessoa, concluir pede comprovante
+  await page.evaluate(() => import('/js/store.js').then((m) => m.setView('tasks')));
+  await page.waitForSelector('.view-tasks .task:has-text("Prazo: Sentença") .internal-pill');
+  check(true, 'prazo mostra o prazo interno');
+  await page.click('.view-tasks button:has-text("Carga por pessoa")');
+  await page.waitForSelector('.load-panel tbody tr');
+  check(true, 'carga de prazos por pessoa');
+  await shot(page, '05k-carga-prazos');
+  await page.locator('.view-tasks .task', { hasText: 'Prazo: Sentença' }).first().locator('input[type=checkbox]').click();
+  await page.waitForSelector('.modal:has-text("Concluir prazo")');
+  await shot(page, '05k-concluir-prazo');
+  await page.click('.modal button:has-text("Concluir sem comprovante")');
+  await page.waitForFunction(() => [...document.querySelectorAll('.view-tasks .task:not(.done) .task-title')].every((x) => !x.textContent.includes('Prazo: Sentença')));
+  check(true, 'concluir prazo pede o comprovante (ou conclui sem)');
+  await page.click('.rail-btn[title="Jurídico"]');
+  await page.click('.view-legal .seg:has-text("Intimações")');
   await page.click('.unknown-procs summary').catch(() => {});
   await page.locator('.unknown-row', { hasText: '1002345-67.2026.8.11.0041' }).locator('button:has-text("Cadastrar")').click();
   await page.click('.modal .picker-item:has-text("ELISA MARTINS")');

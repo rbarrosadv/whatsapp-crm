@@ -202,6 +202,24 @@ export function hearingFromText(text) {
 }
 
 /**
+ * Pauta de julgamento no tribunal: "incluído em pauta da sessão de 12/11/2026",
+ * "sessão virtual de 03/11/2026 a 10/11/2026" → { ts, title, virtual } (a data de início).
+ */
+export function sessionFromText(text) {
+  const s = String(text || '');
+  const at = s.search(/inclu[ií]d[oa]s?\s+(em|na)\s+pauta|pauta de julgamento|sess[aã]o\s+(de julgamento|virtual|presencial|telepresencial|ordin[aá]ria|extraordin[aá]ria)/i);
+  if (at < 0) return null;
+  const tail = s.slice(at, at + 400);
+  const m = /(\d{1,2})\/(\d{1,2})\/(\d{2,4})(?:[^\d/]{1,14}(\d{1,2})[:h](\d{2})?)?/.exec(tail);
+  if (!m) return null;
+  const y = Number(m[3].length === 2 ? `20${m[3]}` : m[3]);
+  const d = new Date(y, Number(m[2]) - 1, Number(m[1]), m[4] ? Number(m[4]) : 9, m[5] ? Number(m[5]) : 0);
+  if (Number.isNaN(d.getTime()) || d.getTime() < Date.now() - 86400e3) return null;
+  const virtual = /virtual/i.test(tail);
+  return { ts: d.getTime(), title: virtual ? 'Sessão de julgamento (virtual)' : 'Sessão de julgamento', virtual, hasTime: !!m[4] };
+}
+
+/**
  * Partes de um processo a partir das comunicações do DJEN: nome, polo e se a
  * comunicação foi para uma OAB do escritório (aí a parte é provavelmente o
  * nosso cliente — a intimação vai para a parte pelo advogado dela).

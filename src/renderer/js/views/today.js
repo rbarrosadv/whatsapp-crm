@@ -214,6 +214,28 @@ function dayView(sum, events, awaiting) {
       });
     }), sum.prescriptions.length > 6 ? h('a', { href: '#', onclick: (e) => { e.preventDefault(); openLegal('processos', { status: 'vigiar' }); } }, `ver todos (${sum.prescriptions.length})`) : null));
   }
+  if (sum.monthly?.length) {
+    groups.push(group('Resumo do mês para os clientes', 'Do dia 1 ao 10: o sistema monta o rascunho com o que aconteceu no mês passado; você revisa e envia', sum.monthly.slice(0, 6).map((c) => actionRow({
+      who: c.name, clientId: c.id,
+      text: c.jid ? 'Tem WhatsApp ligado' : 'Sem WhatsApp: copie o texto e envie por outro meio',
+      meta: c.summary_sent_at ? `último resumo em ${new Date(c.summary_sent_at).toLocaleDateString('pt-BR')}` : 'nenhum resumo enviado ainda',
+      onOpen: () => openClient(c.id),
+      action: 'Preparar resumo', onAction: () => import('./summary.js').then((m) => m.summaryDialog(c.id, render)),
+    })), sum.monthly.length > 6 ? `e mais ${sum.monthly.length - 6}` : null));
+  }
+  if (sum.secrets?.length) {
+    groups.push(group('Segredo de justiça: conferir no site do tribunal', 'Esses processos não aparecem no DataJud: confira os andamentos direto no tribunal', sum.secrets.slice(0, 6).map((k) => actionRow({
+      who: k.client_name || k.process_number, clientId: k.client_id,
+      text: `${k.title}${k.process_number ? ` · ${k.process_number}` : ''}${k.tribunal ? ` · ${k.tribunal}` : ''}`,
+      meta: `última conferência há ${fmtDuration(Date.now() - k.since)}`,
+      onOpen: () => openCase(k.id),
+      action: 'Conferi', onAction: () => api('cases:secretChecked', k.id).then(render).catch(errToast),
+      secondary: {
+        label: 'Abrir no tribunal',
+        onClick: async () => { try { await navigator.clipboard.writeText(k.process_number || ''); toast('Nº copiado: cole na consulta do tribunal', 'info', 5000); } catch { /* ignore */ } openExternal(k.consulta); },
+      },
+    })), sum.secrets.length > 6 ? `e mais ${sum.secrets.length - 6}` : null));
+  }
   if (sum.inss?.length) {
     groups.push(group('INSS: conferir no Meu INSS', 'Processos administrativos com a conferência vencida', sum.inss.slice(0, 6).map((k) => actionRow({
       who: k.client_name || k.process_number || 'INSS', clientId: k.client_id,

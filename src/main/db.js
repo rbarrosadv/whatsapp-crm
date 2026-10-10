@@ -9,7 +9,7 @@ import { fullAddress, sameName } from '../renderer/js/qualify.js';
 
 let db;
 
-const SCHEMA_VERSION = 23;
+const SCHEMA_VERSION = 24;
 
 // Tipos de contato (editáveis). `personal` = não conta como trabalho
 // (fica fora de "Aguardando resposta" e dos avisos de conversa esquecida).
@@ -520,6 +520,17 @@ function migrate() {
   for (const [c, t] of [['found_by', 'TEXT'], ['hash', 'TEXT'], ['dup_key', 'TEXT'], ['dup_of', 'INTEGER'], ['alerted_at', 'INTEGER'], ['pub_lawyers', 'TEXT']]) addColumn('intimations', c, t);
   db.exec('CREATE INDEX IF NOT EXISTS intimations_dup ON intimations(dup_key)');
   addColumn('cases', 'datajud_updated_at', 'INTEGER');
+  // versão 24: prazo interno + avisos escalonados + comprovante; segredo de
+  // justiça (conferir no site); vigiar clientes no DJEN; resumo mensal ao cliente
+  addColumn('tasks', 'internal_at', 'INTEGER');
+  addColumn('tasks', 'warn_level', 'INTEGER NOT NULL DEFAULT 0');
+  addColumn('tasks', 'proof', 'TEXT');
+  addColumn('cases', 'secret', 'INTEGER NOT NULL DEFAULT 0');
+  addColumn('cases', 'secret_check_days', 'INTEGER');
+  addColumn('cases', 'secret_checked_at', 'INTEGER');
+  addColumn('clients', 'djen_watch', 'INTEGER');
+  addColumn('clients', 'summary_sent_at', 'INTEGER');
+  addColumn('intimations', 'client_id', 'INTEGER');
 
   const version = Number(get('SELECT value FROM meta WHERE key = ?', 'schema')?.value || 0);
   if (version < 1) seedDefaults();
@@ -1055,7 +1066,7 @@ export function setStage(jid, stageId) {
 
 const CASE_FIELDS = ['title', 'folder', 'process_number', 'area', 'court', 'opposing_party', 'tribunal', 'kind', 'filed_at',
   'client_role', 'description', 'responsible_id', 'claim_value', 'fee_fixed', 'fee_installments',
-  'fee_success', 'fee_total', 'fee_percent', 'prescription_note', 'inss_benefit', 'inss_status', 'inss_check_days'];
+  'fee_success', 'fee_total', 'fee_percent', 'prescription_note', 'inss_benefit', 'inss_status', 'inss_check_days', 'secret', 'secret_check_days'];
 
 function caseRow(c) {
   if (!c) return null;
@@ -1384,6 +1395,14 @@ export function idleCases(ms, { responsible } = {}) {
   }));
 }
 
+/** Processos em segredo de justiça (fora do DataJud) com a conferência no site do tribunal vencida. */
+export function secretToCheck({ responsible, days = 15 } = {}) {
+  return all(`SELECT id FROM cases WHERE status = 'aberto' AND secret = 1 AND COALESCE(secret_check_days, ?) > 0
+                AND COALESCE(secret_checked_at, created_at) + COALESCE(secret_check_days, ?) * 86400000 < ?
+                ${responsible ? 'AND (responsible_id = ? OR responsible_id IS NULL)' : ''}
+              ORDER BY COALESCE(secret_checked_at, created_at)`, days, days, now(), ...(responsible ? [responsible] : [])).map((r) => caseRow(get('SELECT * FROM cases WHERE id = ?', r.id)));
+}
+
 /** Processos do INSS com a conferência no Meu INSS vencida. */
 export function inssToCheck({ responsible } = {}) {
   return all(`SELECT id FROM cases WHERE status = 'aberto' AND kind = 'inss' AND COALESCE(inss_check_days, 15) > 0
@@ -1458,7 +1477,8 @@ export function saveCase(c) {
       if (f.startsWith('fee_') && ['fee_fixed', 'fee_installments', 'fee_success'].includes(f)) v = v ? 1 : 0;
       else if (f === 'fee_total' || f === 'fee_percent' || f === 'claim_value') v = v === '' || v == null ? null : Number(String(v).replace(/\./g, (m, i, str) => (str.includes(',') ? '' : m)).replace(',', '.')) || 0;
       else if (f === 'responsible_id') v = v ? Number(v) : null;
-      else if (f === 'inss_check_days') v = v === '' || v == null ? null : Number(v);
+      else if (f === 'inss_check_days' || f === 'secret_check_days') v = v === '' || v == null ? null : Number(v);
+      else if (f === 'secret') v = v ? 1 : 0;
       else v = v == null ? null : String(v).trim() || null;
       if (f === 'title' && !v) continue;
       sets.push(`${f} = ?`);
@@ -2013,12 +2033,24 @@ export function addIntimation(i, oabId, status = 'nova', { foundBy = 'oab' } = {
   const orig = key ? get('SELECT id, oab_ids FROM intimations WHERE dup_key = ? AND dup_of IS NULL ORDER BY id LIMIT 1', key) : null;
   if (orig) mergeOab(orig);
   const caseId = caseByProcessNumber(i.process_number);
-  const st = orig ? 'repetida' : status === 'historico' ? 'historico' : 'nova';
+  const st = orig ? 'repetida' : ['historico', 'cliente'].includes(status) ? status : 'nova';
   const id = Number(run(`INSERT INTO intimations (ext_id, oab_ids, date, tribunal, kind, doc_kind, orgao, classe, process_number, process_digits, text, link, parties, lawyers, case_id, status, created_at, found_by, hash, dup_key, dup_of)
                      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
   i.ext_id, oabId ? String(oabId) : null, i.date, i.tribunal, i.kind, i.doc_kind || null, i.orgao, i.classe, i.process_number, digitsOf(i.process_number),
   i.text, i.link, JSON.stringify(i.parties || []), JSON.stringify(i.lawyers || []), caseId, st, now(), foundBy, i.hash || null, key, orig?.id || null).lastInsertRowid);
   return orig ? null : id;
+}
+
+/** Clientes vigiados no DJEN: marcados, ou empresas sem escolha feita (padrão ligado para empresa). */
+export function watchedClients(limit = 80) {
+  return all(`SELECT id, name, kind, cpf FROM clients WHERE status = 'ativo'
+                AND (djen_watch = 1 OR (djen_watch IS NULL AND kind = 'pj')) ORDER BY updated_at DESC LIMIT ?`, limit);
+}
+/** Processo já visto (cadastrado ou numa intimação das OABs do escritório). */
+export function processKnown(num) {
+  const d = digitsOf(num);
+  if (!d) return false;
+  return !!caseByProcessNumber(num) || !!get("SELECT 1 AS x FROM intimations WHERE process_digits = ? AND status NOT IN ('cliente', 'repetida') LIMIT 1", d);
 }
 
 /** Intimações ainda "para conferir" disponibilizadas antes de `before` e ainda não avisadas. */
@@ -2043,7 +2075,8 @@ export function listIntimations({ status, caseId, limit = 300 } = {}) {
   if (status === 'abertas') where.push("i.status = 'nova'");
   else if (status) { where.push('i.status = ?'); args.push(status); } else where.push("i.status <> 'repetida'");
   if (caseId) { where.push('i.case_id = ?'); args.push(caseId); }
-  return all(`SELECT i.*, c.title AS case_title, c.client_id, (SELECT name FROM clients WHERE id = c.client_id) AS client_name,
+  return all(`SELECT i.*, c.title AS case_title, COALESCE(c.client_id, i.client_id) AS client_id,
+                (SELECT name FROM clients WHERE id = COALESCE(c.client_id, i.client_id)) AS client_name,
                 c.responsible_id, c.area AS case_area, t.due_at AS task_due,
                 (SELECT COUNT(*) FROM intimations d WHERE d.dup_of = i.id) AS dups
               FROM intimations i LEFT JOIN cases c ON c.id = i.case_id LEFT JOIN tasks t ON t.id = i.task_id
@@ -2067,7 +2100,7 @@ export function relinkIntimations(caseId) {
 export function unknownProcesses() {
   return all(`SELECT process_number, process_digits, MAX(date) AS last, COUNT(*) AS n, MAX(tribunal) AS tribunal, MAX(classe) AS classe,
                 MAX(orgao) AS orgao, MAX(parties) AS parties
-              FROM intimations WHERE case_id IS NULL AND process_digits <> '' AND status <> 'ignorada'
+              FROM intimations WHERE case_id IS NULL AND process_digits <> '' AND status NOT IN ('ignorada', 'cliente')
               GROUP BY process_digits ORDER BY last DESC`).map((r) => ({ ...r, parties: JSON.parse(r.parties || '[]') }));
 }
 export function markDatajud(caseId, error) { run('UPDATE cases SET datajud_checked_at = ?, datajud_error = ? WHERE id = ?', now(), error || null, caseId); }
@@ -2294,6 +2327,7 @@ export function saveTask({ id, jid, title, due_at, done, case_id, kind, end_at, 
       const newEnd = end_at !== undefined ? end_at : (dur && newDue ? newDue + dur : cur.end_at);
       run('UPDATE tasks SET end_at = ? WHERE id = ?', newEnd || null, id);
     }
+    if (newDue !== cur.due_at) run('UPDATE tasks SET warn_level = 0, internal_at = NULL WHERE id = ?', id);
     run('UPDATE tasks SET title = ?, due_at = ?, done = ?, notified = ?, jid = ?, case_id = ?, kind = ? WHERE id = ?',
       title ?? cur.title, newDue, done === undefined ? cur.done : (done ? 1 : 0),
       newDue !== cur.due_at ? 0 : cur.notified,
@@ -2306,6 +2340,17 @@ export function saveTask({ id, jid, title, due_at, done, case_id, kind, end_at, 
     jid || null, title, due_at || null, now(), case_id || null, kind || 'tarefa', end_at || null, assignee_id || null, by || null).lastInsertRowid);
 }
 export function deleteTask(id) { run('DELETE FROM tasks WHERE id = ?', id); }
+/** Prazos em aberto (com data) para os avisos escalonados. */
+export function openDeadlines() {
+  return all(`SELECT k.id, k.title, k.due_at, k.internal_at, k.warn_level, k.assignee_id, k.case_id, k.jid,
+                c.title AS case_title, (SELECT name FROM clients WHERE id = c.client_id) AS client_name
+              FROM tasks k LEFT JOIN cases c ON c.id = k.case_id
+              WHERE k.kind = 'prazo' AND k.done = 0 AND k.due_at IS NOT NULL AND k.due_at > ?`, now() - 30 * 864e5);
+}
+export function setTaskField(id, field, value) {
+  if (!['internal_at', 'warn_level', 'proof'].includes(field)) throw new Error('campo inválido');
+  run(`UPDATE tasks SET ${field} = ? WHERE id = ?`, value ?? null, id);
+}
 export function getTask(id) {
   return get(`SELECT k.*, c.title AS case_title, c.process_number, c.court, u.name AS assignee_name
               FROM tasks k LEFT JOIN cases c ON c.id = k.case_id LEFT JOIN users u ON u.id = k.assignee_id WHERE k.id = ?`, id);
@@ -2343,7 +2388,8 @@ export function markHearingNotified(id) { run('UPDATE tasks SET followup_notifie
 export function setHearingFollowUp(id, done = true) { run("UPDATE tasks SET followup_done_at = ? WHERE id = ? AND kind = 'audiencia'", done ? now() : null, id); }
 
 export function dueTasksToNotify() {
-  return all('SELECT * FROM tasks WHERE done = 0 AND notified = 0 AND due_at IS NOT NULL AND due_at <= ?', now());
+  // prazos têm avisos próprios (3 dias úteis antes, interno, véspera, dia, vencido)
+  return all("SELECT * FROM tasks WHERE done = 0 AND notified = 0 AND due_at IS NOT NULL AND due_at <= ? AND kind <> 'prazo'", now());
 }
 export function markTaskNotified(id) { run('UPDATE tasks SET notified = 1 WHERE id = ?', id); }
 

@@ -3,6 +3,7 @@ import { backColumn } from './views/legalview.js';
 import './bridge.js';
 import { h, debounce, toast } from './util.js';
 import { setupNotifications } from './notify.js';
+import { setupRelay } from './relay.js';
 import { state, on, bootstrap, setView, openChat, forgetAvatar, setSetting } from './store.js';
 import { mountChatList } from './views/chatlist.js';
 import { mountChatView } from './views/chatview.js';
@@ -36,6 +37,7 @@ const NAV = [
 async function main() {
   await bootstrap();
   setupNotifications();
+  setupRelay();
   applyTheme();
   window.matchMedia('(prefers-color-scheme: dark)').addEventListener('change', applyTheme);
 
@@ -47,7 +49,7 @@ async function main() {
     docs: h('div', { class: 'view view-page view-docs' }),
     legal: h('div', { class: 'view view-page view-legal' }),
     commercial: h('div', { class: 'view view-commercial' }),
-    tasks: h('div', { class: 'view view-page' }),
+    tasks: h('div', { class: 'view view-page view-tasks' }),
     dashboard: h('div', { class: 'view view-page' }),
     finance: h('div', { class: 'view view-page' }),
     agenda: h('div', { class: 'view view-agenda' }),
