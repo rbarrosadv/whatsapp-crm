@@ -215,9 +215,17 @@ export async function createCore({ dataDir, demo = false, version = '', safeStor
   // busca no lugar dele (pela internet do escritório) e devolve a resposta. Depois
   // de uma recusa, por 24 h vai direto pelo app.
   const relay = { conns: new Map(), pending: new Map(), preferUntil: 0, lastUsed: null, lastDirectError: null };
-  function relayFetch(url, init = {}) {
-    const conn = [...relay.conns.keys()].pop();
-    if (!conn) return Promise.reject(new Error('nenhum app do escritório aberto para buscar'));
+  /** Pede a UM app por vez (o mais recente); se ele falhar ou fechar, tenta o próximo. */
+  async function relayFetch(url, init = {}) {
+    const conns = [...relay.conns.keys()].reverse();
+    if (!conns.length) throw new Error('nenhum app do escritório aberto para buscar');
+    let last;
+    for (const conn of conns.slice(0, 3)) {
+      try { return await relayFetchVia(conn, url, init); } catch (e) { last = e; }
+    }
+    throw last;
+  }
+  function relayFetchVia(conn, url, init) {
     const id = crypto.randomUUID();
     return new Promise((resolve, reject) => {
       const timer = setTimeout(() => { relay.pending.delete(id); reject(new Error('o app do escritório não respondeu')); }, 60000);
