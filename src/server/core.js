@@ -489,6 +489,7 @@ export async function createCore({ dataDir, demo = false, version = '', safeStor
       checkPrescriptions();
       checkForgottenIntimations();
       checkDeadlines();
+      checkDrafts();
       // a cada ~10 min traz mudanças de horário feitas no Google
       if (++googleTick % 20 === 1 && google?.status().connected) {
         calSync.agenda(Date.now() - 7 * DAY, Date.now() + 120 * DAY).catch(() => {});
@@ -728,6 +729,33 @@ export async function createCore({ dataDir, demo = false, version = '', safeStor
           kind: 'deadline', force: lvl >= 4, title: DEADLINE_LEVELS[lvl](t),
           body: `${who}${who ? ' · ' : ''}vence ${new Date(t.due_at).toLocaleDateString('pt-BR')}${t.internal_at && lvl < 3 ? ` (interno ${new Date(t.internal_at).toLocaleDateString('pt-BR')})` : ''}`,
           discreet: 'Prazo', action: t.case_id ? { case: t.case_id, tab: 'prazos' } : { view: 'tasks' },
+        }, { user: u });
+      }
+    }
+  }
+
+  // ---------------------------------------------- iniciais a distribuir
+  const DRAFT_STATUS = { documentos: 'Aguardando documentos', redacao: 'Em redação', revisao: 'Em revisão', pronta: 'Pronta para protocolar' };
+  /** Data meta da inicial: 2 dias úteis antes avisa quem cuida; passou sem protocolar avisa também os sócios. Uma vez cada. */
+  function checkDrafts() {
+    const hour = new Date().getHours();
+    if (hour < 8 || hour >= 20) return;
+    const socios = auth.listUsers().filter((u) => u.active && u.role === 'socio').map((u) => u.id);
+    for (const d of db.listDrafts()) {
+      if (!d.draft_target) continue;
+      const end = new Date(d.draft_target); end.setHours(23, 59, 59, 0);
+      const warned = db.get('SELECT draft_warned FROM cases WHERE id = ?', d.id)?.draft_warned || 0;
+      let lvl = 0;
+      if (Date.now() > end.getTime()) lvl = 2;
+      else if (courtDaysUntil(d.draft_target) <= 2) lvl = 1;
+      if (lvl <= warned) continue;
+      db.setDraft(d.id, { draft_warned: lvl });
+      const to = new Set([d.responsible_id, ...(lvl === 2 ? socios : [])].filter(Boolean));
+      for (const u of to) {
+        notify({
+          kind: 'deadline', title: lvl === 2 ? `Inicial passou da data meta — ${d.client_name || ''}: ${d.title}` : `Inicial: data meta em ${new Date(d.draft_target).toLocaleDateString('pt-BR')} — ${d.client_name || ''}: ${d.title}`,
+          body: `Situação: ${DRAFT_STATUS[d.status] || d.status}${d.responsible_name ? ` · ${d.responsible_name}` : ''}`,
+          discreet: 'Inicial a distribuir', action: { view: 'legal', tab: 'iniciais' },
         }, { user: u });
       }
     }
@@ -1425,7 +1453,7 @@ export async function createCore({ dataDir, demo = false, version = '', safeStor
     },
     'users:roles': () => auth.ROLES,
     /** Equipe ativa (para escolher responsável) — qualquer perfil vê. */
-    'team:list': () => auth.listUsers().filter((u) => u.active).map((u) => ({ id: u.id, name: u.name })),
+    'team:list': () => auth.listUsers().filter((u) => u.active).map((u) => ({ id: u.id, name: u.name, role: u.role })),
     'me:update': (ctx, { name, signature }) => {
       const u = ctx.user;
       auth.saveUser({ id: u.id, name: name ?? u.name, login: u.login, signature: signature ?? u.signature });
@@ -1870,6 +1898,56 @@ export async function createCore({ dataDir, demo = false, version = '', safeStor
       return id;
     },
     'cases:datajud': (_c, id) => updateDatajud(id),
+    // ------------------------------------------------ iniciais a distribuir
+    'drafts:list': () => db.listDrafts().map((d) => ({ ...d, status_label: DRAFT_STATUS[d.status] || d.status })),
+    /**
+     * Muda a situação / revisor / data meta / observação. Revisão: só o revisor (ou um
+     * sócio) aprova ou devolve; quem recebe a vez é avisado.
+     */
+    'drafts:set': (ctx, id, { status, reviewer_id, target, note } = {}) => {
+      const k = db.getCase(id);
+      if (!k) throw new Error('Processo não encontrado');
+      const cur = db.listDrafts().find((d) => d.id === id);
+      if (!cur) throw new Error('Este processo já tem número: não é mais uma inicial a distribuir.');
+      const f = {};
+      if (reviewer_id !== undefined) f.draft_reviewer_id = reviewer_id || null;
+      if (target !== undefined) { f.draft_target = target || null; f.draft_warned = 0; }
+      if (note !== undefined) f.draft_note = String(note || '').slice(0, 1000) || null;
+      if (status && status !== cur.status) {
+        if (!DRAFT_STATUS[status]) throw new Error('Situação desconhecida');
+        const reviewer = f.draft_reviewer_id !== undefined ? f.draft_reviewer_id : cur.draft_reviewer_id;
+        if (cur.status === 'revisao' && ctx.user.role !== 'socio' && ctx.user.id !== reviewer) throw new Error('Só quem revisa (ou um sócio) aprova ou devolve a inicial.');
+        if (status === 'revisao' && !reviewer) throw new Error('Escolha quem vai revisar.');
+        f.draft_status = status;
+        f.draft_since = Date.now();
+        const who = k.client_name ? `${k.client_name}: ${k.title}` : k.title;
+        if (status === 'revisao') notify({ kind: 'reminder', title: `Inicial para revisar — ${who}`, body: `Enviada por ${ctx.user.name}`, action: { view: 'legal', tab: 'iniciais' } }, { user: reviewer });
+        else if (cur.status === 'revisao' && k.responsible_id && k.responsible_id !== ctx.user.id) {
+          notify({
+            kind: 'reminder', title: status === 'pronta' ? `Inicial aprovada — ${who}` : `Inicial devolvida com observações — ${who}`,
+            body: f.draft_note || cur.draft_note || `por ${ctx.user.name}`, action: { view: 'legal', tab: 'iniciais' },
+          }, { user: k.responsible_id });
+        }
+        db.logActivity(k.jid, 'case', `${k.title}: inicial — ${DRAFT_STATUS[status].toLowerCase()}${status !== 'pronta' && cur.status === 'revisao' ? ' (devolvida)' : ''}`, ctx.user.name);
+      }
+      db.setDraft(id, f);
+      caseChanged(db.getCase(id));
+      return true;
+    },
+    /** Protocolada: nº do processo + comprovante (vai para os documentos do processo); segue o caminho normal. */
+    'drafts:protocol': async (ctx, id, { process_number, tokens = [] } = {}) => {
+      const num = String(process_number || '').trim();
+      if (!num) throw new Error('Informe o nº do processo.');
+      await api['cases:save'](ctx, { id, process_number: formatCnj(num), tribunal: db.getCase(id)?.tribunal || tribunalOf(num) || undefined });
+      if (tokens.length) api['cases:addFiles'](ctx, id, tokens);
+      db.setStep(id, 'peticao', 'done', ctx.user.name);
+      const k = db.getCase(id);
+      db.logActivity(k.jid, 'case', `${k.title}: inicial distribuída — processo ${k.process_number}`, ctx.user.name);
+      updatePhase(id);
+      updateDatajud(id).catch(() => {});
+      caseChanged(k);
+      return true;
+    },
     /** Vigiar o cliente no DJEN (processos novos em que ele é parte). null = padrão (empresa sim, pessoa não). */
     'clients:watch': (_c, id, on) => { db.run('UPDATE clients SET djen_watch = ? WHERE id = ?', on == null ? null : on ? 1 : 0, id); clientChanged(id); return true; },
     /** Segredo de justiça: conferido hoje no site do tribunal (o DataJud não mostra). */
@@ -2259,6 +2337,8 @@ export async function createCore({ dataDir, demo = false, version = '', safeStor
       const before = c.id ? db.getCase(c.id) : null;
       if (c.kind === 'inss' && !before?.inss_status && c.inss_status === undefined) c = { ...c, inss_status: 'analise', inss_check_days: c.inss_check_days ?? 15, tribunal: c.tribunal ?? 'INSS (administrativo)' };
       const id = db.saveCase(c);
+      // inicial distribuída: o nº entrou agora
+      if (before && !String(before.process_number || '').trim() && String(c.process_number || '').trim()) db.setDraft(id, { distributed_at: Date.now(), draft_status: 'protocolada', draft_since: Date.now() });
       if (c.inss_status !== undefined && c.inss_status !== before?.inss_status) inssStatusChanged(id, c.inss_status, ctx);
       if (c.process_number !== undefined) db.relinkIntimations(id);
       const k = db.getCase(id);
@@ -2699,7 +2779,8 @@ export async function createCore({ dataDir, demo = false, version = '', safeStor
       const rows = db.all(`SELECT assignee_id, kind, due_at FROM tasks WHERE done = 0 AND due_at IS NOT NULL AND kind IN ('prazo', 'audiencia') AND due_at < ?`, ws + 35 * DAY);
       const out = new Map();
       const team = auth.listUsers().filter((u) => u.active);
-      for (const u of [{ id: null, name: 'Sem responsável' }, ...team]) out.set(u.id, { id: u.id, name: u.name, late: 0, week: 0, next: 0, month: 0, hearings: 0 });
+      for (const u of [{ id: null, name: 'Sem responsável' }, ...team]) out.set(u.id, { id: u.id, name: u.name, late: 0, week: 0, next: 0, month: 0, hearings: 0, drafts: 0 });
+      for (const d of db.listDrafts()) (out.get(d.responsible_id ?? null) || out.get(null)).drafts++;
       for (const r of rows) {
         const x = out.get(r.assignee_id ?? null) || out.get(null);
         if (r.kind === 'audiencia') { if (r.due_at >= Date.now() && r.due_at < Date.now() + 30 * DAY) x.hearings++; continue; }
@@ -2708,7 +2789,7 @@ export async function createCore({ dataDir, demo = false, version = '', safeStor
         else if (r.due_at < ws + 14 * DAY) x.next++;
         if (r.due_at >= Date.now() && r.due_at < Date.now() + 30 * DAY) x.month++;
       }
-      return [...out.values()].filter((x) => x.id !== null || x.late + x.week + x.next + x.month + x.hearings > 0);
+      return [...out.values()].filter((x) => x.id !== null || x.late + x.week + x.next + x.month + x.hearings + x.drafts > 0);
     },
     /** Muda a data de várias tarefas de uma vez (ex.: passar as pendentes para amanhã). */
     'tasks:reschedule': (_c, list) => {
@@ -2744,6 +2825,8 @@ export async function createCore({ dataDir, demo = false, version = '', safeStor
         hints: db.listHints({ responsible: assignee }),
         idleCases: Number(settings.idleCaseDays ?? 90) > 0 ? db.idleCases(Number(settings.idleCaseDays ?? 90) * DAY, { responsible: assignee }).slice(0, 30) : [],
         idleDays: Number(settings.idleCaseDays ?? 90),
+        drafts: db.listDrafts().filter((d) => !assignee || (d.status === 'revisao' ? d.draft_reviewer_id === assignee : (d.responsible_id === assignee || !d.responsible_id)))
+          .map((d) => ({ ...d, status_label: DRAFT_STATUS[d.status] })).slice(0, 30),
         monthly: (() => {
           if (new Date().getDate() > 10) return [];
           const start = new Date(); start.setDate(1); start.setHours(0, 0, 0, 0);

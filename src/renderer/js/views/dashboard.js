@@ -141,7 +141,14 @@ function overview(d) {
       panel('Prazos que venciam no período', table(['Situação', 'Quantidade'], [
         ['Cumpridos no prazo', dl.onTime], ['Cumpridos com atraso', dl.late], ['Vencidos e ainda em aberto', dl.overdue], ['Ainda a vencer', dl.pending], ['Total', dl.total],
       ], [1]), { csv: { name: 'prazos', head: ['Situação', 'Quantidade'], rows: [['No prazo', dl.onTime], ['Com atraso', dl.late], ['Vencidos em aberto', dl.overdue], ['A vencer', dl.pending]] } }),
-      panel('Andamentos dos tribunais', h('p', null, h('b', null, int(d.moves)), ' andamento(s) e publicações registrados pelo DataJud e DJEN no período.'))),
+      panel('Andamentos dos tribunais', h('p', null, h('b', null, int(d.moves)), ' andamento(s) e publicações registrados pelo DataJud e DJEN no período.')),
+      d.drafts ? panel('Iniciais: do cadastro à distribuição', h('div', null,
+        h('p', null, h('b', null, int(d.drafts.distributed)), ' distribuída(s) no período',
+          d.drafts.medianDays != null ? [', em ', h('b', null, `${d.drafts.medianDays} dia(s)`), ' (mediana) do cadastro do processo até o protocolo'] : '',
+          `. ${int(d.drafts.open)} a distribuir hoje.`),
+        d.drafts.byPerson.length ? table(['Responsável', 'Distribuídas', 'Dias (mediana)'], d.drafts.byPerson.map((x) => [x.label, x.n, x.value]), [1, 2]) : null,
+        d.drafts.byArea.length ? table(['Área', 'Distribuídas', 'Dias (mediana)'], d.drafts.byArea.map((x) => [x.label, x.n, x.value]), [1, 2]) : null),
+      { wide: true, csv: { name: 'iniciais', head: ['Responsável', 'Distribuídas', 'Dias (mediana)'], rows: d.drafts.byPerson.map((x) => [x.label, x.n, x.value]) } }) : null),
   ];
 }
 

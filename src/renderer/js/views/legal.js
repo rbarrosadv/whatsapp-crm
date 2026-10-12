@@ -16,6 +16,7 @@ import { clientForm } from './clientform.js';
 import { importDialog, importProgress, drawWithoutClient, archiveBadge } from './importcases.js';
 import { looksLikeCompany, fmtCnpj, fmtCpf } from '../qualify.js';
 import { renderByClient, renderPhaseBoard, renderFeed, focusCase, resetColumns } from './legalview.js';
+import { renderDrafts } from './drafts.js';
 
 let root;
 let tab = 'cliente'; // cliente | fases | processos | intimacoes | atividade (clientes = lista antiga)
@@ -32,6 +33,7 @@ function drawList(my = loading) {
   if (!listBody?.isConnected) return;
   if (tab === 'cliente') renderByClient(listBody);
   else if (tab === 'fases') renderPhaseBoard(listBody, { onOpen: (k) => openCase(k.id) });
+  else if (tab === 'iniciais') renderDrafts(listBody, { onOpen: (d) => openCase(d.id) });
   else if (tab === 'atividade') renderFeed(listBody, { onOpen: (r) => { focusCase(r.client_id, r.case_id); tab = 'cliente'; render(); } });
   else if (tab === 'clientes') drawClients(listBody, my);
   else if (tab === 'processos') drawCases(listBody, my);
@@ -76,7 +78,7 @@ async function render() {
     h('div', { class: 'page-head' },
       h('h2', null, 'Jurídico'),
       h('div', { class: 'segmented' },
-        [['cliente', 'Por cliente'], ['fases', 'Quadro por fase'], ['processos', 'Lista de processos'], ['intimacoes', 'Intimações'], ['atividade', 'Atividade']].map(([id, label]) => h('button', {
+        [['cliente', 'Por cliente'], ['fases', 'Quadro por fase'], ['iniciais', 'Iniciais'], ['processos', 'Lista de processos'], ['intimacoes', 'Intimações'], ['atividade', 'Atividade']].map(([id, label]) => h('button', {
           class: `seg ${tab === id ? 'active' : ''}`, onclick: () => { tab = id; if (id === 'cliente') resetColumns(); render(); },
         }, label))),
       h('div', { class: 'row' },
@@ -84,7 +86,7 @@ async function render() {
         tab === 'processos' ? h('button', { class: 'btn', title: 'Ver os processos em colunas por etapa', onclick: () => setView('board') }, 'Funil') : null,
         h('button', { class: 'btn', onclick: () => clientDialog() }, [icon('plus', 15), 'Cliente']),
         h('button', { class: 'btn btn-primary', onclick: () => newCaseDialog(null) }, [icon('plus', 15), 'Processo']))),
-    ['intimacoes', 'cliente', 'fases', 'atividade'].includes(tab) ? null : h('div', { class: 'row legal-tools' }, search,
+    ['intimacoes', 'cliente', 'fases', 'iniciais', 'atividade'].includes(tab) ? null : h('div', { class: 'row legal-tools' }, search,
       tab === 'processos' ? h('select', { class: 'input select-sm', onchange: (e) => { caseStatus = e.target.value; drawList(); } },
         CASE_FILTERS.map(([v, l]) => h('option', { value: v, selected: caseStatus === v }, l))) : null,
       tab === 'processos' ? h('select', { class: 'input select-sm', onchange: (e) => { caseResp = e.target.value; drawList(); } },

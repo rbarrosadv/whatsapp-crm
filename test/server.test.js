@@ -1153,6 +1153,62 @@ test('prazos: interno e avisos escalonados, comprovante; plano B pelo app; segre
   }
 });
 
+test('iniciais: situação, revisão pelo sócio, data meta, protocolar com nº; Hoje, carga e relatório', async () => {
+  const s = client();
+  await s.req('/auth/login', { body: { login: 'barros', password: 'segredo1' } });
+  const me = (await s.call('bootstrap')).me;
+  let advId = (await s.call('users:list')).find((u) => u.login === 'drafter')?.id;
+  if (!advId) advId = await s.call('users:save', { name: 'Dora Redatora', login: 'drafter', role: 'advogado', password: 'redige123' });
+  const a = client();
+  await a.req('/auth/login', { body: { login: 'drafter', password: 'redige123' } });
+  const cid = await s.call('clients:save', { name: 'Cliente da Inicial' });
+  const id = await s.call('cases:save', { client_id: cid, title: 'Indenização por danos morais', area: 'Cível', responsible_id: advId });
+  let d = (await a.call('drafts:list')).find((x) => x.id === id);
+  assert.equal(d.status, 'redacao', 'sem documentos pendentes começa em redação');
+  // data meta e prazo fatal
+  await a.call('drafts:set', id, { target: Date.now() - 864e5 });
+  await a.call('tasks:save', { case_id: id, kind: 'prazo', title: 'Prazo fatal (prescrição)', due_at: Date.now() + 30 * 864e5 });
+  d = (await a.call('drafts:list')).find((x) => x.id === id);
+  assert.ok(d.deadline > Date.now(), 'prazo fatal aparece');
+  // revisão: precisa de revisor; só o revisor/sócio aprova
+  await assert.rejects(a.call('drafts:set', id, { status: 'revisao' }), /quem vai revisar/);
+  const got = [];
+  const listen = (ch, data, to) => { if (ch === 'notify') got.push({ data, to }); };
+  srv.core.events.on('event', listen);
+  const realHours = Date.prototype.getHours;
+  Date.prototype.getHours = function () { return 10; };
+  try {
+    await a.call('drafts:set', id, { status: 'revisao', reviewer_id: me.id });
+    assert.ok(got.some((g) => g.to?.user === me.id && /Inicial para revisar/.test(g.data.title)), 'revisor avisado');
+    await assert.rejects(a.call('drafts:set', id, { status: 'pronta' }), /Só quem revisa/);
+    await s.call('drafts:set', id, { status: 'redacao', note: 'Ajustar o pedido de danos' });
+    assert.ok(got.some((g) => g.to?.user === advId && /devolvida/.test(g.data.title)), 'quem redigiu sabe que voltou');
+    await a.call('drafts:set', id, { status: 'revisao', reviewer_id: me.id });
+    await s.call('drafts:set', id, { status: 'pronta', note: null });
+    d = (await a.call('drafts:list')).find((x) => x.id === id);
+    assert.equal(d.status, 'pronta');
+    // data meta vencida: avisa responsável e sócios uma vez
+    srv.core.runChecks();
+    srv.core.runChecks();
+    const lateN = got.filter((g) => /passou da data meta/.test(g.data.title));
+    assert.ok(lateN.some((g) => g.to.user === advId) && lateN.some((g) => g.to.user === me.id));
+    assert.equal(lateN.filter((g) => g.to.user === me.id).length, 1, 'uma vez só');
+  } finally { Date.prototype.getHours = realHours; srv.core.events.off('event', listen); }
+  // Hoje (da pessoa) e carga
+  const range = { dayStart: Date.now() - 864e5, dayEnd: Date.now() + 864e5, weekStart: Date.now() - 864e5, weekEnd: Date.now() + 7 * 864e5 };
+  assert.ok((await a.call('today:summary', range)).drafts.some((x) => x.id === id), 'no Hoje de quem cuida');
+  assert.ok((await s.call('tasks:load', {})).find((x) => x.id === advId).drafts >= 1, 'na carga por pessoa');
+  // protocolar: sai da lista, fase inicial, conta no relatório
+  await a.call('drafts:protocol', id, { process_number: '10077778820268110041' });
+  assert.ok(!(await a.call('drafts:list')).some((x) => x.id === id), 'distribuída sai das iniciais');
+  const k = (await s.call('cases:full', id)).case;
+  assert.equal(k.process_number, '1007777-88.2026.8.11.0041');
+  assert.ok(k.distributed_at);
+  assert.notEqual(k.phase, 'pre', 'sai do pré-processual');
+  const rep = await s.call('reports:get', 'overview', { from: Date.now() - 864e5, to: Date.now() + 864e5 });
+  assert.ok(rep.drafts.distributed >= 1 && rep.drafts.byPerson.some((x) => x.label === 'Dora Redatora'));
+});
+
 test('cadastro: sugere a conversa do WhatsApp, salva o contato (opção), pasta vai e volta do arquivo morto', async () => {
   const c = client();
   await c.req('/auth/login', { body: { login: 'barros', password: 'segredo1' } });

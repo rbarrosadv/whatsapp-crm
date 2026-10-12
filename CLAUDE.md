@@ -84,7 +84,7 @@ Motor (`src/main`, sem Electron apesar do nome da pasta):
   `payments`, `case_docs`, `users`, `sessions`, `doc_index`, `clients`,
   `case_parties`, `case_moves`, `case_steps`, `case_checklist`, `oabs`,
   `intimations`, `expenses`, `incomes`, `leads`, `lead_contacts`, `push_subs`, `case_hints`, `doc_recent`, `doc_ocr`, `case_phases`, `doc_tree` (migrações por versão em
-  `migrate()`; `meta.schema` guarda a versão atual — v24).
+  `migrate()`; `meta.schema` guarda a versão atual — v25).
 - `docs.js` — `DocsService`: pasta "BARROS ADVOGADOS" do escritório, sempre
   por caminho relativo (`clients.folder`, `cases.folder`, conferido por
   `safeRel` — sem `..`), sobre um **armazenamento** (`storage.js`):
@@ -399,6 +399,19 @@ Motor (`src/main`, sem Electron apesar do nome da pasta):
   fases à mão, mensagens enviadas ao cliente pela assinatura) e **Explicar ao
   cliente** (`moves:clientText` reaproveita `clientUpdateText`; `moves:notifyClient`
   envia pelo WhatsApp ou marca avisado — `case_moves.notified_*`, conclui a sugestão).
+- **Iniciais a distribuir** (v25, `views/drafts.js`, aba "Iniciais" do Jurídico):
+  processos abertos judiciais sem nº (`db.listDrafts`) em colunas pela situação
+  `cases.draft_status` (documentos → redacao → revisao → pronta; sem escolha =
+  documentos se há pedido pendente no checklist, senão redação), `draft_since`,
+  `draft_reviewer_id`, `draft_target` (data meta), `draft_note` (observação da
+  revisão). `drafts:set` (revisão exige revisor; só o revisor ou sócio aprova/devolve;
+  avisa quem recebe a vez), `drafts:protocol` (nº + comprovante → `cases:save`,
+  etapa "peticao" feita, fase, DataJud). Prazo fatal pré-ação = tarefa `prazo` do
+  processo (avisos de prazo). `checkDrafts`: data meta a 2 dias úteis avisa o
+  responsável; vencida avisa também os sócios (`draft_warned`). `cases.distributed_at`
+  (nº entrou num processo que não tinha) → relatório `overview.drafts` (mediana de
+  dias do cadastro ao protocolo, por pessoa e área). Hoje (`today:summary.drafts`:
+  as suas, ou as que você revisa) e coluna "Iniciais" na carga por pessoa.
 - **Tribunais por advogado**: cada advogado cadastra a própria OAB (o sócio, de
   qualquer um); processo cadastrado a partir de intimação/importação fica com o
   **dono da OAB** (`oabOwnerOf`); Intimações tem "Minhas OABs | Todas";

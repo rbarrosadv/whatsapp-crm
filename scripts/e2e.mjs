@@ -838,7 +838,8 @@ try {
   check(true, 'concluir prazo pede o comprovante (ou conclui sem)');
   await page.click('.rail-btn[title="Jurídico"]');
   await page.click('.view-legal .seg:has-text("Intimações")');
-  await page.click('.unknown-procs summary').catch(() => {});
+  await page.waitForSelector('.unknown-procs');
+  await page.evaluate(() => { document.querySelector('.unknown-procs').open = true; });
   await page.locator('.unknown-row', { hasText: '1002345-67.2026.8.11.0041' }).locator('button:has-text("Cadastrar")').click();
   await page.click('.modal .picker-item:has-text("ELISA MARTINS")');
   await page.click('.modal button:has-text("Cadastrar processo")');
@@ -846,6 +847,22 @@ try {
   check(true, 'processo encontrado pela OAB cadastrado, com andamentos');
   await shot(page, '05l-processo-importado');
   await page.keyboard.press('Escape');
+
+  // iniciais a distribuir: colunas pela situação, revisão pelo sócio
+  await page.click('.rail-btn[title="Jurídico"]');
+  await page.click('.view-legal .seg:has-text("Iniciais")');
+  await page.click('.drafts-tools .seg:has-text("Todas")');
+  await page.waitForSelector('.drafts-board .draft-card', { timeout: 10000 });
+  check(true, 'iniciais a distribuir em colunas pela situação');
+  const draftCard = page.locator('.drafts-board .col[data-status="redacao"] .draft-card').first();
+  const draftTitle = (await draftCard.locator('.card-title .small').textContent()).trim();
+  await draftCard.locator('button:has-text("Enviar para revisão")').click();
+  await page.click('.modal button:has-text("Enviar")');
+  await page.waitForSelector(`.drafts-board .col[data-status="revisao"] .draft-card:has-text("${draftTitle}")`);
+  await page.locator('.drafts-board .col[data-status="revisao"] .draft-card', { hasText: draftTitle }).locator('button:has-text("Aprovar")').click();
+  await page.waitForSelector(`.drafts-board .col[data-status="pronta"] .draft-card:has-text("${draftTitle}")`);
+  check(true, 'inicial vai para revisão, o sócio aprova e fica pronta para protocolar');
+  await shot(page, '05m-iniciais');
 
   // comercial: funil, novo interessado, atendimento, proposta e virar cliente
   await page.click('.rail-btn[title="Atendimento"]');

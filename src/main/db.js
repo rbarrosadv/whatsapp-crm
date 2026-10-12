@@ -9,7 +9,7 @@ import { fullAddress, sameName } from '../renderer/js/qualify.js';
 
 let db;
 
-const SCHEMA_VERSION = 24;
+const SCHEMA_VERSION = 25;
 
 // Tipos de contato (editáveis). `personal` = não conta como trabalho
 // (fica fora de "Aguardando resposta" e dos avisos de conversa esquecida).
@@ -531,6 +531,10 @@ function migrate() {
   addColumn('clients', 'djen_watch', 'INTEGER');
   addColumn('clients', 'summary_sent_at', 'INTEGER');
   addColumn('intimations', 'client_id', 'INTEGER');
+  // versão 25: iniciais a distribuir — situação, desde quando, revisor, data meta,
+  // observação da revisão e quando foi distribuída
+  for (const [c, t] of [['draft_status', 'TEXT'], ['draft_since', 'INTEGER'], ['draft_reviewer_id', 'INTEGER'], ['draft_target', 'INTEGER'],
+    ['draft_note', 'TEXT'], ['draft_warned', 'INTEGER NOT NULL DEFAULT 0'], ['distributed_at', 'INTEGER']]) addColumn('cases', c, t);
 
   const version = Number(get('SELECT value FROM meta WHERE key = ?', 'schema')?.value || 0);
   if (version < 1) seedDefaults();
@@ -1393,6 +1397,30 @@ export function idleCases(ms, { responsible } = {}) {
     client_name: c.client_id ? get('SELECT name FROM clients WHERE id = ?', c.client_id)?.name : null,
     last_move_at: c.last_move_at, since: c.last_move_at || c.created_at,
   }));
+}
+
+/**
+ * Iniciais a distribuir: processos abertos ainda sem nº (judiciais), com a situação
+ * (se nunca marcada: aguardando documentos se falta algum pedido, senão em redação),
+ * documentos pendentes, prazo fatal (próximo prazo em aberto) e quem cuida/revisa.
+ */
+export function listDrafts() {
+  return all(`SELECT c.id, c.title, c.area, c.client_id, c.responsible_id, c.created_at, c.draft_status, c.draft_since, c.draft_reviewer_id,
+                c.draft_target, c.draft_note, cl.name AS client_name, u.name AS responsible_name, r.name AS reviewer_name,
+                (SELECT COUNT(*) FROM case_checklist i WHERE i.case_id = c.id AND i.status <> 'recebido') AS docs_pending,
+                (SELECT MIN(due_at) FROM tasks t WHERE t.case_id = c.id AND t.kind = 'prazo' AND t.done = 0 AND t.due_at IS NOT NULL) AS deadline
+              FROM cases c LEFT JOIN clients cl ON cl.id = c.client_id LEFT JOIN users u ON u.id = c.responsible_id LEFT JOIN users r ON r.id = c.draft_reviewer_id
+              WHERE c.status = 'aberto' AND COALESCE(c.process_number, '') = '' AND COALESCE(c.kind, 'judicial') NOT IN ('consultivo', 'inss', 'extrajudicial')
+              ORDER BY COALESCE(c.draft_target, 9e15), c.created_at`).map((d) => ({
+    // 'protocolada' sem nº = o nº foi apagado depois: volta para a situação de antes do protocolo
+    ...d, status: d.draft_status && d.draft_status !== 'protocolada' ? d.draft_status : (d.docs_pending ? 'documentos' : 'redacao'), since: d.draft_since || d.created_at,
+  }));
+}
+export function setDraft(id, fields) {
+  for (const [k, v] of Object.entries(fields)) {
+    if (!['draft_status', 'draft_since', 'draft_reviewer_id', 'draft_target', 'draft_note', 'draft_warned', 'distributed_at'].includes(k)) continue;
+    run(`UPDATE cases SET ${k} = ? WHERE id = ?`, v ?? null, id);
+  }
 }
 
 /** Processos em segredo de justiça (fora do DataJud) com a conferência no site do tribunal vencida. */

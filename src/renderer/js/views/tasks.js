@@ -80,9 +80,9 @@ async function loadPanel() {
     h('div', { class: 'panel-head' }, h('h3', null, 'Carga de prazos por pessoa'),
       h('span', { class: 'muted small' }, 'Prazos em aberto (audiências à parte). Clique no nome para ver os prazos dela.')),
     h('div', { class: 'table-wrap' }, h('table', { class: 'table' },
-      h('thead', null, h('tr', null, ['Pessoa', 'Atrasados', 'Esta semana', 'Próxima semana', 'Próximos 30 dias', 'Audiências (30 dias)', ''].map((t) => h('th', null, t)))),
+      h('thead', null, h('tr', null, ['Pessoa', 'Atrasados', 'Esta semana', 'Próxima semana', 'Próximos 30 dias', 'Audiências (30 dias)', 'Iniciais', ''].map((t) => h('th', null, t)))),
       h('tbody', null, rows.map((r) => h('tr', null,
         h('td', null, r.id ? h('a', { href: '#', onclick: (e) => { e.preventDefault(); who = r.id === state.me?.id ? 'me' : String(r.id); kind = 'prazo'; showLoad = false; render(); } }, r.name) : h('span', { class: 'warn-text' }, r.name)),
-        cell(r.late, 'bad-text'), cell(r.week), cell(r.next), cell(r.month), cell(r.hearings),
+        cell(r.late, 'bad-text'), cell(r.week), cell(r.next), cell(r.month), cell(r.hearings), cell(r.drafts),
         h('td', { class: 'load-bar-cell' }, h('div', { class: 'load-bar' }, h('span', { style: { width: `${Math.round(((r.week + r.next) / max) * 100)}%` } })))))))));
 }

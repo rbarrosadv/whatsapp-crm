@@ -214,6 +214,18 @@ function dayView(sum, events, awaiting) {
       });
     }), sum.prescriptions.length > 6 ? h('a', { href: '#', onclick: (e) => { e.preventDefault(); openLegal('processos', { status: 'vigiar' }); } }, `ver todos (${sum.prescriptions.length})`) : null));
   }
+  if (sum.drafts?.length) {
+    const DAY = 864e5;
+    groups.push(group('Iniciais a distribuir', 'As suas (para redigir, protocolar ou revisar)', sum.drafts.slice(0, 6).map((d) => actionRow({
+      who: d.client_name || '—', clientId: d.client_id,
+      text: `${d.title} · ${d.status_label}`,
+      meta: [d.draft_target ? `meta ${new Date(d.draft_target).toLocaleDateString('pt-BR')}` : null, d.deadline ? `prazo fatal ${new Date(d.deadline).toLocaleDateString('pt-BR')}` : null,
+        `há ${Math.floor((Date.now() - d.since) / DAY)} dia(s) nesta situação`].filter(Boolean).join(' · '),
+      late: !!(d.draft_target && d.draft_target < Date.now()),
+      onOpen: () => openCase(d.id),
+      action: 'Ver iniciais', onAction: () => openLegal('iniciais'),
+    })), sum.drafts.length > 6 ? `e mais ${sum.drafts.length - 6}` : null));
+  }
   if (sum.monthly?.length) {
     groups.push(group('Resumo do mês para os clientes', 'Do dia 1 ao 10: o sistema monta o rascunho com o que aconteceu no mês passado; você revisa e envia', sum.monthly.slice(0, 6).map((c) => actionRow({
       who: c.name, clientId: c.id,

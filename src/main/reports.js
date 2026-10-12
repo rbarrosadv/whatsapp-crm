@@ -73,6 +73,23 @@ export function overview({ from, to }) {
       pending: get("SELECT COUNT(*) AS n FROM intimations WHERE status = 'nova'").n,
     },
     moves: get("SELECT COUNT(*) AS n FROM case_moves WHERE ts >= ? AND ts < ? AND source <> 'manual'", from, to).n,
+    drafts: draftsReport(from, to),
+  };
+}
+
+/** Iniciais: quantas distribuídas no período e quanto tempo (mediana, em dias) do cadastro até a distribuição. */
+function draftsReport(from, to) {
+  const rows = all(`SELECT c.distributed_at - c.created_at AS ms, COALESCE(u.name, 'Sem responsável') AS person, COALESCE(NULLIF(TRIM(c.area), ''), 'Sem área') AS area
+                    FROM cases c LEFT JOIN users u ON u.id = c.responsible_id WHERE c.distributed_at >= ? AND c.distributed_at < ?`, from, to);
+  const med = (xs) => { const a = [...xs].sort((x, y) => x - y); return a.length ? Math.round(a[Math.floor((a.length - 1) / 2)] / DAY) : null; };
+  const group = (key) => {
+    const m = new Map();
+    for (const r of rows) { if (!m.has(r[key])) m.set(r[key], []); m.get(r[key]).push(r.ms); }
+    return [...m].map(([label, xs]) => ({ label, value: med(xs), n: xs.length })).sort((a, b) => b.n - a.n);
+  };
+  return {
+    open: get("SELECT COUNT(*) AS n FROM cases WHERE status = 'aberto' AND COALESCE(process_number, '') = '' AND COALESCE(kind, 'judicial') NOT IN ('consultivo', 'inss', 'extrajudicial')").n,
+    distributed: rows.length, medianDays: med(rows.map((r) => r.ms)), byPerson: group('person'), byArea: group('area'),
   };
 }
 
