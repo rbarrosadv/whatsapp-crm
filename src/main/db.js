@@ -2098,7 +2098,7 @@ export function watchedClients(limit = 80) {
 export function processKnown(num) {
   const d = digitsOf(num);
   if (!d) return false;
-  return !!caseByProcessNumber(num) || !!get("SELECT 1 AS x FROM intimations WHERE process_digits = ? AND status NOT IN ('cliente', 'repetida') LIMIT 1", d);
+  return !!caseByProcessNumber(num) || !!get("SELECT 1 AS x FROM intimations WHERE process_digits = ? AND status NOT IN ('cliente', 'repetida', 'descartada') LIMIT 1", d);
 }
 
 /** Intimações ainda "para conferir" disponibilizadas antes de `before` e ainda não avisadas. */
@@ -2121,7 +2121,7 @@ export function listIntimations({ status, caseId, limit = 300 } = {}) {
   const where = [];
   const args = [];
   if (status === 'abertas') where.push("i.status = 'nova'");
-  else if (status) { where.push('i.status = ?'); args.push(status); } else where.push("i.status <> 'repetida'");
+  else if (status) { where.push('i.status = ?'); args.push(status); } else where.push("i.status NOT IN ('repetida', 'descartada')");
   if (caseId) { where.push('i.case_id = ?'); args.push(caseId); }
   return all(`SELECT i.*, c.title AS case_title, COALESCE(c.client_id, i.client_id) AS client_id,
                 (SELECT name FROM clients WHERE id = COALESCE(c.client_id, i.client_id)) AS client_name,
@@ -2148,7 +2148,7 @@ export function relinkIntimations(caseId) {
 export function unknownProcesses() {
   return all(`SELECT process_number, process_digits, MAX(date) AS last, COUNT(*) AS n, MAX(tribunal) AS tribunal, MAX(classe) AS classe,
                 MAX(orgao) AS orgao, MAX(parties) AS parties
-              FROM intimations WHERE case_id IS NULL AND process_digits <> '' AND status NOT IN ('ignorada', 'cliente')
+              FROM intimations WHERE case_id IS NULL AND process_digits <> '' AND status NOT IN ('ignorada', 'cliente', 'descartada')
               GROUP BY process_digits ORDER BY last DESC`).map((r) => ({ ...r, parties: JSON.parse(r.parties || '[]') }));
 }
 export function markDatajud(caseId, error) { run('UPDATE cases SET datajud_checked_at = ?, datajud_error = ? WHERE id = ?', now(), error || null, caseId); }

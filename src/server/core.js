@@ -36,7 +36,7 @@ import { receiptPdf, externalSign } from '../main/pdf.js';
 import { PushService, PUSH_KINDS, PUSH_DEFAULTS, pushKindOf } from '../main/push.js';
 import {
   CourtsService, DATAJUD_PUBLIC_KEY, formatCnj, tribunalOf, nameCase, deadlineDates, suggestDeadline, intimationPriority,
-  nameVariants, nameMatches, consultaUrl, nextCourtDay, courtDaysBefore, courtDaysUntil, partyMatches, foldText,
+  nameVariants, nameMatches, consultaUrl, stripCss, nextCourtDay, courtDaysBefore, courtDaysUntil, partyMatches, foldText,
 } from '../main/courts.js';
 import { computeSteps, suggestedChecklist, docsRequestText, addBusinessDays, STEPS, PARTY_ROLES, DEFAULT_DOCS_TEMPLATE } from '../main/workflow.js';
 
@@ -122,6 +122,26 @@ export async function createCore({ dataDir, demo = false, version = '', safeStor
 
   db.openDb(dataDir);
   let settings = db.getSettings();
+
+  /**
+   * Intimações achadas pelo nome que não batem com a regra atual (ex.: "RAFAEL
+   * CORREA", outro advogado, para quem cadastrou "Rafael Barros Correa"): saem
+   * da lista como 'descartada' — só as ainda sem prazo; dá para trazer de volta.
+   */
+  const recheckByName = () => {
+    const oabs = new Map(db.listOabs().map((o) => [String(o.id), o]));
+    let n = 0;
+    for (const r of db.all("SELECT id, oab_ids, lawyers FROM intimations WHERE found_by = 'nome' AND status IN ('nova', 'historico') AND task_id IS NULL")) {
+      const mine = String(r.oab_ids || '').split(',').map((id) => oabs.get(id)).filter(Boolean);
+      if (!mine.length) continue;
+      let lawyers = [];
+      try { lawyers = JSON.parse(r.lawyers || '[]'); } catch { /* sem lista */ }
+      const ok = mine.some((o) => lawyers.some((a) => nameMatches(o.name, a.name, String(o.aliases || '').split('\n').filter(Boolean))));
+      if (!ok) { db.setIntimation(r.id, { status: 'descartada', handled_by: 'Sistema (nome não confere)', handled_at: Date.now() }); n++; }
+    }
+    return n;
+  };
+  try { recheckByName(); } catch (e) { console.error('intimações: reconferir pelo nome', e.message); }
 
   /** Evento para as janelas abertas. `to`: {conn} | {user} | undefined (todas). */
   const send = (channel, payload, to) => events.emit('event', channel, payload, to);
@@ -643,6 +663,7 @@ export async function createCore({ dataDir, demo = false, version = '', safeStor
       db.setSetting('djenLastRun', Date.now());
       settings.djenLastRun = Date.now();
       djenHealth(anyOk || !result.oabs, result.errors[0]);
+      if (recheckByName()) send('intimations:changed', null);
       if (result.new) {
         if (result.new > 10) notify({ kind: 'intimation', title: `${result.new} intimações novas no DJEN`, body: 'Abra Jurídico → Intimações para conferir e criar os prazos.', action: { view: 'legal', tab: 'intimacoes' } });
         send('intimations:changed', null);
@@ -1855,6 +1876,7 @@ export async function createCore({ dataDir, demo = false, version = '', safeStor
         o = { ...o, user_id: ctx.user.id };
       } else if (!o.id && o.user_id === undefined) o = { ...o, user_id: ctx.user.id };
       const id = db.saveOab(o);
+      recheckByName();
       send('intimations:changed', null);
       return id;
     },
@@ -1876,7 +1898,7 @@ export async function createCore({ dataDir, demo = false, version = '', safeStor
     },
     'relay:status': () => relayStatus(),
     'intimations:list': (_c, opts) => db.listIntimations(opts || {}).map((i) => ({
-      ...i, priority: intimationPriority(i), consulta: consultaUrl(i.tribunal),
+      ...i, text: stripCss(i.text), priority: intimationPriority(i), consulta: consultaUrl(i.tribunal),
       dates: i.date ? deadlineDates(i.date, 1) : null,
     })),
     /** Prazo sugerido pelo texto/ato + as datas (disponibilizada, publicada, começa, vence). */

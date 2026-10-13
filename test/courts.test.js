@@ -104,6 +104,11 @@ test('busca pelo nome: variações (sem acento, 1º e último nome, erros de dig
   assert.ok(!nameMatches('Rafael Augusto de Barros Corrêa', 'RAFAELA SOUZA CORREA'), 'outra pessoa');
   assert.ok(!nameMatches('Rafael Augusto de Barros Corrêa', 'MARIA AUGUSTA CORREA'));
   assert.ok(!nameMatches('Rafael Augusto de Barros Corrêa', 'RAFAELA CORREA'), 'Rafael ≠ Rafaela');
+  // outro advogado com o 1º e o último nome iguais: falta o "Barros" cadastrado
+  assert.ok(!nameMatches('Rafael Barros Correa', 'RAFAEL CORREA'), 'Rafael Correa (OAB/SC) não é Rafael Barros Correa');
+  assert.ok(!nameMatches('Rafael Barros Correa', 'RAFAEL SILVA CORREA'));
+  assert.ok(nameMatches('Rafael Barros Correa', 'RAFAEL AUGUSTO DE BARROS CORREA'), 'nome completo publicado (nomes a mais)');
+  assert.ok(nameMatches('Rafael Barros Correa', 'RAFAEL B. CORREIA'), 'inicial do meio e Correia');
 });
 
 test('prazo sugerido pelo texto e pelo ato; datas de disponibilização, publicação, início e vencimento', async () => {
@@ -130,4 +135,12 @@ test('prazo sugerido pelo texto e pelo ato; datas de disponibilização, publica
   assert.equal(intimationPriority({ doc_kind: 'Sentença', text: 'Julgo procedente' }), 'alta');
   assert.equal(intimationPriority({ doc_kind: 'Ato Ordinatório', text: 'Remessa dos autos à contadoria.' }), 'rotina');
   assert.equal(consultaUrl('TRT23'), 'https://pje.trt23.jus.br/consultaprocessual/');
+});
+
+test('texto do DJEN sem o CSS do tribunal', async () => {
+  const { parseDjenItem, stripCss } = await import('../src/main/courts.js');
+  const t = parseDjenItem({ id: 1, texto: '<style>body{ padding: 10px; }</style><p>CUMPRIMENTO DE SENTENÇA</p>' }).text;
+  assert.equal(t, 'CUMPRIMENTO DE SENTENÇA');
+  assert.equal(stripCss('body{ padding: 10px; font-family: Times New Roman; } #divHeader{ line-height:25px; }CUMPRIMENTO DE SENTENÇA Nº 1'), 'CUMPRIMENTO DE SENTENÇA Nº 1');
+  assert.equal(stripCss('Texto normal {sem css} aqui'), 'Texto normal {sem css} aqui');
 });

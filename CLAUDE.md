@@ -179,10 +179,16 @@ Motor (`src/main`, sem Electron apesar do nome da pasta):
   com `nameVariants(oabs.name, oabs.aliases)` (sem acento, 1º+último, grafias
   cadastradas, erros comuns rr/r, ss/s, z/s, y/i, ph/f; ≤ 6 por OAB, 1 s entre
   consultas) e só aceita se `nameMatches` (1º nome rígido, sobrenome com 1–2
-  letras de diferença "pelo som") — OAB publicada diferente → `found_by='nome'`
+  letras de diferença "pelo som", e **todos os nomes do meio cadastrados presentes**
+  na publicação — "Rafael Barros Correa" não aceita "RAFAEL CORREA"; `recheckByName`
+  no core reconfere as já gravadas ao iniciar, ao salvar OAB e após cada busca →
+  `status='descartada'`, "Sistema (nome não confere)") — OAB publicada diferente → `found_by='nome'`
   (faixa "Achada pelo nome — confira"). O DJEN não busca por CPF. **Repetidas**:
   `dup_key` (processo + dia + texto) → `status='repetida'`, `dup_of`, contagem
-  `dups`. **Prazo sugerido** (`suggestDeadline`: "prazo de N (extenso) dias",
+  `dups`. **Excluída** (`status='descartada'`, botão "Não é minha — excluir", aba
+  "Excluídas" com "Trazer de volta"): fora das listas, de "Processos encontrados" e não
+  volta na busca (mesmo `ext_id`). `stripCss` tira o CSS que alguns tribunais mandam no
+  texto. **Prazo sugerido** (`suggestDeadline`: "prazo de N (extenso) dias",
   horas, ou pelo ato — sentença 15 / trabalhista 8 / juizado 10 / criminal em
   dias corridos (`isCriminal`), citação 15, embargos 5, sem nada 5 (CPC 218 §3º);
   audiência = `event`, vai para a agenda) e `deadlineDates` (disponibilizada →

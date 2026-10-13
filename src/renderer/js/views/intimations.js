@@ -8,7 +8,7 @@ import { state, api, on, openClient, setSetting } from '../store.js';
 import { openCase } from './casemodal.js';
 import { icon } from '../icons.js';
 
-let filter = 'nova'; // nova | prazo | lida | todas
+let filter = 'nova'; // nova | prazo | lida | todas | descartada
 let scope = null; // 'minhas' | 'todas' (padrão: minhas para quem tem OAB)
 const day = (ts) => (ts ? new Date(ts).toLocaleDateString('pt-BR') : '—');
 
@@ -56,7 +56,7 @@ export async function renderIntimations(el, redraw) {
           onclick: () => { scope = id; redraw(); },
         }, label))) : null,
       h('div', { class: 'segmented' },
-        [['nova', `Para conferir${counts.nova != null ? ` (${counts.nova})` : ''}`], ['prazo', 'Com prazo criado'], ['lida', 'Conferidas'], ['todas', 'Todas']]
+        [['nova', `Para conferir${counts.nova != null ? ` (${counts.nova})` : ''}`], ['prazo', 'Com prazo criado'], ['lida', 'Conferidas'], ['todas', 'Todas'], ['descartada', 'Excluídas']]
           .map(([id, label]) => h('button', { class: `seg ${filter === id ? 'active' : ''}`, onclick: () => { filter = id; redraw(); } }, label))),
       h('div', { class: 'grow' }),
       h('span', { class: 'muted small' }, st.running ? 'Buscando…' : st.lastRun ? `Última busca: ${fmtDateTime(st.lastRun)}` : 'Ainda não buscou'),
@@ -135,7 +135,7 @@ async function oabDialog(o, redraw) {
         h('label', { class: 'field' }, h('span', null, 'Número da OAB'), number),
         h('label', { class: 'field' }, h('span', null, 'UF'), uf)),
       h('label', { class: 'field' }, h('span', null, 'Outras formas do nome (opcional, uma por linha)'), aliases),
-      h('p', { class: 'muted small' }, 'O sistema busca pela OAB e também pelo nome — sem acentos, só primeiro e último nome e com erros comuns de digitação (rr/r, ss/s, z/s, y/i…). Assim acha a publicação mesmo com a OAB errada. Só entra o que tiver o nome parecido com o seu.'),
+      h('p', { class: 'muted small' }, 'O sistema busca pela OAB e também pelo nome — sem acentos e com erros comuns de digitação (rr/r, ss/s, z/s, y/i…). Assim acha a publicação mesmo com a OAB errada. Só entra o que tiver todos os nomes cadastrados (pode ter nomes a mais ou só a inicial): “Rafael Barros Correa” não aceita “Rafael Correa”, que é outro advogado.'),
       h('label', { class: 'field' }, h('span', null, 'Usuário no sistema (recebe os prazos dele)'), user),
       o.id ? h('label', { class: 'check' }, active, ' Buscar intimações desta OAB') : null),
     actions: [
@@ -278,7 +278,10 @@ function card(i, redraw) {
       h('b', null, `${i.kind}${i.doc_kind ? ` · ${i.doc_kind}` : ''}`),
       h('span', { class: 'muted small grow' }, i.orgao || ''),
       late ? h('span', { class: 'status-pill bad', title: 'O prazo já começou a correr e ainda não foi criado' }, 'prazo já correndo') : null,
-      i.status === 'prazo' ? h('span', { class: 'status-pill ok' }, `prazo ${day(i.task_due)}`) : i.status === 'lida' ? h('span', { class: 'status-pill muted' }, 'conferida') : h('span', { class: 'status-pill warn' }, 'para conferir')),
+      i.status === 'prazo' ? h('span', { class: 'status-pill ok' }, `prazo ${day(i.task_due)}`)
+        : i.status === 'lida' ? h('span', { class: 'status-pill muted' }, 'conferida')
+          : i.status === 'descartada' ? h('span', { class: 'status-pill muted', title: i.handled_by ? `Excluída por ${i.handled_by}` : '' }, 'excluída')
+            : h('span', { class: 'status-pill warn' }, 'para conferir')),
     i.dates ? h('div', { class: 'intim-dates small' },
       h('span', null, 'Disponibilizada ', h('b', null, day(i.dates.available))),
       h('span', null, 'Publicada ', h('b', null, day(i.dates.published))),
@@ -304,8 +307,17 @@ function card(i, redraw) {
       }, `Consultar no ${i.tribunal || 'tribunal'}`) : null,
       h('div', { class: 'grow' }),
       i.status === 'nova' ? h('button', { class: 'btn btn-sm', title: 'Conferida, não gera prazo', onclick: async () => { await api('intimations:set', [i.id], 'lida').catch(errToast); redraw(); } }, 'Conferida, sem prazo') : null,
-      i.status !== 'nova' ? h('button', { class: 'btn btn-sm', onclick: async () => { await api('intimations:set', [i.id], 'nova').catch(errToast); redraw(); } }, 'Voltar para conferir') : null,
-      i.status !== 'prazo' ? h('button', { class: 'btn btn-sm btn-primary', onclick: () => deadlineDialog(i, redraw) }, 'Criar prazo') : null));
+      i.status !== 'nova' ? h('button', { class: 'btn btn-sm', onclick: async () => { await api('intimations:set', [i.id], 'nova').catch(errToast); redraw(); } }, i.status === 'descartada' ? 'Trazer de volta' : 'Voltar para conferir') : null,
+      !['prazo', 'descartada'].includes(i.status) ? h('button', {
+        class: 'btn btn-sm', title: 'Não é do escritório (outro advogado com nome parecido): sai da lista. Fica em “Excluídas”.',
+        onclick: async () => {
+          if (!await confirmDialog('Excluir esta intimação? Ela sai da lista e não volta na próxima busca. Dá para trazer de volta em “Excluídas”.', { okLabel: 'Excluir' })) return;
+          await api('intimations:set', [i.id], 'descartada').catch(errToast);
+          toast('Intimação excluída', 'success');
+          redraw();
+        },
+      }, i.found_by === 'nome' ? 'Não é minha — excluir' : 'Excluir') : null,
+      !['prazo', 'descartada'].includes(i.status) ? h('button', { class: 'btn btn-sm btn-primary', onclick: () => deadlineDialog(i, redraw) }, 'Criar prazo') : null));
 }
 
 async function deadlineDialog(i, redraw) {

@@ -1005,6 +1005,8 @@ test('intimações: busca pelo nome acha publicação com OAB errada, junta repe
         { ...base, id: 'nome-2', tipoDocumento: 'Sentença', texto: 'Julgo PARCIALMENTE PROCEDENTES os pedidos.', destinatarioadvogados: [{ advogado: { nome: 'RAFAEL AUGUSTO DE BAROS CORREA', numero_oab: '', uf_oab: '' } }] },
         // homônimo parcial de outra pessoa: não entra
         { ...base, id: 'nome-3', tipoDocumento: 'Despacho', texto: 'Vista.', destinatarioadvogados: [{ advogado: { nome: 'RAFAELA CORREA LIMA', numero_oab: '999', uf_oab: 'SP' } }] },
+        // outro advogado, "Rafael Correa" de SC (falta o Barros): não entra
+        { ...base, id: 'nome-4', numeroprocessocommascara: '5005282-24.2025.8.21.0057', tipoDocumento: 'Ato ordinatório', texto: '<style>body{ padding: 10px; }</style>CUMPRIMENTO DE SENTENÇA', destinatarioadvogados: [{ advogado: { nome: 'RAFAEL CORREA', numero_oab: '45587', uf_oab: 'SC' } }] },
       ];
     }
     return new Response(JSON.stringify({ count: items.length, items }), { status: 200, headers: { 'Content-Type': 'application/json' } });
@@ -1016,6 +1018,18 @@ test('intimações: busca pelo nome acha publicação com OAB errada, junta repe
   const all = await c.call('intimations:list', {});
   const found = all.filter((i) => i.process_number === '0000777-12.2026.5.23.0002');
   assert.equal(found.length, 1, 'repetida juntada, homônimo fora');
+  assert.ok(!all.some((i) => i.process_number === '5005282-24.2025.8.21.0057'), 'Rafael Correa (OAB/SC) é outro advogado');
+  // as que já tinham entrado antes da regra nova: saem sozinhas (excluídas), e dá para trazer de volta
+  const wrong = db.addIntimation({ ext_id: 'antiga-sc', date: Date.now() - 864e5, tribunal: 'TJRS', kind: 'Intimação', process_number: '5005282-24.2025.8.21.0057', text: 'body{ padding: 10px; }ATO ORDINATÓRIO', lawyers: [{ name: 'RAFAEL CORREA', oab: '45587', uf: 'SC' }] }, oab.id, 'nova', { foundBy: 'nome' });
+  assert.ok((await c.call('intimations:list', { status: 'nova' })).some((i) => i.id === wrong));
+  await c.call('oabs:save', { ...oab, name: 'Rafael Augusto de Barros Correa', aliases: 'Rafael A. B. Correa' });
+  assert.ok(!(await c.call('intimations:list', {})).some((i) => i.id === wrong), 'saiu da lista');
+  const gone = (await c.call('intimations:list', { status: 'descartada' })).find((i) => i.id === wrong);
+  assert.equal(gone.handled_by, 'Sistema (nome não confere)');
+  assert.equal(gone.text, 'ATO ORDINATÓRIO', 'sem o CSS do tribunal');
+  await c.call('intimations:set', [wrong], 'nova');
+  await c.call('intimations:set', [wrong], 'descartada');
+  assert.ok(!(await c.call('courts:unknown')).some((p) => p.process_digits === '50052822420258210057'), 'excluída não vira "processo encontrado"');
   const it = found[0];
   assert.equal(it.found_by, 'nome', 'marcada como achada pelo nome (OAB errada)');
   assert.equal(it.dups, 1);

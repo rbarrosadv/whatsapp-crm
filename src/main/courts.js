@@ -278,7 +278,8 @@ const close = (a, b) => a === b || phon(a) === phon(b) || (Math.min(a.length, b.
 
 /**
  * O nome publicado é desta pessoa? Primeiro e último nome iguais ou quase
- * (1–2 letras de diferença) e os do meio, se houver, batendo com algum dela.
+ * (1–2 letras de diferença) e todos os nomes do meio cadastrados presentes na
+ * publicação (ou só a inicial); a publicação pode ter nomes a mais.
  */
 export function nameMatches(target, published, extra = []) {
   const p = nameTokens(published);
@@ -289,9 +290,11 @@ export function nameMatches(target, published, extra = []) {
     // o 1º nome é mais rígido (Rafael ≠ Rafaela): só a mesma grafia "pelo som" ou 1 letra em nome longo
     const firstOk = t[0] === p[0] || phon(t[0]) === phon(p[0]) || (Math.min(t[0].length, p[0].length) >= 7 && lev(phon(t[0]), phon(p[0])) <= 1);
     if (!firstOk || !close(t[t.length - 1], p[p.length - 1])) continue;
+    // cada sobrenome do meio cadastrado tem que estar na publicação (ou a inicial):
+    // "Rafael Barros Correa" não é "RAFAEL CORREA" (outro advogado)
     const midP = p.slice(1, -1);
     const midT = t.slice(1, -1);
-    if (midP.every((w) => midT.some((x) => close(x, w) || (w.length === 1 && x[0] === w)))) return true;
+    if (midT.every((x) => midP.some((w) => close(x, w) || (w.length === 1 && x[0] === w)))) return true;
   }
   return false;
 }
@@ -337,7 +340,10 @@ export function consultaUrl(tribunal) {
 
 // ------------------------------------------------------------ DJEN
 
-const stripHtml = (s) => String(s || '').replace(/<br\s*\/?>/gi, '\n').replace(/<\/p>/gi, '\n').replace(/<[^>]+>/g, '')
+/** Tira o CSS que alguns tribunais mandam junto do texto ("body{ padding… }"). */
+export const stripCss = (s) => String(s || '').replace(/<(style|script)[^>]*>[\s\S]*?<\/\1>/gi, '')
+  .replace(/^(?:\s*[#.@\w\s,:>*()-]{1,80}\{[^{}:]*:[^{}]*\}\s*)+/, '');
+const stripHtml = (s) => stripCss(s).replace(/<br\s*\/?>/gi, '\n').replace(/<\/p>/gi, '\n').replace(/<[^>]+>/g, '')
   .replace(/&nbsp;/g, ' ').replace(/&amp;/g, '&').replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&quot;/g, '"')
   .replace(/&#(\d+);/g, (_, c) => String.fromCharCode(Number(c))).replace(/[ \t]+/g, ' ').replace(/\n{3,}/g, '\n\n').trim();
 
