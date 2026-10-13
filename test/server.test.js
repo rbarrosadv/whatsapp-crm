@@ -1030,6 +1030,16 @@ test('intimações: busca pelo nome acha publicação com OAB errada, junta repe
   await c.call('intimations:set', [wrong], 'nova');
   await c.call('intimations:set', [wrong], 'descartada');
   assert.ok(!(await c.call('courts:unknown')).some((p) => p.process_digits === '50052822420258210057'), 'excluída não vira "processo encontrado"');
+  // pesquisa dentro das intimações guardadas
+  const sr = await c.call('intimations:search', { q: 'parcialmente procedentes', status: 'todas' });
+  assert.ok(sr.items.some((i) => i.id === found[0].id), 'acha pelo texto');
+  assert.equal(sr.items.find((i) => i.id === found[0].id).snippet.match, 'PARCIALMENTE');
+  assert.ok(!(await c.call('intimations:search', { q: 'ato ordinatorio', status: 'todas' })).items.some((i) => i.id === wrong), 'excluída fora da pesquisa em Todas');
+  assert.ok((await c.call('intimations:search', { q: 'ato ordinatorio', status: 'descartada' })).items.some((i) => i.id === wrong), 'mas aparece na aba Excluídas');
+  assert.equal((await c.call('intimations:search', { q: 'parcialmente', status: 'todas', tribunal: 'TJRS' })).total, 0, 'filtro de tribunal');
+  assert.ok((await c.call('intimations:search', { q: '0000777', status: 'todas', from: Date.now() - 30 * 864e5 })).total >= 1, 'pelo nº e período');
+  const facets = await c.call('intimations:facets');
+  assert.ok(facets.tribunais.includes('TRT23') && facets.atos.includes('Sentença'));
   const it = found[0];
   assert.equal(it.found_by, 'nome', 'marcada como achada pelo nome (OAB errada)');
   assert.equal(it.dups, 1);

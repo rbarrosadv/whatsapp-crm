@@ -2117,9 +2117,12 @@ const intimationRow = (r) => (r ? {
   ...r, parties: JSON.parse(r.parties || '[]'), lawyers: JSON.parse(r.lawyers || '[]'),
 } : null);
 
-export function listIntimations({ status, caseId, limit = 300 } = {}) {
+export function listIntimations({ status, caseId, from, to, tribunal, limit = 300 } = {}) {
   const where = [];
   const args = [];
+  if (from) { where.push('i.date >= ?'); args.push(from); }
+  if (to) { where.push('i.date <= ?'); args.push(to); }
+  if (tribunal) { where.push('i.tribunal = ?'); args.push(tribunal); }
   if (status === 'abertas') where.push("i.status = 'nova'");
   else if (status) { where.push('i.status = ?'); args.push(status); } else where.push("i.status NOT IN ('repetida', 'descartada')");
   if (caseId) { where.push('i.case_id = ?'); args.push(caseId); }
@@ -2129,6 +2132,13 @@ export function listIntimations({ status, caseId, limit = 300 } = {}) {
                 (SELECT COUNT(*) FROM intimations d WHERE d.dup_of = i.id) AS dups
               FROM intimations i LEFT JOIN cases c ON c.id = i.case_id LEFT JOIN tasks t ON t.id = i.task_id
               ${where.length ? `WHERE ${where.join(' AND ')}` : ''} ORDER BY i.date DESC, i.id DESC LIMIT ?`, ...args, limit).map(intimationRow);
+}
+/** Tribunais e tipos de ato que já apareceram (para os filtros da pesquisa). */
+export function intimationFacets() {
+  return {
+    tribunais: all("SELECT DISTINCT tribunal AS v FROM intimations WHERE tribunal <> '' AND status NOT IN ('repetida') ORDER BY 1").map((r) => r.v),
+    atos: all("SELECT DISTINCT COALESCE(NULLIF(doc_kind, ''), kind) AS v FROM intimations WHERE status NOT IN ('repetida') ORDER BY 1").map((r) => r.v).filter(Boolean),
+  };
 }
 export function getIntimation(id) { return intimationRow(get('SELECT * FROM intimations WHERE id = ?', id)); }
 export function setIntimation(id, fields) {

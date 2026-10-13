@@ -36,7 +36,7 @@ import { receiptPdf, externalSign } from '../main/pdf.js';
 import { PushService, PUSH_KINDS, PUSH_DEFAULTS, pushKindOf } from '../main/push.js';
 import {
   CourtsService, DATAJUD_PUBLIC_KEY, formatCnj, tribunalOf, nameCase, deadlineDates, suggestDeadline, intimationPriority,
-  nameVariants, nameMatches, consultaUrl, stripCss, nextCourtDay, courtDaysBefore, courtDaysUntil, partyMatches, foldText,
+  nameVariants, nameMatches, consultaUrl, stripCss, searchIntimations, nextCourtDay, courtDaysBefore, courtDaysUntil, partyMatches, foldText,
 } from '../main/courts.js';
 import { computeSteps, suggestedChecklist, docsRequestText, addBusinessDays, STEPS, PARTY_ROLES, DEFAULT_DOCS_TEMPLATE } from '../main/workflow.js';
 
@@ -142,6 +142,12 @@ export async function createCore({ dataDir, demo = false, version = '', safeStor
     return n;
   };
   try { recheckByName(); } catch (e) { console.error('intimações: reconferir pelo nome', e.message); }
+
+  /** Intimação pronta para a tela: texto sem CSS, prioridade, link de consulta e as datas. */
+  const intimationView = (i) => ({
+    ...i, text: stripCss(i.text), priority: intimationPriority(i), consulta: consultaUrl(i.tribunal),
+    dates: i.date ? deadlineDates(i.date, 1) : null,
+  });
 
   /** Evento para as janelas abertas. `to`: {conn} | {user} | undefined (todas). */
   const send = (channel, payload, to) => events.emit('event', channel, payload, to);
@@ -1897,10 +1903,19 @@ export async function createCore({ dataDir, demo = false, version = '', safeStor
       return true;
     },
     'relay:status': () => relayStatus(),
-    'intimations:list': (_c, opts) => db.listIntimations(opts || {}).map((i) => ({
-      ...i, text: stripCss(i.text), priority: intimationPriority(i), consulta: consultaUrl(i.tribunal),
-      dates: i.date ? deadlineDates(i.date, 1) : null,
-    })),
+    'intimations:list': (_c, opts) => db.listIntimations(opts || {}).map(intimationView),
+    /**
+     * Pesquisa nas intimações já guardadas (texto, nº, partes, cliente, tribunal,
+     * advogados), com filtros de período, tribunal, ato e situação.
+     */
+    'intimations:search': (_c, { q = '', status, from, to, tribunal, ato } = {}) => {
+      let rows = db.listIntimations({ status: status && status !== 'todas' ? status : undefined, from, to, tribunal, limit: 5000 })
+        .map((i) => ({ ...i, text: stripCss(i.text) }));
+      if (ato) rows = rows.filter((i) => (i.doc_kind || i.kind) === ato);
+      const found = searchIntimations(rows, q);
+      return { total: found.length, items: found.slice(0, 200).map(intimationView) };
+    },
+    'intimations:facets': () => db.intimationFacets(),
     /** Prazo sugerido pelo texto/ato + as datas (disponibilizada, publicada, começa, vence). */
     'intimations:suggest': (_c, id) => {
       const it = db.getIntimation(id);

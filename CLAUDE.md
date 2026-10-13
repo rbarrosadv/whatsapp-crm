@@ -188,7 +188,12 @@ Motor (`src/main`, sem Electron apesar do nome da pasta):
   `dups`. **Excluída** (`status='descartada'`, botão "Não é minha — excluir", aba
   "Excluídas" com "Trazer de volta"): fora das listas, de "Processos encontrados" e não
   volta na busca (mesmo `ext_id`). `stripCss` tira o CSS que alguns tribunais mandam no
-  texto. **Prazo sugerido** (`suggestDeadline`: "prazo de N (extenso) dias",
+  texto. **Pesquisa nas intimações** (`intimations:search {q, status, from, tribunal,
+  ato}` → `searchIntimations` em courts.js: palavras soltas todas presentes, "frase" exata,
+  sem acento, também no nº sem pontos, partes, cliente, tribunal, vara e advogados; devolve
+  `snippet` {before, match, after}; até 200) + `intimations:facets` (tribunais e atos);
+  tela `searchPanel` em intimations.js (período, tribunal, ato, atalhos; a situação é a da
+  aba; digitar redesenha só `.intim-results` e esconde `.intim-normal`). **Prazo sugerido** (`suggestDeadline`: "prazo de N (extenso) dias",
   horas, ou pelo ato — sentença 15 / trabalhista 8 / juizado 10 / criminal em
   dias corridos (`isCriminal`), citação 15, embargos 5, sem nada 5 (CPC 218 §3º);
   audiência = `event`, vai para a agenda) e `deadlineDates` (disponibilizada →

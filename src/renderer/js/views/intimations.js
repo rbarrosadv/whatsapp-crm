@@ -10,6 +10,10 @@ import { icon } from '../icons.js';
 
 let filter = 'nova'; // nova | prazo | lida | todas | descartada
 let scope = null; // 'minhas' | 'todas' (padrão: minhas para quem tem OAB)
+// pesquisa dentro das intimações (fica enquanto a pessoa navega entre as abas)
+const search = { q: '', period: '30', tribunal: '', ato: '' };
+const SHORTCUTS = ['audiência', 'sentença', 'alvará', 'penhora', 'perícia', 'prazo', 'acordo', 'citação'];
+const searching = () => !!(search.q.trim() || search.tribunal || search.ato);
 const day = (ts) => (ts ? new Date(ts).toLocaleDateString('pt-BR') : '—');
 
 export async function renderIntimations(el, redraw) {
@@ -17,20 +21,21 @@ export async function renderIntimations(el, redraw) {
   let list;
   let unknown;
   let watched;
+  let facets;
   try {
-    [st, list, unknown, watched] = await Promise.all([
+    [st, list, unknown, watched, facets] = await Promise.all([
       api('intimations:status'),
       api('intimations:list', filter === 'todas' ? {} : { status: filter }),
       api('courts:unknown'),
       api('intimations:list', { status: 'cliente' }),
+      api('intimations:facets').catch(() => ({ tribunais: [], atos: [] })),
     ]);
   } catch (e) { errToast(e); return; }
   const canEdit = state.me?.role !== 'estagiario';
   const myOabs = st.oabs.filter((o) => o.user_id === state.me?.id).map((o) => String(o.id));
   if (scope == null) scope = myOabs.length && st.oabs.length > 1 ? 'minhas' : 'todas';
-  if (scope === 'minhas') {
-    list = list.filter((i) => String(i.oab_ids || '').split(',').some((id) => myOabs.includes(id)) || i.responsible_id === state.me?.id);
-  }
+  const inScope = (i) => scope !== 'minhas' || String(i.oab_ids || '').split(',').some((id) => myOabs.includes(id)) || i.responsible_id === state.me?.id;
+  list = list.filter(inScope);
   const counts = { nova: filter === 'nova' ? list.length : null };
 
   // urgentes primeiro; as de rotina (ato ordinatório, juntada…) recolhidas
@@ -38,6 +43,7 @@ export async function renderIntimations(el, redraw) {
   if (filter === 'nova') list = [...list].sort((a, b) => (rank[a.priority] - rank[b.priority]) || (b.date - a.date));
   const routine = filter === 'nova' ? list.filter((i) => i.priority === 'rotina') : [];
   const main = filter === 'nova' ? list.filter((i) => i.priority !== 'rotina') : list;
+  const normal = h('div', { class: 'intim-normal', hidden: searching() });
   const failing = st.failing || (st.oabs.some((o) => o.active) && st.lastOk && Date.now() - st.lastOk > 12 * 3600e3);
 
   fill(el,
@@ -73,6 +79,9 @@ export async function renderIntimations(el, redraw) {
           redraw();
         },
       }, 'Buscar agora')),
+    searchPanel(facets, inScope, normal, redraw),
+    normal);
+  fill(normal,
     main.length ? h('div', { class: 'intim-list' }, main.map((i) => card(i, redraw)))
       : h('div', { class: 'panel' }, h('p', { class: 'muted' }, filter === 'nova' ? (routine.length ? 'Nenhuma intimação importante para conferir.' : 'Nenhuma intimação para conferir.') : 'Nada aqui.')),
     routine.length ? h('details', { class: 'panel intim-routine' },
@@ -82,6 +91,63 @@ export async function renderIntimations(el, redraw) {
           onclick: async (e) => { e.preventDefault(); await api('intimations:set', routine.map((i) => i.id), 'lida').catch(errToast); redraw(); },
         }, 'Conferir todas')),
       h('div', { class: 'intim-list' }, routine.map((i) => card(i, redraw)))) : null);
+}
+
+// ------------------------------------------------------------ pesquisa
+
+/**
+ * Busca dentro das intimações guardadas: texto, nº do processo, partes, cliente,
+ * tribunal e advogados, sem acento; filtros de período, tribunal e ato; a
+ * situação é a da aba escolhida (Para conferir, Com prazo…). Mostra o trecho
+ * onde a palavra aparece. Digitar só redesenha os resultados (não perde o foco).
+ */
+function searchPanel(facets, inScope, normal, redraw) {
+  const results = h('div', { class: 'intim-results' });
+  let seq = 0;
+  const run = async () => {
+    const my = ++seq;
+    normal.hidden = searching();
+    if (!searching()) { fill(results); return; }
+    const days = Number(search.period);
+    let r;
+    try {
+      r = await api('intimations:search', {
+        q: search.q, status: filter, tribunal: search.tribunal || undefined, ato: search.ato || undefined,
+        from: days ? Date.now() - days * 864e5 : undefined,
+      });
+    } catch (e) { errToast(e); return; }
+    if (my !== seq) return;
+    const items = r.items.filter(inScope);
+    fill(results,
+      h('div', { class: 'muted small intim-found' }, items.length
+        ? `${items.length}${r.total > r.items.length ? '+' : ''} intimação(ões) encontrada(s)${filter !== 'todas' ? ' nesta aba — para procurar em todas, escolha “Todas”' : ''}`
+        : `Nenhuma intimação encontrada${filter !== 'todas' ? ' nesta aba. Tente na aba “Todas” ou aumente o período' : '. Tente aumentar o período'}.`),
+      items.length ? h('div', { class: 'intim-list' }, items.map((i) => card(i, redraw))) : null);
+  };
+  let timer;
+  const input = h('input', {
+    class: 'input intim-q', type: 'search', placeholder: 'Buscar nas intimações… (texto, nº do processo, parte, cliente)', value: search.q,
+    'aria-label': 'Buscar nas intimações',
+    oninput: (e) => { search.q = e.target.value; clearTimeout(timer); timer = setTimeout(run, 300); },
+  });
+  const sel = (key, opts, label) => h('label', { class: 'intim-filter small' }, h('span', null, label),
+    h('select', { class: 'input select-sm', onchange: (e) => { search[key] = e.target.value; run(); } },
+      opts.map(([v, l]) => h('option', { value: v, selected: search[key] === v }, l))));
+  const panel = h('div', { class: 'panel intim-search' },
+    h('div', { class: 'row' }, icon('search', 18), input,
+      searching() ? h('button', { class: 'btn btn-sm', onclick: () => { Object.assign(search, { q: '', tribunal: '', ato: '' }); redraw(); } }, 'Limpar') : null),
+    h('div', { class: 'row wrap' },
+      sel('period', [['7', 'Últimos 7 dias'], ['30', 'Últimos 30 dias'], ['90', 'Últimos 90 dias'], ['365', 'Último ano'], ['0', 'Tudo']], 'Período'),
+      sel('tribunal', [['', 'Todos'], ...facets.tribunais.map((t) => [t, t])], 'Tribunal'),
+      sel('ato', [['', 'Todos'], ...facets.atos.map((t) => [t, t])], 'Ato')),
+    h('div', { class: 'row wrap intim-chips' }, h('span', { class: 'muted small' }, 'Atalhos:'),
+      SHORTCUTS.map((w) => h('button', {
+        class: `chip ${search.q.trim().toLowerCase() === w ? 'active' : ''}`, type: 'button',
+        onclick: () => { search.q = w; input.value = w; run(); },
+      }, w))),
+    results);
+  if (searching()) run();
+  return panel;
 }
 
 // ------------------------------------------------------------ OABs
@@ -294,6 +360,7 @@ function card(i, redraw) {
         : h('span', { class: 'muted' }, ' · processo ainda não cadastrado'),
       i.parties.length ? h('span', { class: 'muted' }, ` · ${i.parties.map((x) => x.name).join(' × ')}`) : null,
       i.dups ? h('span', { class: 'muted', title: 'A mesma publicação saiu mais de uma vez (ex.: para cada advogado); ficou uma só' }, ` · +${i.dups} repetida(s) juntada(s)`) : null),
+    i.snippet ? h('div', { class: 'intim-snippet' }, i.snippet.before, h('mark', null, i.snippet.match), i.snippet.after) : null,
     text,
     h('div', { class: 'row wrap' },
       h('button', { class: 'btn btn-sm', onclick: () => text.classList.toggle('open') }, 'Ler tudo'),

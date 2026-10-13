@@ -802,6 +802,18 @@ try {
   check(true, 'busca pelo nome acha publicação com o nome digitado errado e a OAB errada');
   check(await page.locator('.intim .intim-dates:has-text("Publicada")').count() >= 2, 'mostra disponibilização, publicação e início do prazo');
   await shot(page, '05k-intimacoes');
+  // pesquisa dentro das intimações: trecho com a palavra destacada, sem acento
+  await page.locator('.intim-q').fill('procedentes');
+  await page.waitForSelector('.intim-results .intim-snippet mark');
+  check(await page.locator('.intim-normal').isHidden(), 'pesquisa troca a lista pelos resultados');
+  check((await page.locator('.intim-results .intim-snippet mark').first().textContent()).toLowerCase() === 'procedentes', 'pesquisa nas intimações mostra o trecho com a palavra');
+  await page.click('.intim-chips .chip:has-text("sentença")');
+  await page.waitForSelector('.intim-results .intim-found:has-text("encontrada")');
+  check(await page.locator('.intim-q').inputValue() === 'sentença', 'atalho preenche a pesquisa');
+  await shot(page, '05k-pesquisa-intimacoes');
+  await page.click('.intim-search button:has-text("Limpar")');
+  await page.waitForSelector('.intim-normal:not([hidden]) .intim');
+  check(true, 'limpar volta à lista');
   await page.locator('.intim', { hasText: '0000456-12.2026.5.23.0002' }).locator('button:has-text("Criar prazo")').click();
   await page.waitForSelector('.modal .intim-suggest:has-text("recurso ordinário em 8 dias")');
   check(await page.locator('.modal .field:has-text("Prazo") input').inputValue() === '8', 'prazo sugerido pelo ato (sentença trabalhista: 8 dias)');

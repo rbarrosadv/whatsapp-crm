@@ -154,6 +154,38 @@ const NUM_WORDS = {
 };
 export const foldText = (s) => String(s || '').normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase();
 
+/**
+ * Pesquisa nas intimações: palavras soltas (todas têm que aparecer) e "frases
+ * entre aspas", sem acento nem maiúscula; números procuram também no nº do
+ * processo sem pontos. Devolve as que batem com o trecho onde a 1ª palavra
+ * aparece ({before, match, after}).
+ */
+export function searchIntimations(list, q) {
+  const terms = [];
+  String(q || '').replace(/"([^"]+)"|(\S+)/g, (_, phrase, word) => { const t = foldText(phrase || word).trim(); if (t) terms.push(t); return ''; });
+  if (!terms.length) return list.map((i) => ({ ...i, snippet: null }));
+  // dobra letra a letra para o trecho achado no texto dobrado valer no original
+  const foldKeep = (s) => [...String(s || '')].map((c) => foldText(c)[0] ?? c).join('');
+  const out = [];
+  for (const i of list) {
+    const text = String(i.text || '');
+    const folded = foldKeep(text);
+    const extra = foldText([i.process_number, String(i.process_number || '').replace(/\D/g, ''), i.tribunal, i.orgao, i.classe, i.kind, i.doc_kind,
+      i.client_name, i.case_title, ...(i.parties || []).map((p) => p.name), ...(i.lawyers || []).map((a) => `${a.name} ${a.oab || ''}`)].join(' \n '));
+    if (!terms.every((t) => folded.includes(t) || extra.includes(t) || (/^\d[\d.\-/]*$/.test(t) && extra.includes(t.replace(/\D/g, ''))))) continue;
+    const t = terms.find((x) => folded.includes(x));
+    let snippet = null;
+    if (t) {
+      const at = folded.indexOf(t);
+      const a = Math.max(0, at - 90);
+      const b = Math.min(text.length, at + t.length + 140);
+      snippet = { before: `${a > 0 ? '…' : ''}${text.slice(a, at)}`, match: text.slice(at, at + t.length), after: `${text.slice(at + t.length, b)}${b < text.length ? '…' : ''}` };
+    }
+    out.push({ ...i, snippet });
+  }
+  return out;
+}
+
 /** Processo criminal (prazos em dias corridos — CPP art. 798). */
 export function isCriminal({ area = '', classe = '', text = '' } = {}) {
   const t = foldText(`${area} ${classe}`);

@@ -929,6 +929,16 @@ body:not([data-view="inbox"]) .banner-wrap { display: none !important; }
 .intim-date { font-weight: 700; font-variant-numeric: tabular-nums; }
 .intim-text { white-space: pre-wrap; font-size: 14px; display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden; }
 .intim-text.open { display: block; -webkit-line-clamp: unset; max-height: 40vh; overflow-y: auto; background: var(--panel-2); padding: 8px 10px; border-radius: 8px; }
+.intim-search { gap: 10px; margin-bottom: 12px; }
+.intim-search > .row:first-child { align-items: center; gap: 8px; }
+.intim-q { flex: 1; font-size: 15px; }
+.intim-filter { display: flex; align-items: center; gap: 6px; }
+.intim-chips { gap: 6px; align-items: center; }
+.intim-results:empty { display: none; }
+.intim-results { display: flex; flex-direction: column; gap: 10px; margin-top: 4px; }
+.intim-snippet { font-size: 14px; line-height: 1.5; background: var(--panel-2); padding: 8px 10px; border-radius: 8px; }
+.intim-snippet mark { background: rgba(245, 158, 11, .35); color: inherit; border-radius: 3px; padding: 0 2px; }
+.intim-snippet + .intim-text:not(.open) { display: none; }
 .intim.prio-alta.intim-nova { border-left-color: #dc2626; }
 .intim-dates { display: flex; flex-wrap: wrap; gap: 4px 16px; color: var(--muted); }
 .intim-dates b { color: var(--text); font-variant-numeric: tabular-nums; }

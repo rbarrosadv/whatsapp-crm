@@ -144,3 +144,27 @@ test('texto do DJEN sem o CSS do tribunal', async () => {
   assert.equal(stripCss('body{ padding: 10px; font-family: Times New Roman; } #divHeader{ line-height:25px; }CUMPRIMENTO DE SENTENÇA Nº 1'), 'CUMPRIMENTO DE SENTENÇA Nº 1');
   assert.equal(stripCss('Texto normal {sem css} aqui'), 'Texto normal {sem css} aqui');
 });
+
+test('pesquisa nas intimações: sem acento, várias palavras, frase, nº do processo e trecho', async () => {
+  const { searchIntimations } = await import('../src/main/courts.js');
+  const list = [
+    { id: 1, process_number: '1017316-34.2025.8.11.0041', tribunal: 'TJMT', text: 'Vistos. Fica AUDIÊNCIA DESIGNADA para o dia 20/11/2026 às 14h, na sala virtual.', parties: [{ name: 'MARIA SOUZA' }], lawyers: [] },
+    { id: 2, process_number: '0000456-12.2026.5.23.0002', tribunal: 'TRT23', text: 'Julgo procedentes os pedidos. Prazo de 15 dias para recurso.', parties: [{ name: 'JOÃO LEMOS' }], lawyers: [] },
+    { id: 3, process_number: '5005282-24.2025.8.21.0057', tribunal: 'TJRS', text: 'Expeça-se alvará em favor do autor.', parties: [], lawyers: [], client_name: 'Ana Prado' },
+  ];
+  const ids = (q) => searchIntimations(list, q).map((i) => i.id);
+  assert.deepEqual(ids('audiencia designada'), [1], 'sem acento, as duas palavras');
+  assert.deepEqual(ids('audiência recurso'), [], 'todas as palavras têm que aparecer');
+  assert.deepEqual(ids('"prazo de 15 dias"'), [2], 'frase exata');
+  assert.deepEqual(ids('"15 dias de prazo"'), []);
+  assert.deepEqual(ids('10173163420258110041'), [1], 'nº sem pontos');
+  assert.deepEqual(ids('0000456-12'), [2], 'pedaço do nº');
+  assert.deepEqual(ids('joao lemos'), [2], 'nome da parte');
+  assert.deepEqual(ids('ana prado alvara'), [3], 'cliente + texto');
+  assert.deepEqual(ids('trt23'), [2], 'tribunal');
+  assert.equal(ids('').length, 3);
+  const [hit] = searchIntimations(list, 'designada');
+  assert.equal(hit.snippet.match, 'DESIGNADA', 'trecho com a palavra como está no texto');
+  assert.match(hit.snippet.before, /AUDIÊNCIA $/);
+  assert.match(hit.snippet.after, /^ para o dia/);
+});
