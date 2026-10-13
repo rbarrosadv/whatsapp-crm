@@ -83,8 +83,8 @@ Motor (`src/main`, sem Electron apesar do nome da pasta):
   `meta`, `contact_types`, `chat_filters`, `cases`,
   `payments`, `case_docs`, `users`, `sessions`, `doc_index`, `clients`,
   `case_parties`, `case_moves`, `case_steps`, `case_checklist`, `oabs`,
-  `intimations`, `expenses`, `incomes`, `leads`, `lead_contacts`, `push_subs`, `case_hints`, `doc_recent`, `doc_ocr`, `case_phases`, `doc_tree` (migrações por versão em
-  `migrate()`; `meta.schema` guarda a versão atual — v25).
+  `intimations`, `expenses`, `incomes`, `leads`, `lead_contacts`, `push_subs`, `case_hints`, `doc_recent`, `doc_ocr`, `case_phases`, `doc_tree`, `portal_links`, `portal_news` (migrações por versão em
+  `migrate()`; `meta.schema` guarda a versão atual — v26).
 - `docs.js` — `DocsService`: pasta "BARROS ADVOGADOS" do escritório, sempre
   por caminho relativo (`clients.folder`, `cases.folder`, conferido por
   `safeRel` — sem `..`), sobre um **armazenamento** (`storage.js`):
@@ -412,6 +412,26 @@ Motor (`src/main`, sem Electron apesar do nome da pasta):
   (nº entrou num processo que não tinha) → relatório `overview.drafts` (mediana de
   dias do cadastro ao protocolo, por pessoa e área). Hoje (`today:summary.drafts`:
   as suas, ou as que você revisa) e coluna "Iniciais" na carga por pessoa.
+- **Página de acompanhamento do cliente** (v26, "como o rastreio do iFood"):
+  `portal_links` (um link ativo por cliente, token de 24 bytes base64url; `revoked_at`,
+  `views`/`last_view_at`, `fails`/`locked_until`), `portal_news` (novidades por
+  processo, `ref` evita repetir) e `cases.portal_on` (null = aparece, menos segredo de
+  justiça). Rotas públicas (antes do login) em `server.js`: `GET /c/<token>` →
+  `portal.html` (`noindex`), `/portal.js`, `/portal.css`, `POST /portal/data
+  {token, pin}` (exige `X-CRM`; `pin` = 4 últimos números do CPF/CNPJ, 5 erros
+  travam 15 min; sem documento não pede) → `core.portalData`: nome, escritório,
+  WhatsApp do escritório (`wa.me`), processos abertos + encerrados há ≤ 90 dias com
+  `clientSteps` (`src/main/portal.js`: fases em palavras do cliente `CLIENT_PHASES`,
+  pré-processual pela situação da inicial `DRAFT_TEXT`), próxima audiência, novidades,
+  advogado. Nada interno sai (sem valores, notas, prazos). Novidades entram pelo
+  "Explicar ao cliente" (`moves:notifyClient`, `hints:sendClient` → `addPortalNews`
+  com `newsText`, sem saudação/assinatura) ou à mão (`portal:addNews`). Página em
+  `src/renderer/portal.html/.css/.js` (celular primeiro, logo, tudo por
+  `textContent`; os 4 números ficam no aparelho em `localStorage`). Equipe:
+  ficha do cliente ⋮ → "Página de acompanhamento do cliente…" (`views/portaladmin.js`:
+  criar, copiar, ver, enviar pelo WhatsApp com texto revisado, trocar link, desligar,
+  processos que aparecem, novidades). APIs `portal:get/create/revoke/send/caseToggle/
+  news/addNews/deleteNews` (estagiário não cria/desliga/esconde/apaga).
 - **Tribunais por advogado**: cada advogado cadastra a própria OAB (o sócio, de
   qualquer um); processo cadastrado a partir de intimação/importação fica com o
   **dono da OAB** (`oabOwnerOf`); Intimações tem "Minhas OABs | Todas";

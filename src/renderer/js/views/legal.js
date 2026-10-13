@@ -334,6 +334,7 @@ async function renderClient(my) {
                 onClick: () => api('clients:watch', c.id, !on).then(() => toast(on ? 'Não vigia mais este cliente' : 'O sistema vai avisar quando este cliente aparecer numa publicação de processo que o escritório não acompanha', 'success', 6000)).catch(errToast),
               };
             })(),
+            { icon: icon('link', 15), label: 'Página de acompanhamento do cliente…', onClick: () => import('./portaladmin.js').then((m) => m.portalDialog(c)) },
             { icon: icon('send', 15), label: 'Resumo do mês para o cliente…', onClick: () => import('./summary.js').then((m) => m.summaryDialog(c.id)) },
             { icon: icon('users', 15), label: 'Juntar com outro cadastro…', onClick: () => mergeDialog(c) },
             ...(state.can.admin ? ['-', { icon: icon('trash', 15), label: 'Excluir cadastro', danger: true, onClick: () => deleteClientFlow(c) }] : []),

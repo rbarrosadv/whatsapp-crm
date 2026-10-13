@@ -26,6 +26,7 @@ import { reais } from '../main/extenso.js';
 import { readSheet } from '../main/sheet.js';
 import { sameName } from '../renderer/js/qualify.js';
 import { derivePhase, startPhase, inssPhase, phaseLabel, phaseList } from '../renderer/js/phases.js';
+import { clientSteps, newsText } from '../main/portal.js';
 import {
   detectColumns, parseImport, classifyArea, archiveState, suggestPrescription, partiesFromDjen, isGenericTitle, hearingFromText, sessionFromText, CLIENT_WORTHY,
 } from '../main/importer.js';
@@ -932,6 +933,59 @@ export async function createCore({ dataDir, demo = false, version = '', safeStor
       const m = CLIENT_WORTHY.exec(String(text));
       db.addHint({ case_id: caseId, kind: 'client', ts, title: m ? m[0].replace(/^./, (c) => c.toUpperCase()) : 'Andamento importante', text: String(text).slice(0, 400), ref });
     }
+  }
+
+  // ---------------------------------------------- página de acompanhamento do cliente
+  /** Novidade aprovada para a página do cliente (uma por andamento/sugestão). */
+  function addPortalNews(caseId, { ts, title, text, ref, by }) {
+    const t = newsText(text);
+    if (!t) return;
+    if (ref && db.get('SELECT 1 AS x FROM portal_news WHERE case_id = ? AND ref = ?', caseId, ref)) return;
+    db.run('INSERT INTO portal_news (case_id, ts, title, text, ref, created_by, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)',
+      caseId, ts || Date.now(), String(title || 'Novidade').slice(0, 120), t, ref || null, by || null, Date.now());
+  }
+  const portalVisible = (k) => (k.portal_on == null ? !k.secret : !!k.portal_on);
+  const portalLink = (clientId) => db.get('SELECT * FROM portal_links WHERE client_id = ? AND revoked_at IS NULL ORDER BY id DESC LIMIT 1', clientId);
+
+  /**
+   * Dados da página do cliente (rota pública /c/<token>): confere os 4 últimos
+   * números do CPF/CNPJ (5 erros = 15 min bloqueado), conta a visita e devolve só
+   * o que é para o cliente — etapas, próximo compromisso, novidades aprovadas.
+   */
+  function portalData(token, pin) {
+    const link = /^[A-Za-z0-9_-]{20,64}$/.test(String(token || '')) ? db.get('SELECT * FROM portal_links WHERE token = ? AND revoked_at IS NULL', token) : null;
+    if (!link) return { status: 404, body: { error: 'Este link não está mais ativo. Fale com o escritório.' } };
+    if (link.locked_until && link.locked_until > Date.now()) return { status: 429, body: { error: 'Muitas tentativas. Espere 15 minutos e tente de novo.', needPin: true } };
+    const cl = db.getClient(link.client_id);
+    if (!cl) return { status: 404, body: { error: 'Este link não está mais ativo. Fale com o escritório.' } };
+    const doc = String(cl.cpf || '').replace(/\D/g, '');
+    const office = { name: settings.officeName || 'Barros Associados', city: settings.officeCity || '' };
+    if (doc.length >= 4 && String(pin || '') !== doc.slice(-4)) {
+      if (pin) {
+        const fails = (link.fails || 0) + 1;
+        db.run('UPDATE portal_links SET fails = ?, locked_until = ? WHERE id = ?', fails >= 5 ? 0 : fails, fails >= 5 ? Date.now() + 15 * 60e3 : null, link.id);
+      }
+      return { status: 401, body: { needPin: true, docKind: doc.length > 11 ? 'CNPJ' : 'CPF', error: pin ? 'Os números não conferem. Confira e tente de novo.' : null, office } };
+    }
+    db.run('UPDATE portal_links SET fails = 0, views = views + 1, last_view_at = ? WHERE id = ?', Date.now(), link.id);
+    const cfg = settings.phaseConfig;
+    const waMe = String(wa.getStatus?.()?.me?.jid || '').split('@')[0].split(':')[0].replace(/\D/g, '');
+    const cases = db.listCases({ includeClosed: true })
+      .filter((k) => k.client_id === cl.id && portalVisible(k) && (k.status === 'aberto' || (k.closed_at || 0) > Date.now() - 90 * DAY))
+      .map((k) => {
+        const tr = clientSteps(k, db.phaseHistory(k.id), cfg);
+        const next = db.all("SELECT title, due_at, end_at FROM tasks WHERE case_id = ? AND done = 0 AND kind = 'audiencia' AND due_at > ? ORDER BY due_at LIMIT 1", k.id, Date.now())[0] || null;
+        const news = db.all('SELECT ts, title, text FROM portal_news WHERE case_id = ? ORDER BY ts DESC, id DESC LIMIT 15', k.id);
+        const resp = k.responsible_id ? auth.getUser(k.responsible_id) : null;
+        return {
+          id: k.id, title: k.title, number: k.process_number || null, court: k.court || k.tribunal || null, closed: k.status !== 'aberto',
+          ...tr, next, news, lawyer: resp?.name || null,
+          updated: Math.max(k.phase_since || 0, news[0]?.ts || 0, k.created_at || 0),
+          isNew: !!(news[0] && news[0].ts > (link.last_view_at || 0)),
+        };
+      });
+    const first = cl.kind === 'pj' ? cl.name : (String(cl.name || '').split(/\s+/)[0] || '').replace(/^./, (c) => c.toUpperCase());
+    return { status: 200, body: { name: first, office, whatsapp: waMe || null, cases } };
   }
 
   // ---------------------------------------------- resumo mensal ao cliente
@@ -2009,10 +2063,50 @@ export async function createCore({ dataDir, demo = false, version = '', safeStor
       }
       db.touchCase(hint.case_id);
       db.setHint(id, 'feita', ctx.user.name);
+      addPortalNews(hint.case_id, { ts: hint.ts, title: hint.kind === 'hearing' ? 'Audiência marcada' : hint.title, text, ref: `hint:${hint.ref || id}`, by: ctx.user.name });
       db.logActivity(k.jid, 'case', `${k.title}: cliente avisado do andamento (${hint.title})`, ctx.user.name);
       caseChanged(db.getCase(hint.case_id));
       return true;
     },
+    // ------------------------------------------------ página de acompanhamento do cliente
+    'portal:get': (_c, clientId) => {
+      const l = portalLink(clientId);
+      const cases = db.listCases({ includeClosed: false }).filter((k) => k.client_id === clientId)
+        .map((k) => ({ id: k.id, title: k.title, secret: !!k.secret, on: portalVisible(k), news: db.get('SELECT COUNT(*) AS n FROM portal_news WHERE case_id = ?', k.id).n }));
+      const cl = db.getClient(clientId);
+      return {
+        token: l?.token || null, created_at: l?.created_at || null, last_view_at: l?.last_view_at || null, views: l?.views || 0,
+        hasDoc: String(cl?.cpf || '').replace(/\D/g, '').length >= 4, jid: cl?.jid || null, cases,
+      };
+    },
+    'portal:create': (ctx, clientId) => {
+      if (!db.getClient(clientId)) throw new Error('Cliente não encontrado');
+      db.run('UPDATE portal_links SET revoked_at = ? WHERE client_id = ? AND revoked_at IS NULL', Date.now(), clientId);
+      const token = crypto.randomBytes(24).toString('base64url');
+      db.run('INSERT INTO portal_links (client_id, token, created_at, created_by) VALUES (?, ?, ?, ?)', clientId, token, Date.now(), ctx.user.name);
+      db.logActivity(db.clientKey(db.getClient(clientId)), 'client', 'Página de acompanhamento criada para o cliente', ctx.user.name);
+      return token;
+    },
+    'portal:revoke': (ctx, clientId) => {
+      db.run('UPDATE portal_links SET revoked_at = ? WHERE client_id = ? AND revoked_at IS NULL', Date.now(), clientId);
+      db.logActivity(db.clientKey(db.getClient(clientId)), 'client', 'Página de acompanhamento desligada', ctx.user.name);
+      return true;
+    },
+    /** Manda o link ao cliente pelo WhatsApp (texto revisado por quem envia). */
+    'portal:send': async (ctx, clientId, text) => {
+      const cl = db.getClient(clientId);
+      if (!cl?.jid) throw new Error('O cliente não tem WhatsApp ligado. Copie o link e envie por outro meio.');
+      await api['messages:sendText'](ctx, cl.jid, String(text || '').trim());
+      return true;
+    },
+    'portal:caseToggle': (_c, caseId, on) => { db.run('UPDATE cases SET portal_on = ? WHERE id = ?', on ? 1 : 0, caseId); return true; },
+    'portal:news': (_c, caseId) => db.all('SELECT * FROM portal_news WHERE case_id = ? ORDER BY ts DESC, id DESC', caseId),
+    'portal:addNews': (ctx, caseId, { title, text, ts } = {}) => {
+      if (!String(text || '').trim()) throw new Error('Escreva a novidade.');
+      addPortalNews(caseId, { ts: ts || Date.now(), title: title || 'Novidade no processo', text, by: ctx.user.name });
+      return true;
+    },
+    'portal:deleteNews': (_c, id) => { db.run('DELETE FROM portal_news WHERE id = ?', id); return true; },
     'clients:monthlySummary': (_c, id) => monthlySummaryText(id),
     /** Resumo revisado: envia pelo WhatsApp (se ligado) ou só marca como enviado por outro meio. */
     'clients:sendSummary': async (ctx, id, text, { via = 'whatsapp' } = {}) => {
@@ -2222,6 +2316,11 @@ export async function createCore({ dataDir, demo = false, version = '', safeStor
         await api['messages:sendText'](ctx, k.client_jid, String(text || '').trim());
       }
       db.run('UPDATE case_moves SET notified_at = ?, notified_via = ?, notified_by = ? WHERE id = ?', Date.now(), via, ctx.user.name, moveId);
+      {
+        const hit = CLIENT_WORTHY.exec(String(m.text));
+        const title = hearingFromText(m.text) ? 'Audiência marcada' : hit ? hit[0].replace(/^./, (c) => c.toUpperCase()) : 'Novidade no processo';
+        addPortalNews(m.case_id, { ts: m.ts, title, text, ref: `move:${moveId}`, by: ctx.user.name });
+      }
       if (m.ext_id) for (const h of db.all("SELECT id FROM case_hints WHERE case_id = ? AND ref = ? AND status = 'nova'", m.case_id, m.ext_id)) db.setHint(h.id, 'feita', ctx.user.name);
       db.touchCase(m.case_id);
       db.logActivity(k.jid, 'case', `${k.title}: cliente avisado do andamento (${String(m.text).split(/\s+[—-]\s+/)[0].slice(0, 80)})`, ctx.user.name);
@@ -2977,7 +3076,7 @@ export async function createCore({ dataDir, demo = false, version = '', safeStor
   });
 
   return {
-    events, api, call, dropConn, backupFile, resolveMedia, wa, google, docs, dataDir, demo, lookup, courts, onedrive, relay, courtsFetch,
+    events, api, call, dropConn, backupFile, resolveMedia, wa, google, docs, dataDir, demo, lookup, courts, onedrive, relay, courtsFetch, portalData,
     /** Volta do login da Microsoft (rota /onedrive/callback). */
     async onedriveCallback(code, state) {
       await onedrive.finish(code, state);

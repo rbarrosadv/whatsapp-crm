@@ -9,7 +9,7 @@ import { fullAddress, sameName } from '../renderer/js/qualify.js';
 
 let db;
 
-const SCHEMA_VERSION = 25;
+const SCHEMA_VERSION = 26;
 
 // Tipos de contato (editáveis). `personal` = não conta como trabalho
 // (fica fora de "Aguardando resposta" e dos avisos de conversa esquecida).
@@ -535,6 +535,26 @@ function migrate() {
   // observação da revisão e quando foi distribuída
   for (const [c, t] of [['draft_status', 'TEXT'], ['draft_since', 'INTEGER'], ['draft_reviewer_id', 'INTEGER'], ['draft_target', 'INTEGER'],
     ['draft_note', 'TEXT'], ['draft_warned', 'INTEGER NOT NULL DEFAULT 0'], ['distributed_at', 'INTEGER']]) addColumn('cases', c, t);
+  // versão 26: página de acompanhamento do cliente (link próprio, 4 dígitos do CPF)
+  // e as novidades aprovadas para ele (o texto que a equipe revisou)
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS portal_links (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      client_id INTEGER NOT NULL REFERENCES clients(id) ON DELETE CASCADE,
+      token TEXT NOT NULL UNIQUE, created_at INTEGER NOT NULL, created_by TEXT,
+      revoked_at INTEGER, last_view_at INTEGER, views INTEGER NOT NULL DEFAULT 0,
+      fails INTEGER NOT NULL DEFAULT 0, locked_until INTEGER
+    );
+    CREATE INDEX IF NOT EXISTS portal_links_client ON portal_links(client_id);
+    CREATE TABLE IF NOT EXISTS portal_news (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      case_id INTEGER NOT NULL REFERENCES cases(id) ON DELETE CASCADE,
+      ts INTEGER NOT NULL, title TEXT NOT NULL, text TEXT NOT NULL, ref TEXT,
+      created_by TEXT, created_at INTEGER NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS portal_news_case ON portal_news(case_id, ts);
+  `);
+  addColumn('cases', 'portal_on', 'INTEGER');
 
   const version = Number(get('SELECT value FROM meta WHERE key = ?', 'schema')?.value || 0);
   if (version < 1) seedDefaults();

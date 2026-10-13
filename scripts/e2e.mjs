@@ -864,6 +864,46 @@ try {
   check(true, 'inicial vai para revisão, o sócio aprova e fica pronta para protocolar');
   await shot(page, '05m-iniciais');
 
+  // página de acompanhamento do cliente: criar pela ficha, abrir no celular com os 4 dígitos
+  const portalClient = await page.evaluate(async () => {
+    const id = await window.api.call('clients:save', { name: 'Mariana Acompanha Souza', cpf: '123.456.789-09' });
+    const k = await window.api.call('cases:save', { client_id: id, title: 'Indenização por danos morais' });
+    await window.api.call('cases:save', { id: k, process_number: '1006666-11.2026.8.11.0041' });
+    const mid = await window.api.call('moves:add', { case_id: k, text: 'Citação da parte ré expedida', ts: Date.now() - 864e5 });
+    await window.api.call('moves:notifyClient', mid, 'Olá, Mariana! A Justiça avisou oficialmente a empresa sobre o processo. Agora ela tem prazo para se defender.', { via: 'copy' });
+    return id;
+  });
+  await page.evaluate((id) => import('/js/store.js').then((m) => m.openClient(id)), portalClient);
+  await page.waitForSelector('.view-legal .client-head:has-text("Mariana Acompanha Souza")');
+  await page.locator('.view-legal .client-head button[title="Mais opções"]').click();
+  await page.click('.popup-menu >> text=Página de acompanhamento');
+  await page.click('.modal button:has-text("Criar a página do cliente")');
+  await page.waitForSelector('.modal .portal-link input');
+  const portalUrl = await page.locator('.modal .portal-link input').inputValue();
+  check(/\/c\/[A-Za-z0-9_-]{30,}$/.test(portalUrl), 'link da página do cliente criado');
+  await shot(page, '05p-pagina-cliente-equipe');
+  await page.keyboard.press('Escape');
+  await page.click('.view-legal .back-btn');
+  const phone = await browser.newContext({ viewport: { width: 390, height: 844 }, isMobile: true });
+  const cp = await phone.newPage();
+  await cp.goto(portalUrl);
+  await cp.waitForSelector('.pt-pin');
+  await shot(cp, '05p-pagina-cliente-acesso');
+  await cp.fill('.pt-pin', '0000');
+  await cp.click('.pt-btn');
+  await cp.waitForSelector('.pt-err:has-text("não conferem")');
+  await cp.fill('.pt-pin', '8909');
+  await cp.click('.pt-btn');
+  await cp.waitForSelector('.pt-step.current');
+  check(await cp.locator('.pt-now').textContent() !== '', 'cliente vê a etapa atual com os 4 dígitos do CPF');
+  check(!/\bnull\b|undefined/.test(await cp.locator("#app").innerText()), "página do cliente sem textos soltos (null)");
+  check(await cp.locator('.pt-news:has-text("avisou oficialmente a empresa")').count() === 1, 'novidade aprovada aparece em palavras simples');
+  await cp.screenshot({ path: path.join(OUT, '05p-pagina-cliente.png'), fullPage: true });
+  await cp.reload();
+  await cp.waitForSelector('.pt-step.current');
+  check(true, 'na volta não pede os números de novo (guardados no aparelho)');
+  await phone.close();
+
   // comercial: funil, novo interessado, atendimento, proposta e virar cliente
   await page.click('.rail-btn[title="Atendimento"]');
   await page.click('.chatlist-head .atend-switch button:has-text("Comercial")');

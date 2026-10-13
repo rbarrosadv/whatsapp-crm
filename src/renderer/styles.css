@@ -351,6 +351,9 @@ textarea.input { resize: vertical; }
 .internal-pill { color: #b45309; font-weight: 600; }
 .load-panel { margin-bottom: 14px; }
 .drafts-tools { align-items: center; margin-bottom: 10px; }
+.portal-link .input { flex: 1; min-width: 0; font-size: 13px; }
+.portal-case { align-items: center; gap: 10px; }
+.portal-news { display: flex; flex-direction: column; gap: 6px; max-height: 40vh; overflow-y: auto; }
 .drafts-board .col { min-width: 250px; }
 .draft-card { display: flex; flex-direction: column; gap: 6px; }
 .draft-card .card-title { cursor: pointer; }

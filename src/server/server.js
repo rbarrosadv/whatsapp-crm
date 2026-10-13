@@ -285,6 +285,24 @@ export async function startServer({
       if (!file) { res.writeHead(404); return res.end(); }
       return serveFile(req, res, file, { csp: CSP, cache: p.startsWith('/assets/') ? 'max-age=86400' : 'no-cache' });
     }
+    // página de acompanhamento do cliente (sem login: link próprio + 4 dígitos do CPF)
+    if (req.method === 'GET' && /^\/c\/[A-Za-z0-9_-]{20,64}$/.test(p)) {
+      res.setHeader('X-Robots-Tag', 'noindex, nofollow');
+      return serveFile(req, res, path.join(RENDERER, 'portal.html'), { csp: CSP, cache: 'no-cache' });
+    }
+    if (req.method === 'GET' && (p === '/portal.js' || p === '/portal.css')) {
+      return serveFile(req, res, path.join(RENDERER, p.slice(1)), { csp: CSP, cache: 'no-cache' });
+    }
+    if (p === '/portal/data' && req.method === 'POST') {
+      if (req.headers['x-crm'] !== '1') return sendJson(res, 403, { error: 'requisição recusada' });
+      if (tooMany(ip)) return sendJson(res, 429, { error: 'Muitas tentativas. Espere 15 minutos e tente de novo.', needPin: true });
+      const body = await readJson(req);
+      const r = core.portalData(body.token, body.pin);
+      if (r.status === 401 && body.pin) failed(ip);
+      res.setHeader('Cache-Control', 'no-store');
+      res.setHeader('X-Robots-Tag', 'noindex, nofollow');
+      return sendJson(res, r.status, r.body);
+    }
     if (p === '/manifest.webmanifest' || p === '/sw.js') {
       return serveFile(req, res, path.join(RENDERER, p.slice(1)), { csp: CSP });
     }

@@ -1209,6 +1209,60 @@ test('iniciais: situação, revisão pelo sócio, data meta, protocolar com nº;
   assert.ok(rep.drafts.distributed >= 1 && rep.drafts.byPerson.some((x) => x.label === 'Dora Redatora'));
 });
 
+test('página do cliente: link próprio, 4 dígitos do CPF, etapas, novidades aprovadas, segredo de fora, desligar', async () => {
+  const s = client();
+  await s.req('/auth/login', { body: { login: 'barros', password: 'segredo1' } });
+  const cid = await s.call('clients:save', { name: 'Mariana Portal Souza', cpf: '123.456.789-09' });
+  const k1 = await s.call('cases:save', { client_id: cid, title: 'Indenização por danos morais' });
+  await s.call('cases:save', { id: k1, process_number: '1008888-11.2026.8.11.0041' });
+  const k2 = await s.call('cases:save', { client_id: cid, title: 'Caso sigiloso' });
+  await s.call('cases:save', { id: k2, secret: true });
+  const token = await s.call('portal:create', cid);
+  assert.match(token, /^[A-Za-z0-9_-]{30,}$/);
+  // a página abre sem login
+  const anon = client();
+  const page = await anon.req(`/c/${token}`);
+  assert.equal(page.status, 200);
+  assert.match(page.text, /portal\.js/);
+  assert.equal((await anon.req('/c/naoexiste-naoexiste-naoexiste')).status, 200, 'a página carrega; os dados é que dizem se o link vale');
+  // sem os 4 números: pede; errado: recusa; certo: mostra
+  let r = await anon.req('/portal/data', { body: { token } });
+  assert.equal(r.status, 401);
+  assert.equal(r.json.needPin, true);
+  assert.equal(r.json.name, undefined, 'não mostra nada antes de confirmar');
+  r = await anon.req('/portal/data', { body: { token, pin: '0000' } });
+  assert.equal(r.status, 401);
+  assert.match(r.json.error, /não conferem/);
+  // o CPF termina em ...789-09 → 8909
+  const ok = await client().req('/portal/data', { body: { token, pin: '8909' } });
+  assert.equal(ok.status, 200, ok.text);
+  assert.equal(ok.json.name, 'Mariana');
+  assert.equal(ok.json.cases.length, 1, 'segredo de justiça fica de fora');
+  const c = ok.json.cases[0];
+  assert.equal(c.title, 'Indenização por danos morais');
+  assert.ok(c.steps.length >= 5 && c.steps.some((x) => x.state === 'current'));
+  assert.equal(c.label, 'Ação protocolada');
+  assert.ok(!('responsible_id' in c) && !('fee_total' in c), 'nada interno');
+  assert.deepEqual(c.news, []);
+  // "Explicar ao cliente" num andamento → novidade na página (sem saudação/despedida)
+  const mid = await s.call('moves:add', { case_id: k1, text: 'Sentença: julgado procedente o pedido', ts: Date.now() });
+  await s.call('moves:notifyClient', mid, 'Olá, Mariana! Passando para dar notícia do seu processo (Indenização): saiu a sentença e o juiz deu razão a você.\n\nQualquer dúvida, estamos à disposição.', { via: 'copy' });
+  const again = await client().req('/portal/data', { body: { token, pin: '8909' } });
+  const n = again.json.cases[0].news[0];
+  assert.equal(n.title, 'Sentença');
+  assert.equal(n.text, 'Saiu a sentença e o juiz deu razão a você.');
+  assert.equal((await s.call('portal:get', cid)).views >= 2, true, 'conta as visitas');
+  // mostrar o caso sigiloso por escolha
+  await s.call('portal:caseToggle', k2, true);
+  assert.equal((await client().req('/portal/data', { body: { token, pin: '8909' } })).json.cases.length, 2);
+  // desligar: o link para de funcionar
+  await s.call('portal:revoke', cid);
+  assert.equal((await client().req('/portal/data', { body: { token, pin: '8909' } })).status, 404);
+  // estagiário não cria nem desliga
+  const auth = await import('../src/server/auth.js');
+  assert.ok(!auth.can('estagiario', 'portal:create') && auth.can('estagiario', 'portal:get'));
+});
+
 test('cadastro: sugere a conversa do WhatsApp, salva o contato (opção), pasta vai e volta do arquivo morto', async () => {
   const c = client();
   await c.req('/auth/login', { body: { login: 'barros', password: 'segredo1' } });
