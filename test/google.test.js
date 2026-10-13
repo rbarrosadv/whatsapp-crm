@@ -141,6 +141,27 @@ test('prazos do CRM vão para o Google e mudanças de horário voltam', async ()
   assert.ok(ag2.events.some((e) => e.taskId === t2 && e.source === 'crm'));
 });
 
+test('telas abertas juntas não criam cópias do compromisso no Google; cópias antigas somem', async () => {
+  const google = new DemoGoogleService();
+  // Google lento: os pedidos simultâneos se sobrepõem
+  const save = google.saveEvent.bind(google);
+  google.saveEvent = async (...a) => { await new Promise((r) => setTimeout(r, 20)); return save(...a); };
+  const sync = new CalendarSync({ google, getSettings: () => ({ googleCalendarId: 'escritorio@demo' }) });
+  const id = db.saveTask({ kind: 'tarefa', title: 'Ver docs bpc', due_at: Date.now() + 3600e3 });
+  await Promise.all([sync.syncAll(), sync.syncAll(), sync.syncTask(id), sync.syncTask(id)]);
+  const mine = () => google.items.filter((e) => e.taskId === id);
+  assert.equal(mine().length, 1, 'um evento só');
+  // cópias que já existiam no Google (versão antiga): aparecem uma vez e são apagadas
+  await save('escritorio@demo', taskToEvent(db.getTask(id)));
+  await save('escritorio@demo', taskToEvent(db.getTask(id)));
+  assert.equal(mine().length, 3);
+  const ag = await sync.agenda(Date.now(), Date.now() + 86400e3);
+  assert.equal(ag.events.filter((e) => e.taskId === id).length, 1);
+  await new Promise((r) => setTimeout(r, 10));
+  assert.equal(mine().length, 1);
+  assert.equal(mine()[0].id, db.getTask(id).gcal_event_id, 'fica o que o CRM guardou');
+});
+
 test('chave "Aplicativo da Web": login pelo servidor volta em /google/callback', async () => {
   const gdir = path.join(dir, 'gweb');
   const keyFile = path.join(dir, 'client-web.json');

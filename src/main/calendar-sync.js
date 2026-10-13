@@ -39,6 +39,10 @@ export class CalendarSync {
     this.google = google;
     this.getSettings = getSettings;
     this.onChange = onChange || (() => {});
+    // um envio por compromisso de cada vez: telas abertas juntas (Hoje, Agenda,
+    // outro computador) pediam o mesmo envio ao mesmo tempo e o Google ganhava cópias
+    this.queue = new Map();
+    this.allRun = null;
   }
 
   enabled() {
@@ -53,7 +57,15 @@ export class CalendarSync {
   }
 
   /** Envia (ou atualiza) um compromisso do CRM no Google. */
-  async syncTask(id) {
+  syncTask(id) {
+    const prev = this.queue.get(id) || Promise.resolve();
+    const run = prev.catch(() => {}).then(() => this.syncTaskNow(id));
+    this.queue.set(id, run);
+    run.finally(() => { if (this.queue.get(id) === run) this.queue.delete(id); }).catch(() => {});
+    return run;
+  }
+
+  async syncTaskNow(id) {
     if (!this.enabled()) return;
     const t = db.getTask(id);
     if (!t) return;
@@ -84,7 +96,12 @@ export class CalendarSync {
   }
 
   /** Manda para o Google tudo que ainda não foi (usado logo após conectar). */
-  async syncAll() {
+  syncAll() {
+    if (!this.allRun) this.allRun = this.syncAllNow().finally(() => { this.allRun = null; });
+    return this.allRun;
+  }
+
+  async syncAllNow() {
     if (!this.enabled()) return 0;
     let n = 0;
     for (const { id } of db.tasksToSync()) {
@@ -104,7 +121,7 @@ export class CalendarSync {
     const status = this.google?.status() || { connected: false };
     if (status.connected) {
       try {
-        events = await this.google.events(calendarIds, from, to);
+        events = this.dropCopies(await this.google.events(calendarIds, from, to));
         this.pullChanges(events);
       } catch (e) {
         error = e.message;
@@ -138,6 +155,24 @@ export class CalendarSync {
       Object.assign(e, { jid: t?.jid, caseId: t?.case_id, kind: t?.kind, done: !!t?.done });
     }
     return { events: [...events, ...local], error, status };
+  }
+
+  /**
+   * Cópias do mesmo compromisso no Google (criadas por envios simultâneos):
+   * fica só o evento que o CRM guardou; as outras somem da tela e são apagadas
+   * do Google (só eventos criados pelo CRM, marcados com o nº do compromisso).
+   */
+  dropCopies(events) {
+    const keep = [];
+    for (const e of events) {
+      const t = e.taskId ? db.getTask(e.taskId) : null;
+      if (t?.gcal_event_id && e.id !== t.gcal_event_id) {
+        this.google.deleteEvent(e.calendarId, e.id).catch((err) => console.error('google: apagar cópia', err.message));
+        continue;
+      }
+      keep.push(e);
+    }
+    return keep;
   }
 
   /** Se o horário foi mudado no Google, atualiza o compromisso no CRM. */

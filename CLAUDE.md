@@ -462,7 +462,9 @@ Motor (`src/main`, sem Electron apesar do nome da pasta):
   CRM viram eventos no Google (`tasks.gcal_event_id`, marcados com
   `extendedProperties.private.crmTaskId`); horário mudado no Google volta
   para o CRM (`pullChanges`); `agenda()` junta eventos do Google + tarefas
-  ainda não sincronizadas. No demo, `DemoGoogleService` (em `demo.js`).
+  ainda não sincronizadas. Envio em fila por compromisso (`queue`) e um `syncAll` por
+  vez (telas abertas juntas criavam cópias); `dropCopies` esconde e apaga do Google
+  eventos do CRM com o mesmo `crmTaskId` que não são o `gcal_event_id` guardado. No demo, `DemoGoogleService` (em `demo.js`).
 
 App de desktop (`src/desktop`, Electron 44): `main.js` abre uma janela
 própria com o sistema. Modo **remote** (endereço do servidor) ou **local**
