@@ -113,11 +113,11 @@ after(async () => {
 
 function client() {
   let cookie = '';
-  const req = async (p, { body, headers = {}, redirect = 'follow' } = {}) => {
+  const req = async (p, { body, raw, headers = {}, redirect = 'follow' } = {}) => {
     const r = await fetch(`${srv.url}${p}`, {
-      method: body ? 'POST' : 'GET', redirect,
+      method: body || raw ? 'POST' : 'GET', redirect,
       headers: { 'X-CRM': '1', ...(body ? { 'Content-Type': 'application/json' } : {}), ...(cookie ? { Cookie: cookie } : {}), ...headers },
-      body: body ? JSON.stringify(body) : undefined,
+      body: raw || (body ? JSON.stringify(body) : undefined),
     });
     const set = r.headers.get('set-cookie');
     if (set) cookie = set.split(';')[0];
@@ -174,12 +174,27 @@ test('OneDrive pela API: conectar, pasta compartilhada, pastas, modelo, busca, a
   assert.equal(made.path, null, 'sem caminho de disco no modo OneDrive');
   const doc = ms.byPath(made.rel);
   assert.match(docxText(doc.content), /OUTORGANTE: FULANA DE TAL, brasileira, inscrita no CPF sob o nº 123\.456\.789-00/);
+  // modelo que é uma procuração pronta de outro cliente: avisa, transforma e gera certo
+  const pronta = makeDocx(['PROCURAÇÃO', 'OUTORGANTE: RONNICE |DE ALMEIDA, brasileiro, casado, inscrito no CPF nº 503.471.791-34, residente na Rua X.', 'Cuiabá/MT, 12 de agosto de 2025.', 'RONNICE DE ALMEIDA']);
+  const upP = await (await c.req('/upload', { raw: pronta, headers: { 'X-File-Name': encodeURIComponent('Procuração pronta.docx') } })).json();
+  const [prel] = await c.call('docs:upload', '04 MODELOS/Cível', [upP.token]);
+  const noMk = await c.call('docs:useAsBase', prel, { caseId: k, template: true });
+  assert.equal(noMk.noMarkers, true, 'não cria a cópia com os dados do outro cliente');
+  const conv = await c.call('docs:convertTemplate', prel);
+  assert.ok(conv.changes.length >= 2);
+  assert.ok(ms.byPath(conv.backup), 'original guardado ao lado');
+  assert.ok(!(await c.call('docs:templates')).some((t) => t.rel === conv.backup), 'o original não aparece como modelo');
+  const made2 = await c.call('docs:useAsBase', prel, { caseId: k, template: true });
+  const t2 = docxText(ms.byPath(made2.rel).content);
+  assert.match(t2, /OUTORGANTE: FULANA DE TAL, brasileira, inscrita no CPF sob o nº 123\.456\.789-00\./);
+  assert.match(t2, /\nFULANA DE TAL$/);
+  assert.doesNotMatch(t2, /RONNICE|agosto de 2025/);
   // busca e abrir o arquivo (link temporário da Microsoft)
   await c.call('docs:reindex');
   const hits = await c.call('docs:search', 'outorgante fulana');
   assert.ok(hits.some((d) => d.rel === made.rel), 'busca no conteúdo dos arquivos do OneDrive');
   // abrir: o servidor baixa da Microsoft uma vez e guarda a cópia
-  const open = await c.req(hits[0].url, { redirect: 'manual' });
+  const open = await c.req(hits.find((d) => d.rel === made.rel).url, { redirect: 'manual' });
   assert.equal(open.status, 200);
   assert.match(open.headers.get('content-disposition'), /^attachment/);
   assert.equal(Buffer.from(await open.arrayBuffer()).length, doc.content.length);

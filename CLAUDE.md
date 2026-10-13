@@ -102,7 +102,13 @@ Motor (`src/main`, sem Electron apesar do nome da pasta):
   pedaços pelo Word (`{NOME}` → maiúsculas); `templateValues` = ficha do
   cliente + caso, com `{qualificacao}` (parágrafo pronto, `qualify.js`),
   endereço em campos (`{rua}` `{numero}` `{bairro}` `{cidade}` `{uf}` `{cep}`),
-  `{representante}`. Busca: `doc_index` (texto de .docx/.pdf simples/.txt,
+  `{representante}`, `{qualificacao_resto}` (sem o nome, para `{NOME}` ficar em negrito).
+  **Modelo que é documento pronto** (sem nenhum `{campo}`): "Novo do modelo" manda
+  `template: true` → `copyAsBase` não cria a cópia e devolve `noMarkers`; a tela oferece
+  `docs:convertTemplate` (`makeTemplate`: parágrafo "OUTORGANTE/CONTRATANTE/…: NOME, …"
+  com CPF/RG → `{NOME}, {qualificacao_resto}`, nome/CPF antigos no resto → campos, última
+  data por extenso → `{data_extenso}`; original guardado como `.ORIGINAL - …`, escondido
+  da lista; estagiário não). Busca: `doc_index` (texto de .docx/.pdf simples/.txt,
   `fold` sem acento, incremental por data; PDFs > 8 MB e outros > 15 MB só
   pelo nome — ler = baixar). `zip.js` = zip mínimo. Rota `GET /docs/file/<rel>`
   (local: o arquivo; OneDrive: a cópia guardada no servidor, ver abaixo).

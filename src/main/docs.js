@@ -199,6 +199,109 @@ export function fillDocx(buf, values) {
   return writeZip(files);
 }
 
+/** Qualificação sem o nome do começo ("brasileiro, casado, …"). */
+function qualificationRest(c) {
+  const q = qualification(c);
+  const name = String(c.name || '').trim().toUpperCase();
+  return q.startsWith(`${name}, `) ? q.slice(name.length + 2) : q;
+}
+
+/** O .docx tem algum marcador {campo} conhecido? */
+export function hasMarkers(buf) {
+  const keys = new Set(PLACEHOLDERS.map(([k]) => k));
+  const text = docxText(buf);
+  return [...text.matchAll(/\{\s*([A-Za-z_]+)\s*\}/g)].some((m) => keys.has(m[1].toLowerCase()));
+}
+
+const unXml = (s) => s.replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&quot;/g, '"').replace(/&apos;/g, "'").replace(/&amp;/g, '&');
+const QUAL_LABEL = /^\s*((?:OUTORGANTE|CONTRATANTE|DECLARANTE|REQUERENTE|AUTORA?|CLIENTE)S?\s*:)\s*/i;
+const MONTHS = 'janeiro|fevereiro|março|marco|abril|maio|junho|julho|agosto|setembro|outubro|novembro|dezembro';
+
+/** Runs de um parágrafo com o texto e a formatação (rPr) de cada um. */
+function paragraphRuns(pXml) {
+  const runs = [];
+  for (const m of pXml.matchAll(/<w:r(?:\s[^>]*)?>([\s\S]*?)<\/w:r>/g)) {
+    const inner = m[1];
+    const rPr = (inner.match(/<w:rPr>[\s\S]*?<\/w:rPr>/) || [''])[0];
+    let text = '';
+    for (const t of inner.matchAll(/<w:t(?:\s[^>]*)?>([^<]*)<\/w:t>|<w:tab\/>/g)) text += t[1] != null ? unXml(t[1]) : '\t';
+    runs.push({ rPr, text });
+  }
+  return runs;
+}
+
+/** Regex de um texto que o Word pode ter quebrado em vários pedaços (como no fillDocx). */
+function splitTextRe(text, flags = 'g') {
+  const gap = '(?:<(?!/?w:p[ >/])[^>]+>)*';
+  const esc = (c) => escXml(c).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  return new RegExp([...text].map((c) => (c === ' ' ? `${gap}[ \u00a0]` : `${gap}${esc(c)}`)).join(''), flags);
+}
+
+/**
+ * Transforma um documento pronto (procuração, contrato… de um cliente) em modelo:
+ * o parágrafo "OUTORGANTE: FULANO, brasileiro, …" vira "OUTORGANTE: {NOME},
+ * {qualificacao_resto}" (o nome continua em negrito), o nome e o CPF antigos no
+ * resto do texto (assinatura) viram {NOME}/{cpf} e a última data por extenso vira
+ * {data_extenso}. Devolve o novo .docx e o que mudou (null se não achou o parágrafo).
+ */
+export function makeTemplate(buf) {
+  const files = readZip(buf);
+  const name = 'word/document.xml';
+  if (!files.has(name)) return null;
+  let xml = files.get(name).toString('utf8');
+  let found = null;
+  xml = xml.replace(/<w:p(?:\s[^>]*)?>[\s\S]*?<\/w:p>/g, (p) => {
+    if (found) return p;
+    const runs = paragraphRuns(p);
+    const text = runs.map((r) => r.text).join('');
+    const m = text.match(QUAL_LABEL);
+    if (!m || !/\d{3}\.?\d{3}\.?\d{3}-?\d{2}|portador|inscrit|CPF|CNPJ/i.test(text)) return p;
+    const rest = text.slice(m[0].length);
+    const comma = rest.indexOf(',');
+    if (comma < 3) return p;
+    const oldName = rest.slice(0, comma).trim();
+    const cpf = (text.match(/\d{3}\.\d{3}\.\d{3}-\d{2}|\d{2}\.\d{3}\.\d{3}\/\d{4}-\d{2}/) || [])[0] || null;
+    // formatação: a do rótulo, a do nome e a do texto depois da vírgula
+    const at = (i) => { let n = 0; for (const r of runs) { n += r.text.length; if (n > i) return r.rPr; } return runs.at(-1)?.rPr || ''; };
+    const nameAt = m[0].length + rest.indexOf(oldName);
+    const run = (rPr, t) => `<w:r>${rPr}<w:t xml:space="preserve">${escXml(t)}</w:t></w:r>`;
+    const open = p.match(/^<w:p(?:\s[^>]*)?>/)[0];
+    const pPr = (p.match(/<w:pPr>[\s\S]*?<\/w:pPr>/) || [''])[0];
+    found = { label: m[1], oldName, cpf };
+    return `${open}${pPr}${run(at(0), m[1])}${run(at(m[1].length), ' ')}${run(at(nameAt), '{NOME}')}${run(at(m[0].length + comma + 2), ', {qualificacao_resto}')}</w:p>`;
+  });
+  if (!found) return null;
+  if (found.oldName.length < 5) found.oldName = '';
+  const changes = [`${found.label} ${found.oldName} → {NOME}, {qualificacao_resto}`];
+  // nome antigo no resto do documento (assinatura, "Eu, FULANO, …")
+  let n = 0;
+  if (found.oldName) xml = xml.replace(splitTextRe(found.oldName, 'gi'), (mm) => {
+    n++;
+    const t = mm.replace(/<[^>]+>/g, '');
+    return t === t.toUpperCase() ? '{NOME}' : '{nome}';
+  });
+  if (n) changes.push(`nome “${found.oldName}” em mais ${n} lugar(es) → {NOME}`);
+  if (found.cpf) {
+    let c = 0;
+    xml = xml.replace(splitTextRe(found.cpf), () => { c++; return '{cpf}'; });
+    if (c) changes.push(`CPF/CNPJ antigo em mais ${c} lugar(es) → {cpf}`);
+  }
+  // a data de assinatura: a última data por extenso do documento
+  const plain = [...xml.matchAll(/<w:p(?:\s[^>]*)?>[\s\S]*?<\/w:p>/g)].map((pm) => paragraphRuns(pm[0]).map((r) => r.text).join(''));
+  let last = null;
+  for (const t of plain) for (const dm of t.matchAll(new RegExp(`\\d{1,2}º? de (?:${MONTHS}) de \\d{4}`, 'gi'))) last = dm[0];
+  if (last) {
+    const all = [...xml.matchAll(splitTextRe(last))];
+    const hit = all.at(-1);
+    if (hit) {
+      xml = xml.slice(0, hit.index) + '{data_extenso}' + xml.slice(hit.index + hit[0].length);
+      changes.push(`data “${last}” → {data_extenso}`);
+    }
+  }
+  files.set(name, Buffer.from(xml, 'utf8'));
+  return { buf: writeZip(files), changes, oldName: found.oldName };
+}
+
 /** Valores dos marcadores a partir da ficha do cliente e do caso. */
 export function templateValues(chat, kase) {
   const phone = chat?.phone || ((chat?.jid || '').endsWith('@s.whatsapp.net') ? chat.jid.split('@')[0] : '');
@@ -219,6 +322,7 @@ export function templateValues(chat, kase) {
     cidade: chat?.city || '',
     uf: chat?.uf || '',
     qualificacao: chat?.name ? qualification(chat) : '',
+    qualificacao_resto: chat?.name ? qualificationRest(chat) : '',
     nome_fantasia: chat?.trade_name || '',
     representante: parseRep(chat).name || '',
     representante_cargo: parseRep(chat).role || '',
@@ -245,6 +349,7 @@ export function templateValues(chat, kase) {
 /** Lista dos marcadores, para mostrar na tela de ajuda. */
 export const PLACEHOLDERS = [
   ['qualificacao', 'qualificação completa (nome, nacionalidade, estado civil, profissão, RG, CPF, endereço — ou empresa com representante)'],
+  ['qualificacao_resto', 'a qualificação sem o nome (para deixar só o {NOME} em negrito)'],
   ['nome', 'nome do cliente'], ['cpf', 'CPF (ou CNPJ)'], ['cnpj', 'CNPJ'], ['rg', 'RG com órgão emissor'], ['nacionalidade', 'nacionalidade'],
   ['estado_civil', 'estado civil'], ['profissao', 'profissão'], ['endereco', 'endereço completo'],
   ['cep', 'CEP'], ['rua', 'rua'], ['numero', 'número'], ['complemento', 'complemento'], ['bairro', 'bairro'], ['cidade', 'cidade'], ['uf', 'UF'],
@@ -497,13 +602,14 @@ export class DocsService {
    * "Usar como base": copia um documento (modelo ou peça de outro caso) para a
    * pasta de destino, preenchendo os marcadores se for .docx.
    */
-  async copyAsBase(srcRel, destDirRel, values, user, newName) {
+  async copyAsBase(srcRel, destDirRel, values, user, newName, { checkMarkers = false } = {}) {
     const src = this.check(srcRel, user);
     const dest = this.check(destDirRel, user);
     const st = this.requireStore();
     const info = await st.stat(src);
     if (!info || info.dir) throw new Error('Escolha um arquivo.');
     const ext = path.extname(src).toLowerCase();
+    if (checkMarkers && ext === '.docx' && !hasMarkers(await st.read(src))) return { noMarkers: true };
     let name = newName ? safeFileName(newName) : path.basename(src, ext).replace(/^\d{4}-\d{2}-\d{2} - /, '').replace(/^MODELO\s*[-–]\s*/i, '');
     if (!name.toLowerCase().endsWith(ext)) name += ext;
     if (!/^\d{4}-\d{2}-\d{2}/.test(name)) name = `${today()} - ${name}`;
@@ -514,6 +620,26 @@ export class DocsService {
     await st.write(rel, out);
     await this.indexOne(rel, { buf: out });
     return rel;
+  }
+
+  /**
+   * Transforma um modelo de 04 MODELOS que é um documento pronto de outro
+   * cliente em modelo com campos. O original fica ao lado como ".ORIGINAL - nome".
+   */
+  async convertTemplate(rel, user) {
+    const src = this.check(rel, user);
+    if (!src.startsWith(`${FOLDERS.modelos}/`) || !/\.docx$/i.test(src)) throw new Error('Só modelos .docx da pasta 04 MODELOS.');
+    const st = this.requireStore();
+    const buf = await st.read(src);
+    const r = makeTemplate(buf);
+    if (!r) throw new Error('Não achei o parágrafo da qualificação (ex.: “OUTORGANTE: NOME, brasileiro, …”). Abra o modelo no Word e escreva {qualificacao} no lugar dos dados do cliente.');
+    const dir = path.posix.dirname(src);
+    const backup = await this.uniqueRel(dir, `.ORIGINAL - ${path.posix.basename(src)}`);
+    await st.write(backup, buf);
+    await st.write(src, r.buf);
+    st.forget?.(src);
+    await this.indexOne(src, { buf: r.buf }).catch(() => {});
+    return { changes: r.changes, backup };
   }
 
   /** Modelos em 04 MODELOS (com a área = subpasta). */

@@ -159,7 +159,11 @@ export async function templatePicker({ caseId, clientId, dirRel, onDone } = {}) 
   setTimeout(() => search.focus(), 50);
   async function make(t) {
     try {
-      const r = await api('docs:useAsBase', t.rel, { caseId, clientId, dirRel });
+      const r = await api('docs:useAsBase', t.rel, { caseId, clientId, dirRel, template: true });
+      if (r.noMarkers) {
+        if (await convertTemplateDialog(t)) return make(t);
+        return;
+      }
       m.close?.();
       toast(`Criado: ${base(r.rel)}`, 'success', 5000);
       onDone?.();
@@ -168,6 +172,35 @@ export async function templatePicker({ caseId, clientId, dirRel, onDone } = {}) 
       (OFFICE_RE.test(nd.name) ? editDoc(nd) : openDocument(nd));
     } catch (e) { errToast(e); }
   }
+}
+
+/**
+ * O modelo escolhido é um documento pronto de outro cliente (sem {campos}):
+ * explica e oferece transformá-lo em modelo. true = transformou (gerar de novo).
+ */
+async function convertTemplateDialog(t) {
+  const can = state.me?.role !== 'estagiario';
+  const ok = await new Promise((resolve) => {
+    let done = false;
+    const end = (v) => { done = true; resolve(v); };
+    modal({
+      title: 'Este modelo não tem campos',
+      body: h('div', { class: 'stack' },
+        h('p', null, h('b', null, `“${t.name.replace(/\.[^.]+$/, '')}” é um documento pronto, sem campos para preencher.`)),
+        h('p', { class: 'small' }, 'O sistema só troca o que está entre chaves, como {NOME} e {qualificacao}. Sem isso, a cópia sairia com os dados do cliente antigo.'),
+        can ? h('p', { class: 'small' }, 'Posso transformar em modelo: o parágrafo “OUTORGANTE: FULANO, brasileiro, …” vira {NOME}, {qualificacao_resto} (o nome continua em negrito), o nome e o CPF antigos no resto do texto viram campos e a data por extenso do fim vira a data do dia. O original fica guardado ao lado, como “.ORIGINAL - …”.')
+          : h('p', { class: 'small' }, 'Peça a um advogado ou sócio para transformar este documento em modelo.')),
+      actions: can ? [{ label: 'Cancelar', onClick: () => end(false) }, { label: 'Transformar e criar o documento', primary: true, onClick: () => end(true) }]
+        : [{ label: 'Entendi', onClick: () => end(false) }],
+      onClose: () => { if (!done) resolve(false); },
+    });
+  });
+  if (!ok || !can) return false;
+  try {
+    const r = await api('docs:convertTemplate', t.rel);
+    toast(`Modelo pronto. Trocado: ${r.changes.join('; ')}`, 'success', 9000);
+    return true;
+  } catch (e) { errToast(e); return false; }
 }
 
 /** "Usar como base": copiar um documento encontrado para a pasta de um caso. */

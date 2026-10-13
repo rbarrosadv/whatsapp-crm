@@ -179,6 +179,7 @@ const DENY = {
     /^(pipelines|types|filters|tags):(save|delete|reorder)$/,
     'cases:setStatus', 'messages:delete', 'clients:merge', /^oabs:(save|delete)$/, /^leads:proposal/, 'cases:importRun', 'cases:archive',
     /^portal:(create|revoke|caseToggle|deleteNews)$/,
+    'docs:convertTemplate',
   ],
 };
 

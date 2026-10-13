@@ -2669,15 +2669,17 @@ export async function createCore({ dataDir, demo = false, version = '', safeStor
       const k = caseId ? db.getCase(caseId) : null;
       return templateValues(db.getClient(clientId || k?.client_id), k);
     },
-    'docs:useAsBase': async (ctx, srcRel, { caseId, clientId, dirRel, name } = {}) => {
+    'docs:useAsBase': async (ctx, srcRel, { caseId, clientId, dirRel, name, template } = {}) => {
       const k = caseId ? db.getCase(caseId) : null;
       const cl = db.getClient(clientId || k?.client_id);
       const dest = dirRel || k?.folder || cl?.folder;
       if (!dest) throw new Error('Este caso ainda não tem pasta. Crie ou ligue a pasta do caso primeiro.');
-      const rel = await docs.copyAsBase(srcRel, dest, templateValues(cl, k), ctx.user, name);
+      const rel = await docs.copyAsBase(srcRel, dest, templateValues(cl, k), ctx.user, name, { checkMarkers: !!template });
+      if (rel?.noMarkers) return { noMarkers: true };
       if (k) db.logActivity(k.jid, 'doc', `Documento criado: ${rel.split('/').pop()}`, ctx.user.name);
       return { rel, url: docUrl(rel), path: docs.localPath(rel) };
     },
+    'docs:convertTemplate': (ctx, rel) => docs.convertTemplate(rel, ctx.user),
     'docs:path': (ctx, rel) => ({ path: docs.localPath(docs.check(rel || '', ctx.user)), url: docUrl(rel || '') }),
     'cases:deleteDoc': (_c, id) => { const d = db.deleteCaseDoc(id); if (d) send('cases:changed', db.getCase(d.case_id)?.jid); },
 
