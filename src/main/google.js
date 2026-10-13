@@ -1,6 +1,7 @@
 // Integração com o Google Agenda (API oficial, com a chave do próprio
-// usuário). Login pelo navegador com retorno para um endereço local
-// (127.0.0.1) e PKCE; o token fica criptografado na pasta de dados.
+// escritório). Login com PKCE: chave "Aplicativo da Web" volta para
+// <endereço do servidor>/google/callback (servidor na nuvem); chave "App para
+// computador" volta para 127.0.0.1 (servidor no mesmo computador); o token fica criptografado na pasta de dados.
 import { EventEmitter } from 'node:events';
 import http from 'node:http';
 import crypto from 'node:crypto';
@@ -30,6 +31,7 @@ export class GoogleService extends EventEmitter {
     this.needsReconnect = false;
     this.email = null;
     this.calendarsCache = null;
+    this.pending = new Map(); // state → {verifier, redirectUri, at} (login pelo servidor)
     fs.mkdirSync(dir, { recursive: true });
   }
 
@@ -64,8 +66,11 @@ export class GoogleService extends EventEmitter {
 
   status() {
     const tok = this.readToken();
+    let web = false;
+    try { web = !!JSON.parse(fs.readFileSync(this.clientFile, 'utf-8')).web; } catch { /* sem chave */ }
     return {
       configured: !!this.client(),
+      web,
       connected: !!tok?.refresh_token && !this.needsReconnect,
       needsReconnect: this.needsReconnect,
       email: tok?.email || this.email || null,
@@ -80,7 +85,6 @@ export class GoogleService extends EventEmitter {
     try { j = JSON.parse(fs.readFileSync(file, 'utf-8')); } catch { throw new Error('Esse arquivo não é o JSON da chave do Google.'); }
     const c = j.installed || j.web;
     if (!c?.client_id || !c?.client_secret) throw new Error('Esse arquivo não parece ser a chave do Google (client_secret…json).');
-    if (!j.installed) throw new Error('A chave precisa ser do tipo "App para computador" (Desktop app). Crie outra em Google Cloud → Clientes.');
     fs.writeFileSync(this.clientFile, JSON.stringify(j));
     this.emitStatus();
   }
@@ -129,9 +133,39 @@ export class GoogleService extends EventEmitter {
       server.on('error', reject);
     });
 
-    const tok = await this.tokenRequest({
+    return this.saveLogin(await this.tokenRequest({
       grant_type: 'authorization_code', code, redirect_uri: redirectUri, code_verifier: verifier,
+    }));
+  }
+
+  /**
+   * Login pelo servidor (chave "Aplicativo da Web"): o Google volta para
+   * <endereço do sistema>/google/callback, cadastrado na chave.
+   */
+  authUrl(redirectUri) {
+    const c = this.client();
+    if (!c) throw new Error('Primeiro escolha o arquivo da chave do Google.');
+    const verifier = b64url(crypto.randomBytes(32));
+    const state = b64url(crypto.randomBytes(16));
+    for (const [k, v] of this.pending) if (Date.now() - v.at > 15 * 60e3) this.pending.delete(k);
+    this.pending.set(state, { verifier, redirectUri, at: Date.now() });
+    const params = new URLSearchParams({
+      client_id: c.client_id, redirect_uri: redirectUri, response_type: 'code', scope: SCOPE,
+      access_type: 'offline', prompt: 'consent', state,
+      code_challenge: b64url(crypto.createHash('sha256').update(verifier).digest()), code_challenge_method: 'S256',
     });
+    return `https://accounts.google.com/o/oauth2/v2/auth?${params}`;
+  }
+
+  /** Volta do login pelo servidor: código → autorização guardada. */
+  async finish(code, state) {
+    const p = this.pending.get(state);
+    if (!p || !code) throw new Error('O login demorou ou foi aberto em outra janela. Tente "Entrar com o Google" de novo.');
+    this.pending.delete(state);
+    return this.saveLogin(await this.tokenRequest({ grant_type: 'authorization_code', code, redirect_uri: p.redirectUri, code_verifier: p.verifier }));
+  }
+
+  async saveLogin(tok) {
     if (!tok.refresh_token) throw new Error('O Google não devolveu a autorização completa. Tente conectar de novo.');
     this.access = { token: tok.access_token, expiresAt: Date.now() + (tok.expires_in - 60) * 1000 };
     this.needsReconnect = false;

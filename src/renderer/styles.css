@@ -624,6 +624,7 @@ textarea.input { resize: vertical; }
 .gcard.bad { border-left-color: var(--danger); background: rgba(239, 68, 68, .1); }
 .gcard p { margin: 0; }
 .gcard .field.small > span { font-size: 11.5px; }
+.gcard-uri { display: block; word-break: break-all; padding: 6px 8px; border-radius: 6px; background: var(--panel); user-select: all; }
 .cal-legend { display: flex; flex-direction: column; gap: 6px; }
 .cal-item { display: flex; align-items: center; gap: 8px; font-size: 13px; cursor: pointer; min-width: 0; }
 .cal-dot { display: inline-block; width: 10px; height: 10px; border-radius: 3px; flex: none; }

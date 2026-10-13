@@ -372,6 +372,16 @@ export async function startServer({
         return back('onedrive=ok');
       } catch (e) { return back('onedrive=erro&msg=' + encodeURIComponent(e.message)); }
     }
+    // volta do login do Google (Agenda do escritório) — só sócio
+    if (p === '/google/callback' && req.method === 'GET') {
+      const back = (q) => { res.writeHead(302, { Location: `/?${q}`, 'Cache-Control': 'no-store' }); res.end(); };
+      if (user.role !== 'socio') return back('google=erro&msg=' + encodeURIComponent('Só um sócio conecta o Google Agenda.'));
+      if (url.searchParams.get('error')) return back('google=erro&msg=' + encodeURIComponent(url.searchParams.get('error') === 'access_denied' ? 'Acesso não permitido no Google.' : url.searchParams.get('error')));
+      try {
+        await core.googleCallback(url.searchParams.get('code'), url.searchParams.get('state'));
+        return back('google=ok');
+      } catch (e) { return back('google=erro&msg=' + encodeURIComponent(e.message)); }
+    }
     // arquivos da pasta do escritório (OneDrive), com a mesma regra de quem vê o quê.
     // ?inline=1 = para ver dentro do sistema (PDF, imagem, áudio/vídeo, texto),
     // só nesses tipos; o resto sempre baixa.

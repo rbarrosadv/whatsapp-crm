@@ -197,6 +197,13 @@ async function main() {
     if (params.get('onedrive') === 'ok') toast('OneDrive conectado. Agora escolha a pasta BARROS ADVOGADOS (passo 3).', 'success', 8000);
     else toast(`OneDrive: ${params.get('msg') || 'não foi possível conectar'}`, 'error', 10000);
   }
+  // volta do login do Google (Agenda → Google)
+  if (params.has('google')) {
+    history.replaceState(null, '', '/');
+    setView('agenda');
+    if (params.get('google') === 'ok') toast('Google Agenda conectado. Escolha a agenda do escritório em “Agenda usada pelo CRM”.', 'success', 8000);
+    else toast(`Google Agenda: ${params.get('msg') || 'não foi possível conectar'}`, 'error', 10000);
+  }
 }
 
 main().catch((e) => {

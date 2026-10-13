@@ -46,7 +46,6 @@ test('importa a chave, renova o token e lista agendas e eventos', async () => {
     [/calendars\/h%40x\/events/, () => ({ body: { items: [{ id: 'f', summary: 'Feriado', start: { date: '2030-01-11' }, end: { date: '2030-01-12' } }] } })],
   ]);
   const g = new GoogleService({ dir: gdir, fetch, openExternal: () => {} });
-  assert.throws(() => g.importClient(keyFile), /App para computador/);
   fs.writeFileSync(keyFile, JSON.stringify({ installed: { client_id: 'x', client_secret: 'y' } }));
   g.importClient(keyFile);
   assert.equal(g.status().configured, true);
@@ -140,4 +139,29 @@ test('prazos do CRM vão para o Google e mudanças de horário voltam', async ()
   const t2 = db.saveTask({ jid: J, kind: 'reuniao', title: 'Reunião', due_at: Date.now() + 86400e3 });
   const ag2 = await off.agenda(Date.now(), Date.now() + 7 * 86400e3);
   assert.ok(ag2.events.some((e) => e.taskId === t2 && e.source === 'crm'));
+});
+
+test('chave "Aplicativo da Web": login pelo servidor volta em /google/callback', async () => {
+  const gdir = path.join(dir, 'gweb');
+  const keyFile = path.join(dir, 'client-web.json');
+  fs.writeFileSync(keyFile, JSON.stringify({ web: { client_id: 'cid', client_secret: 'sec' } }));
+  const fetch = fakeFetch([
+    [/oauth2\.googleapis\.com\/token/, (_u, o) => ({ body: { access_token: 'AT', expires_in: 3600, refresh_token: 'RT', sent: String(o.body) } })],
+    [/calendars\/primary/, () => ({ body: { id: 'escritorio@gmail.com' } })],
+  ]);
+  const g = new GoogleService({ dir: gdir, fetch, openExternal: () => {} });
+  g.importClient(keyFile);
+  assert.equal(g.status().web, true);
+  const url = new URL(g.authUrl('https://escritorio.exemplo/google/callback'));
+  assert.equal(url.searchParams.get('redirect_uri'), 'https://escritorio.exemplo/google/callback');
+  assert.equal(url.searchParams.get('access_type'), 'offline');
+  await assert.rejects(g.finish('codigo', 'outro-state'), /demorou/);
+  const st = await g.finish('codigo', url.searchParams.get('state'));
+  assert.equal(st.connected, true);
+  assert.equal(st.email, 'escritorio@gmail.com');
+  const sent = new URLSearchParams(fetch.calls.find((c) => /token/.test(c.url)).opts.body);
+  assert.equal(sent.get('redirect_uri'), 'https://escritorio.exemplo/google/callback');
+  assert.equal(sent.get('code'), 'codigo');
+  assert.ok(sent.get('code_verifier'));
+  await assert.rejects(g.finish('codigo', url.searchParams.get('state')), /demorou/, 'o mesmo login não vale duas vezes');
 });

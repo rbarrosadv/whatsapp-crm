@@ -448,12 +448,16 @@ Motor (`src/main`, sem Electron apesar do nome da pasta):
   a cada N dias (`inss_check_days`, `cases:inssChecked`, lista no Hoje). Sem
   consulta automática (o INSS não tem consulta pública); DataJud não consulta.
 - `ogg.js` — remux WebM/Opus (MediaRecorder) → OGG/Opus (mensagem de voz).
-- `google.js` — `GoogleService`: Google Agenda pela API oficial com a chave
-  (client_secret JSON, tipo "App para computador") do próprio usuário;
-  login no navegador com retorno em `http://127.0.0.1:<porta>` + PKCE (só
-  funciona com o servidor no mesmo computador — num servidor remoto vai
-  precisar de cliente "Aplicativo da Web" com redirect no domínio);
-  `invalid_grant` → `needsReconnect`.
+- `google.js` — `GoogleService`: Google Agenda pela API oficial, uma conta
+  Google do escritório para o servidor todo (client_secret JSON importado em
+  Agenda → Google, só sócio). Chave **"Aplicativo da Web"** (servidor na nuvem):
+  `google:authUrl(origin)` → login com PKCE que volta em `<endereço>/google/callback`
+  (rota em `server.js`, só sócio → `core.googleCallback` → `google.finish` +
+  `syncAll`; `?google=ok|erro` abre a Agenda com aviso); o cartão mostra o endereço
+  de retorno para colar na chave. Chave "App para computador": `google:connect`
+  com retorno em `http://127.0.0.1:<porta>` (só servidor no mesmo computador).
+  Agenda de destino = `googleCalendarId` (recomendado: agenda "Barros Associados"
+  compartilhada com a equipe); `invalid_grant` → `needsReconnect`.
 - `calendar-sync.js` — `CalendarSync`: tarefas/prazos/audiências/reuniões do
   CRM viram eventos no Google (`tasks.gcal_event_id`, marcados com
   `extendedProperties.private.crmTaskId`); horário mudado no Google volta

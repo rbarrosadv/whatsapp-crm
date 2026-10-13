@@ -140,31 +140,48 @@ async function importKey() {
   } catch (e) { errToast(e); }
 }
 
+/** Endereço de retorno que vai na chave "Aplicativo da Web" do Google Cloud. */
+const googleRedirect = () => `${location.origin}/google/callback`;
+
 function googleCard() {
   const st = gstatus;
+  const admin = state.can.admin;
+  const copyRedirect = h('button', {
+    class: 'btn btn-sm wide', title: googleRedirect(),
+    onclick: async () => { try { await navigator.clipboard.writeText(googleRedirect()); toast('Endereço copiado', 'success'); } catch { toast(googleRedirect(), 'info', 10000); } },
+  }, 'Copiar o endereço de retorno');
   if (!st.configured) {
     return h('div', { class: 'gcard' },
       h('b', null, 'Google Agenda'),
-      h('p', { class: 'muted small' }, 'Conecte para ver todas as suas agendas aqui e enviar prazos e audiências para o Google automaticamente.'),
-      h('button', { class: 'btn btn-sm wide', onclick: importKey }, '1. Escolher a chave (.json)'),
-      h('button', { class: 'btn btn-sm wide', disabled: true }, '2. Entrar com o Google'),
-      h('p', { class: 'muted small' }, 'A chave é o arquivo client_secret….json que você baixou no Google Cloud.'));
+      h('p', { class: 'muted small' }, 'Conecte a conta Google do escritório para ver as agendas aqui e enviar prazos, audiências e reuniões para o Google automaticamente.'),
+      admin ? [
+        h('p', { class: 'muted small' }, 'No Google Cloud, crie a chave do tipo “Aplicativo da Web” e, em “URIs de redirecionamento autorizados”, cole este endereço:'),
+        h('code', { class: 'small gcard-uri' }, googleRedirect()),
+        copyRedirect,
+        h('button', { class: 'btn btn-sm wide', onclick: importKey }, '1. Escolher a chave (.json)'),
+        h('button', { class: 'btn btn-sm wide', disabled: true }, '2. Entrar com o Google'),
+      ] : h('p', { class: 'muted small' }, 'Quem conecta é um sócio.'));
   }
   if (!st.connected) {
+    const viaServer = st.web || !/^(127\.0\.0\.1|localhost)$/.test(location.hostname);
     return h('div', { class: `gcard ${st.needsReconnect ? 'bad' : ''}` },
       h('b', null, st.needsReconnect ? 'Google Agenda desconectado' : 'Google Agenda'),
       h('p', { class: 'muted small' }, st.needsReconnect
         ? 'A autorização do Google venceu (no modo de teste isso acontece a cada 7 dias). É só reconectar — nada se perde.'
-        : 'Chave carregada. Agora entre com a sua conta Google. O navegador vai abrir; se aparecer “O Google não verificou este app”, clique em Avançado → Acessar.'),
-      h('button', {
-        class: 'btn btn-primary btn-sm wide', disabled: connecting,
+        : 'Chave carregada. Agora entre com a conta Google do escritório. Se aparecer “O Google não verificou este app”, clique em Avançado → Acessar.'),
+      !admin ? h('p', { class: 'muted small' }, 'Peça a um sócio para conectar.')
+        : viaServer && !st.web ? h('p', { class: 'small bad-text' }, 'Esta chave é do tipo “App para computador”, que só funciona com o servidor no mesmo computador. Crie uma do tipo “Aplicativo da Web” com o endereço abaixo e troque o arquivo.') : null,
+      admin && viaServer ? [h('code', { class: 'small gcard-uri' }, googleRedirect()), copyRedirect] : null,
+      admin ? h('button', {
+        class: 'btn btn-primary btn-sm wide', disabled: connecting || (viaServer && !st.web),
         onclick: async () => {
+          if (st.web) { try { location.href = await api('google:authUrl', location.origin); } catch (e) { errToast(e); } return; }
           connecting = true; render();
           try { gstatus = await api('google:connect'); toast('Google Agenda conectado!', 'success'); } catch (e) { errToast(e); }
           connecting = false; load(true);
         },
-      }, connecting ? 'Aguardando o navegador…' : st.needsReconnect ? 'Reconectar Google' : '2. Entrar com o Google'),
-      h('button', { class: 'btn btn-sm wide', onclick: importKey }, 'Trocar arquivo da chave'));
+      }, connecting ? 'Aguardando o navegador…' : st.needsReconnect ? 'Reconectar Google' : '2. Entrar com o Google') : null,
+      admin ? h('button', { class: 'btn btn-sm wide', onclick: importKey }, 'Trocar arquivo da chave') : null);
   }
   const writable = calendars.filter((c) => c.writable);
   return h('div', { class: 'gcard ok' },

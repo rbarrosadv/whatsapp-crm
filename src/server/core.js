@@ -3026,6 +3026,10 @@ export async function createCore({ dataDir, demo = false, version = '', safeStor
       }).catch(() => {});
       return st;
     },
+    'google:authUrl': (_c, origin) => {
+      if (!/^https?:\/\/[\w.:-]+$/.test(String(origin || ''))) throw new Error('Endereço inválido.');
+      return google.authUrl(`${origin}/google/callback`);
+    },
     'google:disconnect': () => google.disconnect(),
     'google:calendars': (_c, force) => google.calendars(force),
     'google:syncAll': () => calSync.syncAll(),
@@ -3083,6 +3087,11 @@ export async function createCore({ dataDir, demo = false, version = '', safeStor
     async onedriveCallback(code, state) {
       await onedrive.finish(code, state);
       send('settings:office', null);
+    },
+    /** Volta do login do Google (rota /google/callback). */
+    async googleCallback(code, state) {
+      await google.finish(code, state);
+      calSync.syncAll().catch(() => {});
     },
     /** Roda agora a busca dos tribunais (DJEN + DataJud), como o relógio faria. */
     runCourts: () => Promise.all([checkIntimations(), datajudDaily()]),
