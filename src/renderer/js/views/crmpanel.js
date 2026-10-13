@@ -5,7 +5,7 @@ import {
   modal, errToast, toast, confirmDialog, debounce,
 } from '../util.js';
 import { state, on, emit, api, stageById, openChat, typeById } from '../store.js';
-import { avatarEl, typeMenu } from '../components.js';
+import { avatarEl, typeMenu, openAvatar, phoneCopy } from '../components.js';
 import { openCase, newCaseDialog, TASK_KINDS, feeLabel } from './casemodal.js';
 
 let root;
@@ -75,9 +75,9 @@ function renderTop() {
 
   fill(el, 
     h('div', { class: 'crm-id' },
-      avatarEl(chat, 72),
+      h('div', { class: 'avatar-zoom', title: 'Ver a foto grande', onclick: () => openAvatar(chat) }, avatarEl(chat, 72)),
       h('div', { class: 'crm-name' }, chat.display_name),
-      phone ? h('div', { class: 'muted' }, formatPhone(phone)) : null,
+      phone ? h('div', { class: 'muted crm-phone' }, phoneCopy(formatPhone(phone))) : null,
       chat.notify && chat.notify !== chat.display_name ? h('div', { class: 'muted small' }, `~${chat.notify}`) : null),
     h('div', { class: 'crm-block' },
       h('div', { class: 'crm-label' }, 'Tipo de contato'),

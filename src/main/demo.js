@@ -4,6 +4,7 @@
 import fs from 'node:fs';
 import { EventEmitter } from 'node:events';
 import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 import QRCode from 'qrcode';
 import { WhatsAppService, guessMime, extFor, editableCheck, toUrlInfo } from './whatsapp.js';
 import * as db from './db.js';
@@ -280,6 +281,15 @@ export class DemoWhatsAppService extends WhatsAppService {
   }
 
   async avatar() { return null; }
+
+  // no demo, a "foto grande" é o ícone do programa (para testar o ampliar)
+  async avatarFull(jid) {
+    const rel = path.join('_avatars', `${jid.replace(/[^\w.-]/g, '_')}-grande.png`);
+    const abs = path.join(this.mediaDir, rel);
+    fs.mkdirSync(path.dirname(abs), { recursive: true });
+    fs.copyFileSync(fileURLToPath(new URL('../../assets/icon.png', import.meta.url)), abs);
+    return rel;
+  }
   async loadOlder() { return false; }
 
   async groupInfo(jid) {

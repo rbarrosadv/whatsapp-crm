@@ -1,5 +1,5 @@
 // Lista de conversas (coluna da esquerda da caixa de entrada).
-import { h, fill, fmtListTime, fmtDuration, normalize, debounce, modal, errToast, toast, popupMenu } from '../util.js';
+import { h, fill, fmtListTime, fmtDuration, normalize, debounce, modal, errToast, toast, popupMenu, formatPhone, phoneOf } from '../util.js';
 import {
   state, on, api, sortedChats, openChat, stageById, typeById, chatMatchesRules, isAwaiting, setSetting,
 } from '../store.js';
@@ -205,6 +205,10 @@ export function mountChatList(root) {
     popupMenu(null, [
       { icon: '🏷', label: 'Classificar contato…', onClick: () => typeMenu(null, c, { x: e.clientX, y: e.clientY }) },
       c.is_group ? null : { icon: '📁', label: 'Novo caso…', onClick: () => newCaseDialog(c.jid) },
+      c.is_group || !phoneOf(c.jid) ? null : {
+        icon: '📋', label: 'Copiar número',
+        onClick: () => navigator.clipboard.writeText(formatPhone(phoneOf(c.jid))).then(() => toast(`Número copiado: ${formatPhone(phoneOf(c.jid))}`, 'success')),
+      },
       c.unread > 0
         ? { icon: '✔', label: 'Marcar como lida', onClick: () => api('chats:markRead', c.jid) }
         : { icon: '●', label: 'Marcar como não lida', onClick: () => api('chats:markUnread', c.jid) },

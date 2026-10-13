@@ -203,6 +203,11 @@ Interface (`src/renderer`, JS puro em módulos ES, sem build):
   rolar para baixo carrega (`loadNewer`), o botão "Ir para as mensagens mais
   recentes" volta ao fim (`reloadLatest`), mensagens novas não são coladas
   no fim (e ao enviar volta ao fim).
+- **Número e foto**: `phoneCopy` (components) copia o número com um clique
+  (cabeçalho da conversa, ficha; "Copiar número" no botão direito da lista);
+  clique na foto (`openAvatar`) → `chats:avatarFull` → `wa.avatarFull`
+  (`profilePictureUrl(jid, 'image')`, 1 consulta por clique, cache 7 dias,
+  senão a pequena) no visualizador de imagens.
 - **Editar mensagem**: só texto seu, até 15 min (`editableCheck`);
   `sendMessage(jid, { text, edit: key })`. No composer, `editing` mostra a
   faixa "Editando" (Esc cancela). Fotos abrem em `views/imageviewer.js`

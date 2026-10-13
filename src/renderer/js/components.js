@@ -1,6 +1,27 @@
 // Pedacinhos de interface reaproveitados em várias telas.
-import { h, initials, colorFor, popupMenu, errToast } from './util.js';
+import { h, initials, colorFor, popupMenu, errToast, toast } from './util.js';
 import { state, avatarFor, stageById, tagById, typeById, api } from './store.js';
+
+/** Abre a foto de perfil grande (clique na foto da conversa ou da ficha). */
+export async function openAvatar(chat) {
+  const r = await api('chats:avatarFull', chat.jid).catch(() => null);
+  if (!r) { toast(chat.is_group ? 'Este grupo não tem foto.' : 'Este contato não tem foto de perfil (ou ela não é visível para você).'); return; }
+  const { openImageViewer } = await import('./views/imageviewer.js');
+  openImageViewer([{ url: r.url, m: { id: chat.jid } }], 0, {
+    actions: () => [{ label: '💾', title: 'Salvar foto como…', onClick: () => api('media:saveAs', r.rel, `foto-${chat.display_name || 'contato'}.jpg`) }],
+  });
+}
+
+/** Número de telefone que dá para copiar com um clique. */
+export function phoneCopy(text) {
+  return h('span', {
+    class: 'phone-copy', title: 'Clique para copiar o número',
+    onclick: (e) => {
+      e.stopPropagation();
+      navigator.clipboard.writeText(text).then(() => toast(`Número copiado: ${text}`, 'success')).catch(() => {});
+    },
+  }, text, h('span', { class: 'copy-ico' }, ' 📋'));
+}
 
 export function avatarEl(chat, size = 44) {
   const el = h('div', {

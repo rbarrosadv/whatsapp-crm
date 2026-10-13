@@ -238,6 +238,16 @@ try {
   await page.locator('.chat-row', { hasText: 'Mariana Souza' }).click();
   await page.waitForSelector('.chat-head:has-text("Mariana Souza")');
 
+  // copiar o número do contato e ampliar a foto de perfil
+  await page.click('.chat-head .phone-copy');
+  const copied = await app.evaluate(({ clipboard }) => clipboard.readText());
+  check(/98765-4321/.test(copied), `clique no número copia (${copied})`);
+  await page.click('.chat-head .avatar-zoom');
+  await page.waitForSelector('.iv-overlay .iv-img');
+  check(true, 'clique na foto abre a foto de perfil grande (com zoom)');
+  await page.keyboard.press('Escape');
+  await page.waitForSelector('.iv-overlay', { state: 'detached' });
+
   // rascunho: fica guardado ao trocar de conversa e aparece na lista
   await page.locator('.chat-row', { hasText: 'Ana Beatriz' }).click();
   await page.waitForSelector('.chat-head:has-text("Ana Beatriz")');

@@ -443,6 +443,10 @@ const api = {
     const rel = await wa.avatar(jid);
     return rel ? mediaUrl(rel) : null;
   },
+  'chats:avatarFull': async (jid) => {
+    const rel = await wa.avatarFull(chatOrThrow(jid));
+    return rel ? { rel, url: mediaUrl(rel) } : null;
+  },
   'chats:groupInfo': (jid) => wa.groupInfo(jid),
   'chats:presence': (jid, type) => wa.sendPresence(jid, type),
 

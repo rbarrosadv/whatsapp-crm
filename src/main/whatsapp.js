@@ -1052,6 +1052,28 @@ export class WhatsAppService extends EventEmitter {
     return rel;
   }
 
+  /**
+   * Foto de perfil em tamanho grande (para ampliar). Uma consulta só, quando a
+   * pessoa clica; guardada por 7 dias. Sem foto grande, devolve a pequena.
+   */
+  async avatarFull(jid) {
+    const rel = path.join('_avatars', `${safeName(jid)}-grande.jpg`);
+    const abs = path.join(this.mediaDir, rel);
+    if (fs.existsSync(abs) && Date.now() - fs.statSync(abs).mtimeMs < 7 * 24 * 3600e3) return rel;
+    if (this.sock && this.state.state === 'open') {
+      try {
+        const url = await this.sock.profilePictureUrl(jid, 'image', 10000);
+        const res = url ? await fetch(url) : null;
+        if (res?.ok) {
+          fs.mkdirSync(path.dirname(abs), { recursive: true });
+          fs.writeFileSync(abs, Buffer.from(await res.arrayBuffer()));
+          return rel;
+        }
+      } catch { /* sem foto ou sem permissão de ver */ }
+    }
+    return this.avatar(jid);
+  }
+
   async groupInfo(jid) {
     const sock = this.requireSock();
     const md = await sock.groupMetadata(jid);

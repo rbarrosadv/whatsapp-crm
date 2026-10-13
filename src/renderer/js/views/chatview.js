@@ -12,7 +12,7 @@ import {
   toast, errToast, modal, confirmDialog, popupMenu, EMOJIS, QUICK_REACTIONS,
 } from '../util.js';
 import { state, on, emit, api, stageById, openChat, typeById } from '../store.js';
-import { avatarEl, ticks, emptyState, typeMenu, classifyBar } from '../components.js';
+import { avatarEl, ticks, emptyState, typeMenu, classifyBar, openAvatar, phoneCopy } from '../components.js';
 import { openCase, newCaseDialog } from './casemodal.js';
 import { newChatDialog } from './chatlist.js';
 
@@ -111,10 +111,10 @@ function renderHeader() {
   }, t ? `${t.icon || ''} ${t.name}` : '❓ Classificar', ' ▾');
   fill(current.classifyEl, classifyBar(chat));
   fill(current.headerEl, 
-    avatarEl(chat, 40),
+    h('div', { class: 'avatar-zoom', title: 'Ver a foto grande', onclick: () => openAvatar(chat) }, avatarEl(chat, 40)),
     h('div', { class: 'chat-head-info', onclick: () => root._togglePanel?.(true) },
       h('div', { class: 'chat-head-name' }, chat.display_name),
-      h('div', { class: 'chat-head-sub' }, sub, chat.company ? ` · ${chat.company}` : '')),
+      h('div', { class: 'chat-head-sub' }, !chat.is_group && phone ? phoneCopy(sub) : sub, chat.company ? ` · ${chat.company}` : '')),
     typeBtn,
     stageBtn,
     h('button', { class: 'icon-btn', title: 'Marcar como não lida', onclick: () => api('chats:markUnread', chat.jid) }, '●'),

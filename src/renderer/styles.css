@@ -773,3 +773,11 @@ body.discreet-msgs .link-card:hover { filter: none; }
 
 /* palavra encontrada pela busca, dentro da mensagem */
 mark.found { background: rgba(255, 196, 0, .55); color: inherit; border-radius: 3px; padding: 0 1px; }
+
+/* número que copia com um clique e foto que amplia */
+.phone-copy { cursor: copy; user-select: text; border-radius: 4px; }
+.phone-copy:hover { background: var(--hover); }
+.phone-copy .copy-ico { opacity: 0; font-size: .85em; }
+.phone-copy:hover .copy-ico { opacity: .8; }
+.avatar-zoom { cursor: zoom-in; border-radius: 50%; flex: none; }
+.avatar-zoom:hover { filter: brightness(1.08); }
