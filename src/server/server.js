@@ -293,11 +293,13 @@ export async function startServer({
     if (req.method === 'GET' && (p === '/portal.js' || p === '/portal.css')) {
       return serveFile(req, res, path.join(RENDERER, p.slice(1)), { csp: CSP, cache: 'no-cache' });
     }
-    if (p === '/portal/data' && req.method === 'POST') {
+    if (['/portal/data', '/portal/confirm', '/portal/rate'].includes(p) && req.method === 'POST') {
       if (req.headers['x-crm'] !== '1') return sendJson(res, 403, { error: 'requisição recusada' });
       if (tooMany(ip)) return sendJson(res, 429, { error: 'Muitas tentativas. Espere 15 minutos e tente de novo.', needPin: true });
       const body = await readJson(req);
-      const r = core.portalData(body.token, body.pin);
+      const r = p === '/portal/confirm' ? core.portalConfirm(body.token, body.pin, body)
+        : p === '/portal/rate' ? core.portalRate(body.token, body.pin, body)
+          : core.portalData(body.token, body.pin);
       if (r.status === 401 && body.pin) failed(ip);
       res.setHeader('Cache-Control', 'no-store');
       res.setHeader('X-Robots-Tag', 'noindex, nofollow');

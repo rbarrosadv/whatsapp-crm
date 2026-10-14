@@ -26,7 +26,7 @@ import { reais } from '../main/extenso.js';
 import { readSheet } from '../main/sheet.js';
 import { sameName } from '../renderer/js/qualify.js';
 import { derivePhase, startPhase, inssPhase, phaseLabel, phaseList } from '../renderer/js/phases.js';
-import { clientSteps, newsText } from '../main/portal.js';
+import { clientSteps, newsText, clientMoveText, SENSITIVE_MOVE, DEFAULT_FAQ, PORTAL_PARTS, portalParts, CLIENT_PHASES } from '../main/portal.js';
 import {
   detectColumns, parseImport, classifyArea, archiveState, suggestPrescription, partiesFromDjen, isGenericTitle, hearingFromText, sessionFromText, CLIENT_WORTHY,
 } from '../main/importer.js';
@@ -53,7 +53,7 @@ export const USER_KEYS = ['notifications', 'notificationPreview', 'theme', 'last
 export const OFFICE_KEYS = ['sendReadReceipts', 'forgottenHours', 'chargeTemplate', 'pixKey', 'paymentNoticeDays',
   'staleCaseDays', 'googleSync', 'googleCalendarId', 'signMessages', 'docsRoot', 'docsRequestTemplate', 'datajudKey',
   'officeName', 'officeDoc', 'officeAddress', 'officeCity', 'proposalTemplate', 'proposalValidDays', 'prescriptionYears', 'clientUpdateTemplate', 'idleCaseDays', 'waSaveContacts', 'docsMode',
-  'receiptSigner', 'receiptSignMode', 'courtsNotifyAll', 'docsOcr', 'phaseConfig', 'internalDays', 'secretCheckDays', 'monthlySummaryTemplate'];
+  'receiptSigner', 'receiptSignMode', 'courtsNotifyAll', 'docsOcr', 'phaseConfig', 'internalDays', 'secretCheckDays', 'monthlySummaryTemplate', 'portalFaq', 'googleReviewUrl'];
 
 export const DEFAULT_CHARGE_TEMPLATE = 'Olá, {nome}! Tudo bem? Passando para lembrar da {parcela} dos honorários referentes a {caso}, '
   + 'no valor de {valor}, com vencimento em {vencimento}.{pix_linha}\nQualquer dúvida, estou à disposição.';
@@ -517,6 +517,7 @@ export async function createCore({ dataDir, demo = false, version = '', safeStor
       checkForgottenIntimations();
       checkDeadlines();
       checkDrafts();
+      checkHearingConfirm();
       // a cada ~10 min traz mudanças de horário feitas no Google
       if (++googleTick % 20 === 1 && google?.status().connected) {
         calSync.agenda(Date.now() - 7 * DAY, Date.now() + 120 * DAY).catch(() => {});
@@ -765,6 +766,27 @@ export async function createCore({ dataDir, demo = false, version = '', safeStor
   // ---------------------------------------------- iniciais a distribuir
   const DRAFT_STATUS = { documentos: 'Aguardando documentos', redacao: 'Em redação', revisao: 'Em revisão', pronta: 'Pronta para protocolar' };
   /** Data meta da inicial: 2 dias úteis antes avisa quem cuida; passou sem protocolar avisa também os sócios. Uma vez cada. */
+  /**
+   * Audiência em até 3 dias e o cliente (que tem a página de acompanhamento)
+   * ainda não confirmou presença: avisa o responsável para ligar, uma vez.
+   */
+  function checkHearingConfirm() {
+    const hour = new Date().getHours();
+    if (hour < 8 || hour >= 20) return;
+    const rows = db.all(`SELECT t.id, t.title, t.due_at, t.assignee_id, c.id AS case_id, c.client_id, c.responsible_id, c.portal_on, c.secret, cl.name AS client_name, l.parts
+      FROM tasks t JOIN cases c ON c.id = t.case_id JOIN clients cl ON cl.id = c.client_id
+      JOIN portal_links l ON l.client_id = c.client_id AND l.revoked_at IS NULL
+      WHERE t.kind = 'audiencia' AND t.done = 0 AND t.client_confirm IS NULL AND t.confirm_warned = 0 AND t.due_at > ? AND t.due_at < ?`,
+    Date.now(), Date.now() + 3 * DAY);
+    for (const r of rows) {
+      if (!portalVisible(r) || !portalParts(r.parts).hearing) continue;
+      db.setTaskField(r.id, 'confirm_warned', 1);
+      const to = r.assignee_id || r.responsible_id;
+      const when = new Date(r.due_at).toLocaleString('pt-BR', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' });
+      notify({ kind: 'hearing-unconfirmed', title: 'Cliente ainda não confirmou a audiência', body: `${r.client_name} — ${r.title} em ${when}. Vale ligar para confirmar.`, action: { case: r.case_id } }, to ? { user: to } : undefined);
+    }
+  }
+
   function checkDrafts() {
     const hour = new Date().getHours();
     if (hour < 8 || hour >= 20) return;
@@ -975,44 +997,138 @@ export async function createCore({ dataDir, demo = false, version = '', safeStor
   const portalLink = (clientId) => db.get('SELECT * FROM portal_links WHERE client_id = ? AND revoked_at IS NULL ORDER BY id DESC LIMIT 1', clientId);
 
   /**
-   * Dados da página do cliente (rota pública /c/<token>): confere os 4 últimos
-   * números do CPF/CNPJ (5 erros = 15 min bloqueado), conta a visita e devolve só
-   * o que é para o cliente — etapas, próximo compromisso, novidades aprovadas.
+   * Confere o link e os 4 últimos números do CPF/CNPJ (5 erros = 15 min bloqueado).
+   * Devolve {link, cl} ou {error: {status, body}}.
    */
-  function portalData(token, pin) {
+  function portalAuth(token, pin) {
     const link = /^[A-Za-z0-9_-]{20,64}$/.test(String(token || '')) ? db.get('SELECT * FROM portal_links WHERE token = ? AND revoked_at IS NULL', token) : null;
-    if (!link) return { status: 404, body: { error: 'Este link não está mais ativo. Fale com o escritório.' } };
-    if (link.locked_until && link.locked_until > Date.now()) return { status: 429, body: { error: 'Muitas tentativas. Espere 15 minutos e tente de novo.', needPin: true } };
+    if (!link) return { error: { status: 404, body: { error: 'Este link não está mais ativo. Fale com o escritório.' } } };
+    if (link.locked_until && link.locked_until > Date.now()) return { error: { status: 429, body: { error: 'Muitas tentativas. Espere 15 minutos e tente de novo.', needPin: true } } };
     const cl = db.getClient(link.client_id);
-    if (!cl) return { status: 404, body: { error: 'Este link não está mais ativo. Fale com o escritório.' } };
+    if (!cl) return { error: { status: 404, body: { error: 'Este link não está mais ativo. Fale com o escritório.' } } };
     const doc = String(cl.cpf || '').replace(/\D/g, '');
-    const office = { name: settings.officeName || 'Barros Associados', city: settings.officeCity || '' };
     if (doc.length >= 4 && String(pin || '') !== doc.slice(-4)) {
       if (pin) {
         const fails = (link.fails || 0) + 1;
         db.run('UPDATE portal_links SET fails = ?, locked_until = ? WHERE id = ?', fails >= 5 ? 0 : fails, fails >= 5 ? Date.now() + 15 * 60e3 : null, link.id);
       }
-      return { status: 401, body: { needPin: true, docKind: doc.length > 11 ? 'CNPJ' : 'CPF', error: pin ? 'Os números não conferem. Confira e tente de novo.' : null, office } };
+      return { error: { status: 401, body: { needPin: true, docKind: doc.length > 11 ? 'CNPJ' : 'CPF', error: pin ? 'Os números não conferem. Confira e tente de novo.' : null, office: portalOffice() } } };
     }
+    return { link, cl };
+  }
+  const portalOffice = () => ({ name: settings.officeName || 'Barros Associados', city: settings.officeCity || '' });
+  /** Processos que o cliente vê: abertos e encerrados há até 90 dias, sem os escondidos/segredo. */
+  const portalCases = (clientId) => db.listCases({ includeClosed: true })
+    .filter((k) => k.client_id === clientId && portalVisible(k) && (k.status === 'aberto' || (k.closed_at || 0) > Date.now() - 90 * DAY));
+  const portalFaq = () => { try { return { ...DEFAULT_FAQ, ...(JSON.parse(settings.portalFaq || '{}') || {}) }; } catch { return DEFAULT_FAQ; } };
+
+  /**
+   * Linha do tempo do cliente: as novidades que a equipe aprovou + os andamentos
+   * do tribunal traduzidos (sem os de rotina e sem os sensíveis — sentença,
+   * decisão, acordo… só aparecem depois do "Explicar ao cliente").
+   */
+  function portalTimeline(k, auto) {
+    const items = db.all('SELECT ts, title, text FROM portal_news WHERE case_id = ? ORDER BY ts DESC, id DESC LIMIT 20', k.id).map((n) => ({ ...n, kind: 'news' }));
+    if (auto) {
+      let last = null;
+      for (const m of db.listMoves(k.id)) {
+        if (m.source === 'manual' || m.notified_at || SENSITIVE_MOVE.test(m.text)) continue;
+        const title = clientMoveText(m.text);
+        if (!title) continue;
+        const day = new Date(m.ts).toDateString();
+        if (last && last.title === title && last.day === day) continue;
+        last = { title, day };
+        items.push({ ts: m.ts, title, text: '', kind: 'move' });
+        if (items.length >= 40) break;
+      }
+    }
+    return items.sort((a, b) => b.ts - a.ts).slice(0, 25);
+  }
+
+  /**
+   * Dados da página do cliente (rota pública /c/<token>): conta a visita e devolve
+   * só o que é para o cliente — etapa e há quanto tempo, quanto costuma durar, o
+   * próximo passo, andamentos traduzidos, novidades aprovadas, documentos pedidos,
+   * a próxima audiência (com confirmação de presença), dúvidas comuns da fase e a
+   * avaliação no fim. Nada de valores, prazos internos ou notas.
+   */
+  function portalData(token, pin) {
+    const a = portalAuth(token, pin);
+    if (a.error) return a.error;
+    const { link, cl } = a;
     db.run('UPDATE portal_links SET fails = 0, views = views + 1, last_view_at = ? WHERE id = ?', Date.now(), link.id);
+    const parts = portalParts(link.parts);
     const cfg = settings.phaseConfig;
+    const avg = db.phaseAverages();
+    const faq = portalFaq();
     const waMe = String(wa.getStatus?.()?.me?.jid || '').split('@')[0].split(':')[0].replace(/\D/g, '');
-    const cases = db.listCases({ includeClosed: true })
-      .filter((k) => k.client_id === cl.id && portalVisible(k) && (k.status === 'aberto' || (k.closed_at || 0) > Date.now() - 90 * DAY))
-      .map((k) => {
-        const tr = clientSteps(k, db.phaseHistory(k.id), cfg);
-        const next = db.all("SELECT title, due_at, end_at FROM tasks WHERE case_id = ? AND done = 0 AND kind = 'audiencia' AND due_at > ? ORDER BY due_at LIMIT 1", k.id, Date.now())[0] || null;
-        const news = db.all('SELECT ts, title, text FROM portal_news WHERE case_id = ? ORDER BY ts DESC, id DESC LIMIT 15', k.id);
-        const resp = k.responsible_id ? auth.getUser(k.responsible_id) : null;
-        return {
-          id: k.id, title: k.title, number: k.process_number || null, court: k.court || k.tribunal || null, closed: k.status !== 'aberto',
-          ...tr, next, news, lawyer: resp?.name || null,
-          updated: Math.max(k.phase_since || 0, news[0]?.ts || 0, k.created_at || 0),
-          isNew: !!(news[0] && news[0].ts > (link.last_view_at || 0)),
-        };
-      });
+    const cases = portalCases(cl.id).map((k) => {
+      const tr = clientSteps(k, db.phaseHistory(k.id), cfg);
+      const h = db.all("SELECT id, title, due_at, end_at, place, client_confirm FROM tasks WHERE case_id = ? AND done = 0 AND kind = 'audiencia' AND due_at > ? ORDER BY due_at LIMIT 1", k.id, Date.now())[0] || null;
+      const next = h ? {
+        id: h.id, title: h.title, due_at: h.due_at, end_at: h.end_at, place: h.place || null,
+        virtual: /https?:\/\/|virtual|videoconfer|teams|zoom|meet/i.test(`${h.place || ''} ${h.title}`),
+        confirm: parts.hearing ? (h.client_confirm || 'pendente') : null,
+      } : null;
+      const timeline = portalTimeline(k, parts.moves && k.portal_auto !== 0);
+      const resp = k.responsible_id ? auth.getUser(k.responsible_id) : null;
+      const closed = k.status !== 'aberto';
+      const rated = closed ? db.get('SELECT score FROM portal_ratings WHERE case_id = ? ORDER BY id DESC LIMIT 1', k.id) : null;
+      const cur = tr.steps.findIndex((s) => s.state === 'current');
+      const checked = k.secret || !k.process_number ? null : (k.datajud_updated_at || k.datajud_checked_at || null);
+      return {
+        id: k.id, title: k.title, number: k.process_number || null, court: k.court || null, tribunal: k.tribunal || null,
+        consulta: k.process_number && k.tribunal ? consultaUrl(k.tribunal) : null, closed,
+        ...tr, timeline, news: timeline.filter((n) => n.kind === 'news'), next, lawyer: resp?.name || null,
+        since: closed ? null : k.phase_since || null, avgDays: closed ? null : avg[tr.current] || null,
+        nextLabel: !closed && cur >= 0 && tr.steps[cur + 1] ? tr.steps[cur + 1].label : null,
+        checkedAt: checked,
+        docs: parts.docs && !closed ? db.listChecklist(k.id).filter((i) => i.status === 'solicitado').map((i) => ({ label: i.label, requested_at: i.requested_at })) : [],
+        faq: parts.faq && !closed ? (faq[tr.current] || []).map(([q, r]) => ({ q, a: r })) : [],
+        rating: closed && parts.rating ? (rated ? { done: true, score: rated.score } : { done: false }) : null,
+        updated: Math.max(k.phase_since || 0, timeline[0]?.ts || 0, k.created_at || 0),
+        isNew: !!(timeline[0] && timeline[0].ts > (link.last_view_at || 0)),
+      };
+    });
     const first = cl.kind === 'pj' ? cl.name : (String(cl.name || '').split(/\s+/)[0] || '').replace(/^./, (c) => c.toUpperCase());
-    return { status: 200, body: { name: first, office, whatsapp: waMe || null, cases } };
+    return { status: 200, body: { name: first, office: portalOffice(), whatsapp: waMe || null, reviewUrl: settings.googleReviewUrl || null, cases } };
+  }
+
+  /** O cliente responde sobre a próxima audiência: 'presente' ou 'falar' (quer falar com o advogado). */
+  function portalConfirm(token, pin, { taskId, answer } = {}) {
+    const a = portalAuth(token, pin);
+    if (a.error) return a.error;
+    if (!['presente', 'falar'].includes(answer)) return { status: 400, body: { error: 'Resposta inválida.' } };
+    const t = db.getTask(Number(taskId));
+    const k = t?.case_id ? db.getCase(t.case_id) : null;
+    if (!t || t.kind !== 'audiencia' || t.done || !k || k.client_id !== a.cl.id || !portalVisible(k) || !portalParts(a.link.parts).hearing) return { status: 404, body: { error: 'Audiência não encontrada.' } };
+    db.setTaskField(t.id, 'client_confirm', answer);
+    db.setTaskField(t.id, 'client_confirm_at', Date.now());
+    const when = new Date(t.due_at).toLocaleString('pt-BR', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' });
+    const msg = answer === 'presente' ? `${a.cl.name} confirmou presença na audiência de ${when}` : `${a.cl.name} pediu para falar com o advogado sobre a audiência de ${when}`;
+    db.logActivity(k.jid, 'case', msg, 'Página do cliente');
+    const to = t.assignee_id || k.responsible_id;
+    notify({ kind: 'hearing-confirm', title: answer === 'presente' ? 'Presença confirmada' : 'Cliente quer falar sobre a audiência', body: msg, action: { case: k.id } }, to ? { user: to } : undefined);
+    send('tasks:changed', null);
+    return { status: 200, body: { ok: true } };
+  }
+
+  /** Avaliação do atendimento (1 a 5) num processo encerrado. */
+  function portalRate(token, pin, { caseId, score, comment } = {}) {
+    const a = portalAuth(token, pin);
+    if (a.error) return a.error;
+    const k = db.getCase(Number(caseId));
+    const n = Math.round(Number(score));
+    if (!k || k.client_id !== a.cl.id || k.status === 'aberto' || !(n >= 1 && n <= 5) || !portalParts(a.link.parts).rating) return { status: 400, body: { error: 'Não foi possível registrar a avaliação.' } };
+    if (db.get('SELECT 1 AS x FROM portal_ratings WHERE case_id = ?', k.id)) return { status: 200, body: { ok: true } };
+    const text = String(comment || '').trim().slice(0, 1000) || null;
+    db.run('INSERT INTO portal_ratings (client_id, case_id, score, comment, created_at) VALUES (?, ?, ?, ?, ?)', a.cl.id, k.id, n, text, Date.now());
+    db.logActivity(k.jid, 'case', `Avaliação do cliente: ${n} de 5${text ? ` — "${text}"` : ''}`, 'Página do cliente');
+    const socios = auth.listUsers().filter((u) => u.active && u.role === 'socio').map((u) => u.id);
+    for (const uid of new Set([k.responsible_id, ...socios].filter(Boolean))) {
+      notify({ kind: 'rating', title: `Avaliação: ${'★'.repeat(n)}${'☆'.repeat(5 - n)}`, body: `${a.cl.name} — ${k.title}${text ? `: "${text}"` : ''}`, action: { case: k.id } }, { user: uid });
+    }
+    return { status: 200, body: { ok: true, review: n >= 4 ? settings.googleReviewUrl || null : null } };
   }
 
   // ---------------------------------------------- resumo mensal ao cliente
@@ -2113,11 +2229,12 @@ export async function createCore({ dataDir, demo = false, version = '', safeStor
     'portal:get': (_c, clientId) => {
       const l = portalLink(clientId);
       const cases = db.listCases({ includeClosed: false }).filter((k) => k.client_id === clientId)
-        .map((k) => ({ id: k.id, title: k.title, secret: !!k.secret, on: portalVisible(k), news: db.get('SELECT COUNT(*) AS n FROM portal_news WHERE case_id = ?', k.id).n }));
+        .map((k) => ({ id: k.id, title: k.title, secret: !!k.secret, on: portalVisible(k), auto: k.portal_auto !== 0, news: db.get('SELECT COUNT(*) AS n FROM portal_news WHERE case_id = ?', k.id).n }));
       const cl = db.getClient(clientId);
       return {
         token: l?.token || null, created_at: l?.created_at || null, last_view_at: l?.last_view_at || null, views: l?.views || 0,
         hasDoc: String(cl?.cpf || '').replace(/\D/g, '').length >= 4, jid: cl?.jid || null, cases,
+        parts: portalParts(l?.parts), partLabels: PORTAL_PARTS,
       };
     },
     'portal:create': (ctx, clientId) => {
@@ -2141,6 +2258,23 @@ export async function createCore({ dataDir, demo = false, version = '', safeStor
       return true;
     },
     'portal:caseToggle': (_c, caseId, on) => { db.run('UPDATE cases SET portal_on = ? WHERE id = ?', on ? 1 : 0, caseId); return true; },
+    /** Andamentos do tribunal aparecem sozinhos na página (padrão) ou só os aprovados. */
+    'portal:caseAuto': (_c, caseId, on) => { db.run('UPDATE cases SET portal_auto = ? WHERE id = ?', on ? null : 0, caseId); return true; },
+    /** O que este cliente vê na página (andamentos, documentos, dúvidas, audiência, avaliação). */
+    'portal:setParts': (_c, clientId, parts = {}) => {
+      const cur = portalParts(portalLink(clientId)?.parts);
+      const next = Object.fromEntries(Object.keys(PORTAL_PARTS).map((k) => [k, parts[k] === undefined ? cur[k] : !!parts[k]]));
+      db.run('UPDATE portal_links SET parts = ? WHERE client_id = ? AND revoked_at IS NULL', JSON.stringify(next), clientId);
+      return next;
+    },
+    /** Dúvidas comuns por fase (as do escritório por cima das padrão), para editar em Ajustes. */
+    'portal:faq': () => {
+      const faq = portalFaq();
+      return Object.entries(CLIENT_PHASES).map(([id, [label]]) => ({ id, label, items: (faq[id] || []).map(([q, a]) => ({ q, a })) }));
+    },
+    /** Avaliações dos clientes no período (Relatórios). */
+    'portal:ratings': (_c, { from, to } = {}) => db.all(`SELECT r.*, cl.name AS client_name, c.title AS case_title FROM portal_ratings r
+      JOIN clients cl ON cl.id = r.client_id LEFT JOIN cases c ON c.id = r.case_id WHERE r.created_at >= ? AND r.created_at < ? ORDER BY r.created_at DESC`, from || 0, to || Date.now() + DAY),
     'portal:news': (_c, caseId) => db.all('SELECT * FROM portal_news WHERE case_id = ? ORDER BY ts DESC, id DESC', caseId),
     'portal:addNews': (ctx, caseId, { title, text, ts } = {}) => {
       if (!String(text || '').trim()) throw new Error('Escreva a novidade.');
@@ -3123,7 +3257,7 @@ export async function createCore({ dataDir, demo = false, version = '', safeStor
   });
 
   return {
-    events, api, call, dropConn, backupFile, resolveMedia, wa, google, docs, dataDir, demo, lookup, courts, onedrive, relay, courtsFetch, portalData,
+    events, api, call, dropConn, backupFile, resolveMedia, wa, google, docs, dataDir, demo, lookup, courts, onedrive, relay, courtsFetch, portalData, portalConfirm, portalRate,
     /** Volta do login da Microsoft (rota /onedrive/callback). */
     async onedriveCallback(code, state) {
       await onedrive.finish(code, state);

@@ -91,3 +91,47 @@ html, body { margin: 0; background: var(--ground); color: var(--ink); font-famil
 .pt-err { color: #b42318; font-size: 14px; }
 .pt-lock { display: flex; gap: 10px; align-items: flex-start; font-size: 13px; color: var(--muted); line-height: 1.45; }
 .pt-help { margin: 18px 16px 0; display: flex; align-items: center; justify-content: center; min-height: 48px; border-radius: 14px; border: 2px solid #c3ccd2; color: #2f4a5a; font-size: 16px; font-weight: 600; text-decoration: none; }
+
+/* etapa: há quanto tempo, quanto costuma durar, próximo passo */
+.pt-facts { margin-top: 14px; padding-top: 12px; border-top: 1px solid var(--line); display: flex; flex-direction: column; gap: 6px; font-size: 15px; color: var(--ink-2); line-height: 1.4; }
+.pt-facts b { color: var(--ink); }
+/* audiência */
+.pt-next-body { display: flex; flex-direction: column; gap: 2px; flex: 1; min-width: 0; }
+.pt-tag { align-self: flex-start; margin-top: 8px; font-size: 13px; font-weight: 600; color: var(--warn-ink); background: #fff1d6; border-radius: 999px; padding: 4px 10px; }
+.pt-place { display: flex; align-items: flex-start; gap: 8px; margin-top: 8px; font-size: 15px; color: var(--ink); text-decoration: none; overflow-wrap: anywhere; }
+a.pt-place { font-weight: 700; color: var(--warn-ink); }
+.pt-place svg { flex: none; margin-top: 1px; }
+.pt-tip { margin-top: 8px; font-size: 14px; color: var(--ink-2); line-height: 1.4; }
+.pt-confirm { display: flex; flex-direction: column; gap: 8px; margin-top: 12px; }
+.pt-confirm .pt-btn { min-height: 48px; font-size: 16px; }
+.pt-btn-2 { background: #fff; color: var(--brand); border: 2px solid #c3ccd2; }
+.pt-ok { font-size: 15px; font-weight: 600; color: var(--ok); }
+/* documentos pedidos */
+.pt-need { border: 1px solid var(--warn-line); }
+.pt-docs { list-style: none; margin: 10px 0 14px; padding: 0; display: flex; flex-direction: column; gap: 8px; }
+.pt-docs li { display: flex; gap: 10px; align-items: flex-start; font-size: 16px; }
+.pt-docs svg { flex: none; margin-top: 2px; }
+/* dúvidas */
+.pt-faq { border-top: 1px solid var(--line); padding: 12px 0; }
+.pt-faq:first-of-type { border-top: 0; padding-top: 0; }
+.pt-faq summary { font-size: 16px; font-weight: 600; cursor: pointer; min-height: 32px; display: flex; align-items: center; }
+.pt-faq p { margin: 6px 0 0; font-size: 15px; line-height: 1.45; color: var(--ink-2); }
+/* andamentos do tribunal (automáticos) */
+.pt-move .pt-news-title { font-weight: 600; color: var(--ink-2); }
+.pt-note { margin: 10px 0 0; font-size: 13px; color: var(--muted); line-height: 1.4; }
+/* dados do processo */
+.pt-proc dl { display: grid; grid-template-columns: auto 1fr; gap: 6px 14px; margin: 0 0 10px; font-size: 15px; }
+.pt-proc dt { color: var(--muted); }
+.pt-proc dd { margin: 0; overflow-wrap: anywhere; }
+.pt-mono { font-variant-numeric: tabular-nums; letter-spacing: .2px; }
+.pt-checked { font-size: 13px; color: var(--ok); margin-bottom: 4px; }
+.pt-proc .pt-help { margin: 8px 0 0; gap: 8px; }
+/* avaliação */
+.pt-rate { display: flex; flex-direction: column; gap: 12px; }
+.pt-rate .pt-h2 { margin: 0; }
+.pt-stars { display: flex; gap: 4px; }
+.pt-stars button { font-size: 36px; line-height: 1; background: none; border: 0; color: #d99a00; cursor: pointer; min-width: 48px; min-height: 48px; padding: 0; }
+.pt-stars-done { font-size: 28px; color: #d99a00; }
+.pt-text { border: 2px solid #c3ccd2; border-radius: 12px; padding: 10px 12px; font: inherit; font-size: 16px; resize: vertical; width: 100%; }
+.pt-text:focus { outline: none; border-color: var(--brand); }
+.pt-rate .pt-help { margin: 0; }

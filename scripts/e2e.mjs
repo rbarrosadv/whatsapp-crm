@@ -891,7 +891,12 @@ try {
   const portalClient = await page.evaluate(async () => {
     const id = await window.api.call('clients:save', { name: 'Mariana Acompanha Souza', cpf: '123.456.789-09' });
     const k = await window.api.call('cases:save', { client_id: id, title: 'Indenização por danos morais' });
-    await window.api.call('cases:save', { id: k, process_number: '1006666-11.2026.8.11.0041' });
+    await window.api.call('cases:save', { id: k, process_number: '1006666-11.2026.8.11.0041', tribunal: 'TJMT', court: '3ª Vara Cível de Cuiabá' });
+    await window.api.call('checklist:add', k, ['Comprovante de residência atualizado']);
+    const [item] = (await window.api.call('cases:full', k)).checklist;
+    if (item) await window.api.call('checklist:set', [item.id], 'solicitado');
+    const when = new Date(); when.setDate(when.getDate() + 9); when.setHours(14, 0, 0, 0);
+    await window.api.call('tasks:save', { kind: 'audiencia', title: 'Audiência de conciliação', due_at: when.getTime(), case_id: k, place: 'Fórum de Cuiabá — Av. Historiador Rubens de Mendonça, sala 12' });
     const mid = await window.api.call('moves:add', { case_id: k, text: 'Citação da parte ré expedida', ts: Date.now() - 864e5 });
     await window.api.call('moves:notifyClient', mid, 'Olá, Mariana! A Justiça avisou oficialmente a empresa sobre o processo. Agora ela tem prazo para se defender.', { via: 'copy' });
     return id;
@@ -921,7 +926,15 @@ try {
   check(await cp.locator('.pt-now').textContent() !== '', 'cliente vê a etapa atual com os 4 dígitos do CPF');
   check(!/\bnull\b|undefined/.test(await cp.locator("#app").innerText()), "página do cliente sem textos soltos (null)");
   check(await cp.locator('.pt-news:has-text("avisou oficialmente a empresa")').count() === 1, 'novidade aprovada aparece em palavras simples');
+  check(await cp.locator('.pt-facts:has-text("Nesta etapa desde")').count() === 1 && await cp.locator('.pt-facts:has-text("Próximo passo")').count() === 1, 'há quanto tempo na etapa e o próximo passo');
+  check(await cp.locator('.pt-need li:has-text("Comprovante de residência")').count() === 1, 'o que precisamos de você (documento pedido)');
+  check(await cp.locator('.pt-proc:has-text("3ª Vara Cível de Cuiabá") a:has-text("Ver no site do tribunal")').count() === 1, 'dados do processo e consulta no tribunal');
+  check(await cp.locator('.pt-faq').count() >= 1, 'dúvidas comuns da etapa');
+  check(await cp.locator('.pt-next .pt-place:has-text("Fórum de Cuiabá")').count() === 1, 'audiência com o local');
   await cp.screenshot({ path: path.join(OUT, '05p-pagina-cliente.png'), fullPage: true });
+  await cp.click('.pt-confirm button:has-text("Estarei presente")');
+  await cp.waitForSelector('.pt-ok:has-text("Presença confirmada")');
+  check(true, 'cliente confirma presença na audiência');
   await cp.reload();
   await cp.waitForSelector('.pt-step.current');
   check(true, 'na volta não pede os números de novo (guardados no aparelho)');

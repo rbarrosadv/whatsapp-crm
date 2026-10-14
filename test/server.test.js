@@ -1287,6 +1287,106 @@ test('página do cliente: link próprio, 4 dígitos do CPF, etapas, novidades ap
   assert.ok(!auth.can('estagiario', 'portal:create') && auth.can('estagiario', 'portal:get'));
 });
 
+test('página do cliente mais fiel: andamentos traduzidos (sensíveis só aprovados), tempo na etapa, documentos, audiência com confirmação, dúvidas, dados do processo, avaliação e partes por cliente', async () => {
+  const s = client();
+  await s.req('/auth/login', { body: { login: 'barros', password: 'segredo1' } });
+  const me = (await s.call('bootstrap')).me;
+  const cid = await s.call('clients:save', { name: 'Rui Fiel Andrade', cpf: '987.654.321-00' });
+  const k = await s.call('cases:save', { client_id: cid, title: 'Cobrança indevida', responsible_id: me.id });
+  await s.call('cases:save', { id: k, process_number: '1009999-22.2026.8.11.0041', tribunal: 'TJMT', court: '3ª Vara Cível de Cuiabá' });
+  const token = await s.call('portal:create', cid);
+  const get = async () => (await client().req('/portal/data', { body: { token, pin: '2100' } })).json.cases.find((x) => x.id === k);
+  // andamentos do tribunal: rotina some, comum é traduzido, sensível espera o "Explicar ao cliente"
+  const d = (n) => Date.now() - n * 864e5;
+  db.addMove({ case_id: k, ts: d(5), text: 'Distribuído por sorteio', source: 'datajud' });
+  db.addMove({ case_id: k, ts: d(4), text: 'Certidão expedida', source: 'datajud' });
+  db.addMove({ case_id: k, ts: d(3), text: 'Expedição de mandado de citação', source: 'datajud' });
+  const sens = db.addMove({ case_id: k, ts: d(1), text: 'Julgado procedente o pedido - sentença', source: 'datajud' });
+  db.addMove({ case_id: k, ts: d(2), text: 'Anotação interna', source: 'manual' });
+  let c = await get();
+  const titles = c.timeline.map((t) => t.title);
+  assert.ok(titles.includes('O processo foi registrado na Justiça e enviado a uma vara'));
+  assert.ok(titles.includes('A Justiça mandou avisar oficialmente a outra parte'));
+  assert.ok(!titles.some((t) => /certid/i.test(t)), 'rotina fora');
+  assert.ok(!c.timeline.some((t) => /senten|procedente/i.test(t.title)), 'sentença só depois de explicada');
+  assert.ok(!titles.includes('Houve uma movimentação no processo'), 'andamento manual não vai');
+  await s.call('moves:notifyClient', sens, 'Olá, Rui! Saiu a sentença: o juiz deu razão a você.', { via: 'copy' });
+  c = await get();
+  assert.ok(c.timeline.some((t) => t.kind === 'news' && /deu razão/.test(t.text)), 'sentença aparece como novidade explicada');
+  // sem andamentos automáticos neste processo: só o que foi aprovado
+  await s.call('portal:caseAuto', k, false);
+  assert.ok((await get()).timeline.every((t) => t.kind === 'news'));
+  await s.call('portal:caseAuto', k, true);
+  // etapa: desde quando, próximo passo, dados do processo e consulta
+  assert.ok(c.since && c.nextLabel, 'desde quando e próximo passo');
+  assert.equal(c.tribunal, 'TJMT');
+  assert.equal(c.court, '3ª Vara Cível de Cuiabá');
+  assert.match(c.consulta, /^https:/);
+  // documentos pedidos (não os só sugeridos)
+  db.addChecklistItems(k, ['Comprovante de residência', 'RG']);
+  const items = db.listChecklist(k);
+  db.setChecklistStatus([items.find((i) => i.label === 'RG').id], 'solicitado');
+  assert.deepEqual((await get()).docs.map((x) => x.label), ['RG']);
+  // dúvidas da etapa (padrão e do escritório)
+  assert.ok((await get()).faq.length >= 1);
+  // audiência: local, virtual, confirmação de presença → aviso ao responsável e marca na tarefa
+  const tid = await s.call('tasks:save', { kind: 'audiencia', title: 'Audiência de conciliação', due_at: Date.now() + 2 * 864e5, case_id: k, place: 'https://meet.exemplo/sala-1' });
+  c = await get();
+  assert.equal(c.next.place, 'https://meet.exemplo/sala-1');
+  assert.equal(c.next.virtual, true);
+  assert.equal(c.next.confirm, 'pendente');
+  // 3 dias antes sem confirmar: avisa o responsável (uma vez)
+  const got = [];
+  const listen = (ch, data, to) => { if (ch === 'notify' && /^(hearing-unconfirmed|hearing-confirm|rating)$/.test(data.kind)) got.push({ data, to }); };
+  srv.core.events.on('event', listen);
+  const realHours = Date.prototype.getHours;
+  Date.prototype.getHours = function () { return 10; };
+  try {
+    srv.core.runChecks();
+    srv.core.runChecks();
+    assert.equal(got.filter((g) => g.data.kind === 'hearing-unconfirmed').length, 1, 'avisa uma vez');
+    const bad = await client().req('/portal/confirm', { body: { token, pin: '0000', taskId: tid, answer: 'presente' } });
+    assert.equal(bad.status, 401);
+    const conf = await client().req('/portal/confirm', { body: { token, pin: '2100', taskId: tid, answer: 'presente' } });
+    assert.equal(conf.status, 200, conf.text);
+    assert.equal((await get()).next.confirm, 'presente');
+    assert.equal(db.getTask(tid).client_confirm, 'presente');
+    assert.ok(got.some((g) => g.data.kind === 'hearing-confirm' && g.to?.user === me.id));
+    // outro cliente não confirma audiência alheia
+    const cid2 = await s.call('clients:save', { name: 'Outro Cliente', cpf: '111.222.333-96' });
+    const t2 = await s.call('portal:create', cid2);
+    assert.equal((await client().req('/portal/confirm', { body: { token: t2, pin: '3396', taskId: tid, answer: 'falar' } })).status, 404);
+    // remarcar zera a confirmação
+    await s.call('tasks:save', { id: tid, due_at: Date.now() + 5 * 864e5 });
+    assert.equal(db.getTask(tid).client_confirm, null);
+    // partes por cliente: sem confirmação nem documentos
+    await s.call('portal:setParts', cid, { hearing: false, docs: false });
+    c = await get();
+    assert.equal(c.next.confirm, null);
+    assert.deepEqual(c.docs, []);
+    assert.equal((await client().req('/portal/confirm', { body: { token, pin: '2100', taskId: tid, answer: 'presente' } })).status, 404);
+    assert.deepEqual((await s.call('portal:get', cid)).parts, { moves: true, docs: false, faq: true, hearing: false, rating: true });
+    // avaliação: só com o processo encerrado; uma vez; avisa responsável e sócios; vai para os Relatórios
+    assert.equal((await client().req('/portal/rate', { body: { token, pin: '2100', caseId: k, score: 5 } })).status, 400, 'aberto não avalia');
+    await s.call('settings:set', 'googleReviewUrl', 'https://g.page/r/exemplo/review');
+    await s.call('cases:setStatus', k, 'encerrado');
+    c = await get();
+    assert.deepEqual(c.rating, { done: false });
+    const rate = await client().req('/portal/rate', { body: { token, pin: '2100', caseId: k, score: 5, comment: 'Atendimento excelente' } });
+    assert.equal(rate.status, 200, rate.text);
+    assert.equal(rate.json.review, 'https://g.page/r/exemplo/review', 'nota alta oferece o Google');
+    assert.deepEqual((await get()).rating, { done: true, score: 5 });
+    assert.ok(got.some((g) => g.data.kind === 'rating'));
+    const rep = await s.call('reports:get', 'overview', { from: Date.now() - 864e5, to: Date.now() + 864e5 });
+    assert.equal(rep.ratings.count, 1);
+    assert.equal(rep.ratings.avg, 5);
+    assert.equal(rep.ratings.items[0].comment, 'Atendimento excelente');
+  } finally { Date.prototype.getHours = realHours; srv.core.events.off('event', listen); }
+  // dúvidas editadas pelo escritório
+  const faq = await s.call('portal:faq');
+  assert.ok(faq.some((f) => f.id === 'conclusos' && f.items.length));
+});
+
 test('cadastro: sugere a conversa do WhatsApp, salva o contato (opção), pasta vai e volta do arquivo morto', async () => {
   const c = client();
   await c.req('/auth/login', { body: { login: 'barros', password: 'segredo1' } });

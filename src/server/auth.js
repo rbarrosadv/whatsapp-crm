@@ -178,7 +178,7 @@ const DENY = {
     /^finance:/, /^reports:/, /^receipts:/,
     /^(pipelines|types|filters|tags):(save|delete|reorder)$/,
     'cases:setStatus', 'messages:delete', 'clients:merge', /^oabs:(save|delete)$/, /^leads:proposal/, 'cases:importRun', 'cases:archive',
-    /^portal:(create|revoke|caseToggle|deleteNews)$/,
+    /^portal:(create|revoke|caseToggle|caseAuto|setParts|deleteNews)$/,
     'docs:convertTemplate',
   ],
 };

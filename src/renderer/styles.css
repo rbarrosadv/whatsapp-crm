@@ -353,6 +353,7 @@ textarea.input { resize: vertical; }
 .drafts-tools { align-items: center; margin-bottom: 10px; }
 .portal-link .input { flex: 1; min-width: 0; font-size: 13px; }
 .portal-case { align-items: center; gap: 10px; }
+.portal-parts { display: grid; grid-template-columns: repeat(auto-fill, minmax(240px, 1fr)); gap: 6px 16px; }
 .portal-news { display: flex; flex-direction: column; gap: 6px; max-height: 40vh; overflow-y: auto; }
 .drafts-board .col { min-width: 250px; }
 .draft-card { display: flex; flex-direction: column; gap: 6px; }
@@ -364,6 +365,7 @@ textarea.input { resize: vertical; }
 .load-bar { height: 8px; background: var(--panel-2); border-radius: 4px; overflow: hidden; }
 .load-bar span { display: block; height: 100%; background: var(--accent); border-radius: 4px; }
 .internal-pill.late { color: var(--danger); }
+.internal-pill.ok { color: #15803d; }
 .task.done .task-title { text-decoration: line-through; color: var(--muted); }
 .note { background: var(--panel-2); border-radius: 8px; padding: 8px 10px; border-left: 3px solid var(--warn); }
 .note-text { white-space: pre-wrap; word-wrap: break-word; }

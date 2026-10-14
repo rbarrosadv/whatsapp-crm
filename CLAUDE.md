@@ -83,8 +83,8 @@ Motor (`src/main`, sem Electron apesar do nome da pasta):
   `meta`, `contact_types`, `chat_filters`, `cases`,
   `payments`, `case_docs`, `users`, `sessions`, `doc_index`, `clients`,
   `case_parties`, `case_moves`, `case_steps`, `case_checklist`, `oabs`,
-  `intimations`, `expenses`, `incomes`, `leads`, `lead_contacts`, `push_subs`, `case_hints`, `doc_recent`, `doc_ocr`, `case_phases`, `doc_tree`, `portal_links`, `portal_news` (migrações por versão em
-  `migrate()`; `meta.schema` guarda a versão atual — v26).
+  `intimations`, `expenses`, `incomes`, `leads`, `lead_contacts`, `push_subs`, `case_hints`, `doc_recent`, `doc_ocr`, `case_phases`, `doc_tree`, `portal_links`, `portal_news`, `portal_ratings` (migrações por versão em
+  `migrate()`; `meta.schema` guarda a versão atual — v27).
 - `docs.js` — `DocsService`: pasta "BARROS ADVOGADOS" do escritório, sempre
   por caminho relativo (`clients.folder`, `cases.folder`, conferido por
   `safeRel` — sem `..`), sobre um **armazenamento** (`storage.js`):
@@ -449,6 +449,22 @@ Motor (`src/main`, sem Electron apesar do nome da pasta):
   criar, copiar, ver, enviar pelo WhatsApp com texto revisado, trocar link, desligar,
   processos que aparecem, novidades). APIs `portal:get/create/revoke/send/caseToggle/
   news/addNews/deleteNews` (estagiário não cria/desliga/esconde/apaga).
+  **Mais fiel ao processo** (v27): linha do tempo = novidades aprovadas + andamentos do
+  DataJud/DJEN traduzidos (`portalTimeline` → `clientMoveText` em `portal.js`; rotina
+  `ROUTINE_CLIENT` some; **sensíveis** `SENSITIVE_MOVE` — sentença, decisão, acordo,
+  penhora… — só depois do "Explicar ao cliente"; manuais não vão; `cases.portal_auto = 0`
+  desliga por processo, `portal:caseAuto`); etapa com "desde" (`phase_since`), "costuma
+  durar" (`phaseAverages`, ≥ 7 dias) e "Próximo passo"; "O que precisamos de você" (checklist
+  `solicitado`); audiência com `tasks.place` (endereço ou link → virtual) e confirmação
+  (`POST /portal/confirm` → `tasks.client_confirm` presente|falar, aviso `hearing-confirm` ao
+  responsável; `checkHearingConfirm`: 3 dias antes sem resposta → `hearing-unconfirmed`, uma
+  vez — `confirm_warned`; remarcar zera); dúvidas por etapa (`DEFAULT_FAQ` + `settings.portalFaq`,
+  Ajustes → "Dúvidas comuns por etapa…", `portal:faq`); dados do processo + "Conferido no
+  tribunal em" (`datajud_updated_at`) + consulta; avaliação no encerramento (`POST /portal/rate`
+  → `portal_ratings`, aviso `rating` ao responsável e sócios, nota ≥ 4 oferece
+  `googleReviewUrl`; Relatórios → Visão geral "Avaliação dos clientes", `ratingsReport`).
+  O que cada cliente vê: `portal_links.parts` (`portalParts`/`PORTAL_PARTS`: moves, docs, faq,
+  hearing, rating; `portal:setParts`). Financeiro nunca aparece.
 - **Tribunais por advogado**: cada advogado cadastra a própria OAB (o sócio, de
   qualquer um); processo cadastrado a partir de intimação/importação fica com o
   **dono da OAB** (`oabOwnerOf`); Intimações tem "Minhas OABs | Todas";

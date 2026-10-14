@@ -41,6 +41,10 @@ const ICONS = {
   cal: [['rect', { x: 3, y: 4, width: 18, height: 17, rx: 2 }], ['path', { d: 'M8 2v4M16 2v4M3 10h18' }]],
   chat: [['path', { d: 'M21 12a9 9 0 0 1-13.5 7.8L3 21l1.2-4.5A9 9 0 1 1 21 12z' }]],
   lock: [['rect', { x: 4, y: 11, width: 16, height: 10, rx: 2 }], ['path', { d: 'M8 11V7a4 4 0 0 1 8 0v4' }]],
+  doc: [['path', { d: 'M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z' }], ['path', { d: 'M14 3v5h5M9 13h6M9 17h4' }]],
+  pin: [['path', { d: 'M12 21s-7-6.2-7-11.5A7 7 0 0 1 19 9.5C19 14.8 12 21 12 21z' }], ['circle', { cx: 12, cy: 9.5, r: 2.5 }]],
+  video: [['rect', { x: 3, y: 6, width: 13, height: 12, rx: 2 }], ['path', { d: 'm16 10 5-3v10l-5-3z' }]],
+  scale: [['path', { d: 'M12 3v18M7 21h10M5 7h14' }], ['path', { d: 'm5 7-3 7a3.5 3.5 0 0 0 6 0Z' }], ['path', { d: 'm19 7-3 7a3.5 3.5 0 0 0 6 0Z' }]],
 };
 const fmtDate = (ts) => new Date(ts).toLocaleDateString('pt-BR');
 const fmtLong = (ts) => {
@@ -55,6 +59,22 @@ const store = {
   get() { try { return localStorage.getItem(KEY) || ''; } catch { return ''; } },
   set(v) { try { localStorage.setItem(KEY, v); } catch { /* sem armazenamento */ } },
   clear() { try { localStorage.removeItem(KEY); } catch { /* ignore */ } },
+};
+
+/** Envia uma resposta do cliente (confirmação de audiência, avaliação) com os 4 números guardados. */
+async function post(path, data) {
+  const r = await fetch(path, { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-CRM': '1' }, body: JSON.stringify({ token, pin: store.get(), ...data }) });
+  const j = await r.json().catch(() => ({}));
+  if (!r.ok) throw new Error(j.error || 'Não foi possível enviar agora. Tente de novo.');
+  return j;
+}
+const days = (ms) => Math.max(0, Math.floor(ms / 864e5));
+const duration = (d) => {
+  if (d < 1) return 'hoje';
+  if (d < 45) return d === 1 ? '1 dia' : `${d} dias`;
+  if (d < 365) { const m = Math.round(d / 30); return m === 1 ? '1 mês' : `${m} meses`; }
+  const y = Math.round((d / 365) * 10) / 10;
+  return y === 1 ? '1 ano' : `${String(y).replace('.', ',')} anos`;
 };
 
 async function load(pin = store.get()) {
@@ -114,10 +134,10 @@ function head(title, sub, back) {
       sub ? el('div', { class: 'pt-sub', text: sub }) : null));
 }
 
-function waLink(text) {
+function waLink(text, label = 'Falar com o advogado') {
   if (!data.whatsapp) return null;
   return el('a', { class: 'pt-wa', href: `https://wa.me/${data.whatsapp}?text=${encodeURIComponent(text)}`, target: '_blank', rel: 'noopener' },
-    svg(ICONS.chat, 22, '#ffffff'), 'Falar com o advogado');
+    svg(ICONS.chat, 22, '#ffffff'), label);
 }
 
 function foot() {
@@ -154,14 +174,21 @@ function renderCase(c, back) {
   show(
     head(c.title, [c.number ? `Processo ${c.number}` : null, c.court].filter(Boolean).join(' · '), back),
     el('section', { class: 'pt-card' },
-      el('div', { class: 'pt-k', text: 'Agora' }),
+      el('div', { class: 'pt-k', text: c.closed ? 'Situação' : 'Agora' }),
       el('div', { class: 'pt-now', text: c.label }),
       cur?.desc ? el('div', { class: 'pt-now-desc', text: cur.desc }) : null,
       el('div', { class: 'pt-bar', role: 'img', 'aria-label': `Etapa ${c.index} de ${c.total}` }, el('span', { style: `width: ${pct}%` })),
-      el('div', { class: 'pt-step-n', text: `Etapa ${c.index} de ${c.total}` })),
-    c.next ? el('section', { class: 'pt-next' }, svg(ICONS.cal, 26, '#9a5b00'),
-      el('div', null, el('div', { class: 'pt-k', text: 'Próximo compromisso' }), el('div', { class: 'pt-next-title', text: c.next.title }),
-        el('div', { class: 'pt-next-when', text: fmtLong(c.next.due_at) }))) : null,
+      el('div', { class: 'pt-step-n', text: `Etapa ${c.index} de ${c.total}` }),
+      c.since || c.avgDays >= 7 || c.nextLabel ? el('div', { class: 'pt-facts' },
+        c.since ? el('div', null, el('b', { text: 'Nesta etapa desde ' }), `${fmtDate(c.since)}${days(Date.now() - c.since) >= 1 ? ` (há ${duration(days(Date.now() - c.since))})` : ' (hoje)'}`) : null,
+        c.avgDays >= 7 ? el('div', null, el('b', { text: 'Costuma durar ' }), `cerca de ${duration(c.avgDays)} nos processos do escritório`) : null,
+        c.nextLabel ? el('div', null, el('b', { text: 'Próximo passo: ' }), c.nextLabel) : null) : null),
+    c.next ? hearingCard(c) : null,
+    c.docs.length ? el('section', { class: 'pt-card pt-need' },
+      el('h2', { class: 'pt-h2', text: 'O que precisamos de você' }),
+      el('p', { class: 'pt-now-desc', text: 'Para seguir com o seu processo, envie ao escritório:' }),
+      el('ul', { class: 'pt-docs' }, c.docs.map((d) => el('li', null, svg(ICONS.doc, 18, '#8a4f00'), el('span', { text: d.label })))),
+      waLink(`Olá! Sobre o processo "${c.title}", segue o documento que vocês pediram.`, 'Enviar pelo WhatsApp')) : null,
     el('section', { class: 'pt-card' },
       el('h2', { class: 'pt-h2', text: 'O caminho do seu processo' }),
       c.steps.map((s, i) => el('div', { class: `pt-step ${s.state}` },
@@ -171,16 +198,96 @@ function renderCase(c, back) {
           el('div', { class: 'pt-step-label', text: s.label }),
           s.date && s.state !== 'next' ? el('div', { class: 'pt-step-date', text: fmtDate(s.date) }) : null,
           s.desc ? el('div', { class: 'pt-step-desc', text: s.desc }) : null)))),
+    c.faq.length ? el('section', { class: 'pt-card' },
+      el('h2', { class: 'pt-h2', text: 'Dúvidas comuns nesta etapa' }),
+      c.faq.map((f) => el('details', { class: 'pt-faq' }, el('summary', { text: f.q }), el('p', { text: f.a })))) : null,
     el('section', { class: 'pt-card' },
-      el('h2', { class: 'pt-h2', text: 'Novidades' }),
-      c.news.length ? c.news.map((n) => el('article', { class: 'pt-news' },
-        el('div', { class: 'pt-news-date', text: fmtDate(n.ts) }), el('div', { class: 'pt-news-title', text: n.title }), el('div', { class: 'pt-news-text', text: n.text })))
-        : el('p', { class: 'pt-empty', text: 'Quando houver novidade, ela aparece aqui, explicada em palavras simples.' })),
+      el('h2', { class: 'pt-h2', text: 'Andamentos e novidades' }),
+      c.timeline.length ? c.timeline.map((n) => el('article', { class: `pt-news ${n.kind === 'move' ? 'pt-move' : ''}` },
+        el('div', { class: 'pt-news-date', text: `${fmtDate(n.ts)}${n.kind === 'move' ? ' · no tribunal' : ''}` }),
+        el('div', { class: 'pt-news-title', text: n.title }),
+        n.text ? el('div', { class: 'pt-news-text', text: n.text }) : null))
+        : el('p', { class: 'pt-empty', text: 'Quando houver novidade, ela aparece aqui, explicada em palavras simples.' }),
+      c.timeline.some((n) => n.kind === 'move') ? el('p', { class: 'pt-note', text: 'Os andamentos do tribunal aparecem aqui de forma resumida. Decisões importantes são explicadas pelo seu advogado.' }) : null),
+    c.rating ? ratingCard(c) : null,
+    c.number ? el('section', { class: 'pt-card pt-proc' },
+      el('h2', { class: 'pt-h2', text: 'Dados do processo' }),
+      el('dl', null,
+        el('dt', { text: 'Número' }), el('dd', { class: 'pt-mono', text: c.number }),
+        c.tribunal ? [el('dt', { text: 'Tribunal' }), el('dd', { text: c.tribunal })] : null,
+        c.court ? [el('dt', { text: 'Vara' }), el('dd', { text: c.court })] : null),
+      c.checkedAt ? el('div', { class: 'pt-checked', text: `Conferido no tribunal em ${fmtDateTime(c.checkedAt)}` }) : null,
+      c.consulta ? el('a', { class: 'pt-help', href: c.consulta, target: '_blank', rel: 'noopener', onclick: () => { try { navigator.clipboard.writeText(c.number); } catch { /* sem área de transferência */ } } },
+        svg(ICONS.scale, 18, '#2f4a5a'), ' Ver no site do tribunal') : null,
+      c.consulta ? el('p', { class: 'pt-note', text: 'O número do processo é copiado ao tocar no botão: é só colar na consulta do tribunal.' }) : null) : null,
     el('div', { class: 'pt-actions' },
       waLink(`Olá! Tenho uma dúvida sobre o processo "${c.title}".`),
       el('div', { class: 'pt-updated', text: `Atualizado em ${fmtDate(c.updated || Date.now())}${c.lawyer ? ` · Seu advogado: ${c.lawyer}` : ''}` })),
     foot(),
   );
+}
+
+const fmtDateTime = (ts) => `${new Date(ts).toLocaleDateString('pt-BR')} às ${new Date(ts).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' })}`;
+
+/** Próxima audiência: quando, onde (endereço ou link), dica e a confirmação de presença. */
+function hearingCard(c) {
+  const n = c.next;
+  const isLink = /^https?:\/\//i.test(n.place || '');
+  const box = el('div', { class: 'pt-confirm' });
+  const drawConfirm = (state) => {
+    if (!n.confirm) return box.replaceChildren();
+    if (state === 'presente') return box.replaceChildren(el('div', { class: 'pt-ok', text: '✓ Presença confirmada. Obrigado!' }));
+    if (state === 'falar') return box.replaceChildren(el('div', { class: 'pt-ok', text: '✓ Recebemos. O seu advogado vai entrar em contato.' }));
+    const send = (answer) => async (e) => {
+      e.currentTarget.disabled = true;
+      try { await post('/portal/confirm', { taskId: n.id, answer }); n.confirm = answer; drawConfirm(answer); } catch (err) { box.append(el('div', { class: 'pt-err', text: err.message })); e.currentTarget.disabled = false; }
+    };
+    return box.replaceChildren(
+      el('button', { class: 'pt-btn', type: 'button', onclick: send('presente'), text: 'Estarei presente' }),
+      el('button', { class: 'pt-btn pt-btn-2', type: 'button', onclick: send('falar'), text: 'Preciso falar com o advogado' }));
+  };
+  drawConfirm(n.confirm);
+  return el('section', { class: 'pt-next' }, svg(ICONS.cal, 26, '#9a5b00'),
+    el('div', { class: 'pt-next-body' },
+      el('div', { class: 'pt-k', text: 'Próximo compromisso' }),
+      el('div', { class: 'pt-next-title', text: n.title }),
+      el('div', { class: 'pt-next-when', text: fmtLong(n.due_at) }),
+      el('div', { class: 'pt-tag', text: n.virtual ? 'Audiência virtual (por vídeo)' : 'Audiência presencial' }),
+      n.place ? (isLink
+        ? el('a', { class: 'pt-place', href: n.place, target: '_blank', rel: 'noopener' }, svg(ICONS.video, 18, '#8a4f00'), ' Entrar na sala virtual')
+        : el('div', { class: 'pt-place' }, svg(ICONS.pin, 18, '#8a4f00'), el('span', { text: n.place }))) : null,
+      el('div', { class: 'pt-tip', text: n.virtual ? 'Entre no link 10 minutos antes, num lugar tranquilo, com o documento com foto em mãos.' : 'Chegue 30 minutos antes e leve um documento com foto.' }),
+      box));
+}
+
+/** Avaliação ao final (processo encerrado): estrelas de 1 a 5 e um comentário. */
+function ratingCard(c) {
+  const sec = el('section', { class: 'pt-card pt-rate' });
+  if (c.rating.done) {
+    sec.append(el('h2', { class: 'pt-h2', text: 'Obrigado pela sua avaliação!' }), el('div', { class: 'pt-stars-done', text: '★'.repeat(c.rating.score) + '☆'.repeat(5 - c.rating.score) }));
+    return sec;
+  }
+  let score = 0;
+  const stars = el('div', { class: 'pt-stars', role: 'radiogroup', 'aria-label': 'Nota de 1 a 5' });
+  const paint = () => [...stars.children].forEach((b, i) => { b.textContent = i < score ? '★' : '☆'; b.setAttribute('aria-checked', String(i + 1 === score)); });
+  for (let i = 1; i <= 5; i++) stars.append(el('button', { type: 'button', role: 'radio', 'aria-label': `${i} de 5`, onclick: () => { score = i; paint(); } }, '☆'));
+  const comment = el('textarea', { class: 'pt-text', rows: '3', placeholder: 'Conte como foi (opcional)', maxlength: '1000' });
+  const err = el('div', { class: 'pt-err', role: 'alert' });
+  sec.append(el('h2', { class: 'pt-h2', text: 'Como foi o nosso atendimento?' }), stars, comment, err,
+    el('button', {
+      class: 'pt-btn', type: 'button', text: 'Enviar avaliação',
+      onclick: async (e) => {
+        if (!score) { err.textContent = 'Escolha de 1 a 5 estrelas.'; return; }
+        e.currentTarget.disabled = true;
+        try {
+          const r = await post('/portal/rate', { caseId: c.id, score, comment: comment.value });
+          c.rating = { done: true, score };
+          sec.replaceChildren(...[el('h2', { class: 'pt-h2', text: 'Obrigado pela sua avaliação!' }), el('div', { class: 'pt-stars-done', text: '★'.repeat(score) + '☆'.repeat(5 - score) }),
+            r.review ? el('a', { class: 'pt-help', href: r.review, target: '_blank', rel: 'noopener', text: 'Gostou? Avalie o escritório no Google' }) : null].filter(Boolean));
+        } catch (x) { err.textContent = x.message; e.currentTarget.disabled = false; }
+      },
+    }));
+  return sec;
 }
 
 load();

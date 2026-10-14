@@ -149,6 +149,12 @@ function overview(d) {
         d.drafts.byPerson.length ? table(['Responsável', 'Distribuídas', 'Dias (mediana)'], d.drafts.byPerson.map((x) => [x.label, x.n, x.value]), [1, 2]) : null,
         d.drafts.byArea.length ? table(['Área', 'Distribuídas', 'Dias (mediana)'], d.drafts.byArea.map((x) => [x.label, x.n, x.value]), [1, 2]) : null),
       { wide: true, csv: { name: 'iniciais', head: ['Responsável', 'Distribuídas', 'Dias (mediana)'], rows: d.drafts.byPerson.map((x) => [x.label, x.n, x.value]) } }) : null),
+      d.ratings ? panel('Avaliação dos clientes', d.ratings.count ? h('div', null,
+        h('p', null, 'Nota média ', h('b', null, `${String(d.ratings.avg).replace('.', ',')} de 5`), ` em ${int(d.ratings.count)} avaliação(ões) no período.`),
+        table(['Data', 'Cliente', 'Processo', 'Responsável', 'Nota', 'Comentário'],
+          d.ratings.items.map((r) => [new Date(r.created_at).toLocaleDateString('pt-BR'), r.client_name, r.case_title || '—', r.person, `${r.score} de 5`, r.comment || '—'])))
+        : h('p', { class: 'muted' }, 'Nenhuma avaliação no período. O cliente avalia na página de acompanhamento quando o processo é encerrado.'),
+      { wide: true, csv: { name: 'avaliacoes', head: ['Data', 'Cliente', 'Processo', 'Responsável', 'Nota', 'Comentário'], rows: d.ratings.items.map((r) => [new Date(r.created_at).toLocaleDateString('pt-BR'), r.client_name, r.case_title || '', r.person, r.score, r.comment || '']) } }) : null,
   ];
 }
 

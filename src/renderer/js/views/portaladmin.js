@@ -17,7 +17,7 @@ export async function portalDialog(c) {
     const msg = h('textarea', { class: 'input', rows: 4 },
       `Olá, ${first}! Agora você pode acompanhar o seu processo pelo celular, a qualquer hora:\n${url || ''}\nPara entrar, digite os 4 últimos números do seu ${c.kind === 'pj' ? 'CNPJ' : 'CPF'}. Qualquer dúvida, é só chamar aqui.`);
     fill(body,
-      h('p', { class: 'muted small' }, 'Uma página só deste cliente, como o rastreio de um pedido: as etapas do processo em palavras simples, o próximo compromisso e as novidades que vocês aprovarem pelo "Explicar ao cliente". Nada interno aparece.'),
+      h('p', { class: 'muted small' }, 'Uma página só deste cliente, como o rastreio de um pedido: a etapa do processo e há quanto tempo, o próximo passo, os andamentos do tribunal em palavras simples, os documentos que faltam, a próxima audiência (com confirmação de presença) e as novidades que vocês aprovarem pelo "Explicar ao cliente". Nada interno aparece.'),
       !p.hasDoc ? h('div', { class: 'chat-hint' }, icon('alert', 16), h('span', null, 'Sem CPF/CNPJ no cadastro: a página abre sem pedir os 4 números. Cadastre o documento para mais segurança.')) : null,
       url ? [
         h('div', { class: 'row portal-link' }, h('input', { class: 'input mono', readonly: true, value: url, onclick: (e) => e.target.select() }),
@@ -39,11 +39,21 @@ export async function portalDialog(c) {
           }, 'Desligar') : null),
       ] : canAdmin ? h('button', { class: 'btn btn-primary', onclick: async () => { await api('portal:create', c.id).catch(errToast); draw(); } }, [icon('link', 15), 'Criar a página do cliente'])
         : h('p', { class: 'muted' }, 'Ainda não há página para este cliente. Peça a um advogado ou sócio para criar.'),
+      url ? [
+        h('h4', null, 'O que este cliente vê'),
+        h('div', { class: 'portal-parts' }, Object.entries(p.partLabels).map(([key, label]) => h('label', { class: 'check' },
+          h('input', { type: 'checkbox', checked: p.parts[key], disabled: !canAdmin, onchange: (e) => api('portal:setParts', c.id, { [key]: e.target.checked }).catch(errToast) }),
+          ` ${label}`))),
+        h('p', { class: 'muted small' }, 'A etapa do processo, a próxima audiência e as novidades que vocês aprovarem sempre aparecem. Valores, prazos internos e notas nunca aparecem.'),
+      ] : null,
       h('h4', null, 'Processos que aparecem'),
       p.cases.length ? p.cases.map((k) => h('div', { class: 'list-row portal-case' },
         h('label', { class: 'check grow' },
           h('input', { type: 'checkbox', checked: k.on, disabled: !canAdmin, onchange: (e) => api('portal:caseToggle', k.id, e.target.checked).then(draw).catch(errToast) }),
           ` ${k.title}`, k.secret ? h('span', { class: 'muted small' }, ' · segredo de justiça') : null),
+        k.on ? h('label', { class: 'check small', title: 'Os andamentos do tribunal aparecem sozinhos, em palavras simples (sentença, decisão, acordo… só depois do "Explicar ao cliente"). Desligado: só o que vocês aprovarem.' },
+          h('input', { type: 'checkbox', checked: k.auto, disabled: !canAdmin, onchange: (e) => api('portal:caseAuto', k.id, e.target.checked).catch(errToast) }),
+          ' andamentos automáticos') : null,
         h('span', { class: 'muted small' }, `${k.news} novidade(s)`),
         h('button', { class: 'btn btn-sm', onclick: () => newsDialog(k, draw) }, 'Novidades'))) : h('p', { class: 'muted small' }, 'Nenhum processo em andamento.'));
   };

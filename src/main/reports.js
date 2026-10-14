@@ -74,7 +74,17 @@ export function overview({ from, to }) {
     },
     moves: get("SELECT COUNT(*) AS n FROM case_moves WHERE ts >= ? AND ts < ? AND source <> 'manual'", from, to).n,
     drafts: draftsReport(from, to),
+    ratings: ratingsReport(from, to),
   };
+}
+
+/** Avaliações dos clientes (página de acompanhamento, ao encerrar o processo). */
+function ratingsReport(from, to) {
+  const items = all(`SELECT r.score, r.comment, r.created_at, cl.name AS client_name, c.title AS case_title, COALESCE(u.name, 'Sem responsável') AS person
+                     FROM portal_ratings r JOIN clients cl ON cl.id = r.client_id LEFT JOIN cases c ON c.id = r.case_id LEFT JOIN users u ON u.id = c.responsible_id
+                     WHERE r.created_at >= ? AND r.created_at < ? ORDER BY r.created_at DESC`, from, to);
+  const avg = items.length ? Math.round((items.reduce((s, r) => s + r.score, 0) / items.length) * 10) / 10 : null;
+  return { count: items.length, avg, items: items.slice(0, 30) };
 }
 
 /** Iniciais: quantas distribuídas no período e quanto tempo (mediana, em dias) do cadastro até a distribuição. */

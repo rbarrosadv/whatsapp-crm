@@ -9,7 +9,7 @@ import { fullAddress, sameName } from '../renderer/js/qualify.js';
 
 let db;
 
-const SCHEMA_VERSION = 26;
+const SCHEMA_VERSION = 27;
 
 // Tipos de contato (editáveis). `personal` = não conta como trabalho
 // (fica fora de "Aguardando resposta" e dos avisos de conversa esquecida).
@@ -555,6 +555,21 @@ function migrate() {
     CREATE INDEX IF NOT EXISTS portal_news_case ON portal_news(case_id, ts);
   `);
   addColumn('cases', 'portal_on', 'INTEGER');
+  // versão 27: página do cliente mais fiel ao processo — andamentos automáticos
+  // (por processo), o que cada cliente vê, local da audiência, confirmação de
+  // presença pelo cliente e a avaliação ao final
+  addColumn('cases', 'portal_auto', 'INTEGER');
+  addColumn('portal_links', 'parts', 'TEXT');
+  for (const [c, t] of [['place', 'TEXT'], ['client_confirm', 'TEXT'], ['client_confirm_at', 'INTEGER'], ['confirm_warned', 'INTEGER NOT NULL DEFAULT 0']]) addColumn('tasks', c, t);
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS portal_ratings (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      client_id INTEGER NOT NULL REFERENCES clients(id) ON DELETE CASCADE,
+      case_id INTEGER REFERENCES cases(id) ON DELETE SET NULL,
+      score INTEGER NOT NULL, comment TEXT, created_at INTEGER NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS portal_ratings_case ON portal_ratings(case_id);
+  `);
 
   const version = Number(get('SELECT value FROM meta WHERE key = ?', 'schema')?.value || 0);
   if (version < 1) seedDefaults();
@@ -2372,11 +2387,12 @@ export function casesWithoutUpdate(ms, limit = 20) {
   return all(`SELECT id, jid, client_id, (SELECT name FROM clients WHERE id = cases.client_id) AS client_name, title, COALESCE(last_update_at, created_at) AS since FROM cases
               WHERE status = 'aberto' AND COALESCE(last_update_at, created_at) < ? ORDER BY since LIMIT ?`, now() - ms, limit);
 }
-export function saveTask({ id, jid, title, due_at, done, case_id, kind, end_at, assignee_id, by }) {
+export function saveTask({ id, jid, title, due_at, done, case_id, kind, end_at, assignee_id, by, place }) {
   if (id) {
     const cur = get('SELECT * FROM tasks WHERE id = ?', id);
     if (!cur) return id;
     if (assignee_id !== undefined) run('UPDATE tasks SET assignee_id = ? WHERE id = ?', assignee_id || null, id);
+    if (place !== undefined) run('UPDATE tasks SET place = ? WHERE id = ?', String(place || '').trim() || null, id);
     if (done !== undefined && !!done !== !!cur.done) run('UPDATE tasks SET done_at = ?, done_by = ? WHERE id = ?', done ? now() : null, done ? by || null : null, id);
     const newDue = due_at === undefined ? cur.due_at : due_at;
     if (end_at !== undefined || due_at !== undefined) {
@@ -2385,7 +2401,7 @@ export function saveTask({ id, jid, title, due_at, done, case_id, kind, end_at, 
       const newEnd = end_at !== undefined ? end_at : (dur && newDue ? newDue + dur : cur.end_at);
       run('UPDATE tasks SET end_at = ? WHERE id = ?', newEnd || null, id);
     }
-    if (newDue !== cur.due_at) run('UPDATE tasks SET warn_level = 0, internal_at = NULL WHERE id = ?', id);
+    if (newDue !== cur.due_at) run('UPDATE tasks SET warn_level = 0, internal_at = NULL, client_confirm = NULL, client_confirm_at = NULL, confirm_warned = 0 WHERE id = ?', id);
     run('UPDATE tasks SET title = ?, due_at = ?, done = ?, notified = ?, jid = ?, case_id = ?, kind = ? WHERE id = ?',
       title ?? cur.title, newDue, done === undefined ? cur.done : (done ? 1 : 0),
       newDue !== cur.due_at ? 0 : cur.notified,
@@ -2394,8 +2410,8 @@ export function saveTask({ id, jid, title, due_at, done, case_id, kind, end_at, 
     return id;
   }
   if (case_id && !jid) jid = get('SELECT jid FROM cases WHERE id = ?', case_id)?.jid;
-  return Number(run('INSERT INTO tasks (jid, title, due_at, created_at, case_id, kind, end_at, assignee_id, created_by) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)',
-    jid || null, title, due_at || null, now(), case_id || null, kind || 'tarefa', end_at || null, assignee_id || null, by || null).lastInsertRowid);
+  return Number(run('INSERT INTO tasks (jid, title, due_at, created_at, case_id, kind, end_at, assignee_id, created_by, place) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
+    jid || null, title, due_at || null, now(), case_id || null, kind || 'tarefa', end_at || null, assignee_id || null, by || null, String(place || '').trim() || null).lastInsertRowid);
 }
 export function deleteTask(id) { run('DELETE FROM tasks WHERE id = ?', id); }
 /** Prazos em aberto (com data) para os avisos escalonados. */
@@ -2406,7 +2422,7 @@ export function openDeadlines() {
               WHERE k.kind = 'prazo' AND k.done = 0 AND k.due_at IS NOT NULL AND k.due_at > ?`, now() - 30 * 864e5);
 }
 export function setTaskField(id, field, value) {
-  if (!['internal_at', 'warn_level', 'proof'].includes(field)) throw new Error('campo inválido');
+  if (!['internal_at', 'warn_level', 'proof', 'client_confirm', 'client_confirm_at', 'confirm_warned'].includes(field)) throw new Error('campo inválido');
   run(`UPDATE tasks SET ${field} = ? WHERE id = ?`, value ?? null, id);
 }
 export function getTask(id) {

@@ -225,6 +225,8 @@ export function taskRow(t, { showChat = false } = {}) {
         t.case_title ? h('a', { class: 'link', onclick: (e) => { e.stopPropagation(); openCase(t.case_id, { tab: 'prazos' }); } }, ` · ${t.case_title}`) : null,
         t.assignee_name && t.assignee_id !== state.me?.id ? ` · ${t.assignee_name}` : null,
         t.kind === 'prazo' && t.internal_at && !t.done ? h('span', { class: `internal-pill ${t.internal_at < Date.now() ? 'late' : ''}`, title: 'Prazo interno: a peça deve estar pronta até aqui' }, ` · interno ${fmtDue(t.internal_at)}`) : null,
+        t.kind === 'audiencia' && t.client_confirm && !t.done ? h('span', { class: `internal-pill ${t.client_confirm === 'falar' ? 'late' : 'ok'}`, title: 'Resposta do cliente pela página de acompanhamento' },
+          t.client_confirm === 'presente' ? ' · cliente confirmou presença' : ' · cliente quer falar com o advogado') : null,
         t.done && t.proof ? h('span', { class: 'muted', title: proofText(t.proof) }, ' · com comprovante') : null)),
     h('button', {
       class: 'icon-btn small', title: 'Excluir',
@@ -307,6 +309,10 @@ export function taskDialog(task = {}) {
   const kindSel = h('select', { class: 'input' },
     Object.entries(TASK_KINDS).map(([k, v]) => h('option', { value: k, selected: (task.kind || 'tarefa') === k }, `${v.label}`)));
   const caseSel = h('select', { class: 'input' });
+  // audiência/reunião: endereço ou link da sala (aparece para o cliente na página de acompanhamento)
+  const place = h('input', { class: 'input', value: task.place || '', placeholder: 'Endereço do fórum ou link da sala virtual' });
+  const placeField = h('label', { class: 'field' }, h('span', null, 'Local (endereço ou link da sala)'), place);
+  const syncPlace = () => { placeField.hidden = !['audiencia', 'reuniao'].includes(kindSel.value); };
   // responsável: quem cria fica como responsável, a não ser que escolha outra pessoa
   const assigneeSel = h('select', { class: 'input' }, h('option', { value: '' }, '— Qualquer pessoa da equipe —'));
   api('team:list').then((team) => {
@@ -320,6 +326,8 @@ export function taskDialog(task = {}) {
   };
   chatSel.addEventListener('change', loadCases);
   clientsReady.then(loadCases);
+  kindSel.addEventListener('change', syncPlace);
+  syncPlace();
   modal({
     title: task.id ? 'Editar compromisso' : `Novo(a) ${TASK_KINDS[task.kind || 'tarefa']?.label.toLowerCase() || 'tarefa'}`,
     body: h('div', { class: 'form' },
@@ -328,6 +336,7 @@ export function taskDialog(task = {}) {
         h('label', { class: 'field grow' }, h('span', null, 'O que é'), title)),
       h('label', { class: 'field' }, h('span', null, 'Quando (você recebe um aviso na hora)'), due),
       quick,
+      placeField,
       h('div', { class: 'row' },
         h('label', { class: 'field grow' }, h('span', null, 'Cliente'), chatSel),
         h('label', { class: 'field grow' }, h('span', null, 'Processo'), caseSel)),
@@ -343,6 +352,7 @@ export function taskDialog(task = {}) {
             id: task.id, jid: chatSel.value || null, title: title.value.trim(), due_at: fromLocalInput(due.value),
             kind: kindSel.value, case_id: caseSel.value ? Number(caseSel.value) : null,
             assignee_id: assigneeSel.value ? Number(assigneeSel.value) : null,
+            place: placeField.hidden ? undefined : place.value.trim(),
           });
           emitTasks();
           return true;

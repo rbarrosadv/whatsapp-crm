@@ -30,7 +30,7 @@ export function mountSettings(el) {
 // configurações que valem para o escritório todo (só sócio muda)
 const OFFICE_KEYS = ['courtsNotifyAll', 'sendReadReceipts', 'forgottenHours', 'chargeTemplate', 'pixKey', 'paymentNoticeDays',
   'staleCaseDays', 'googleSync', 'googleCalendarId', 'signMessages', 'docsRequestTemplate', 'datajudKey',
-  'officeName', 'officeDoc', 'officeAddress', 'officeCity', 'idleCaseDays', 'prescriptionYears', 'clientUpdateTemplate', 'waSaveContacts', 'docsOcr', 'phaseConfig', 'internalDays', 'secretCheckDays', 'monthlySummaryTemplate'];
+  'officeName', 'officeDoc', 'officeAddress', 'officeCity', 'idleCaseDays', 'prescriptionYears', 'clientUpdateTemplate', 'waSaveContacts', 'docsOcr', 'phaseConfig', 'internalDays', 'secretCheckDays', 'monthlySummaryTemplate', 'portalFaq', 'googleReviewUrl'];
 
 function toggle(key, label, hint, def = true) {
   const val = state.settings[key] ?? def;
@@ -498,7 +498,15 @@ function render() {
             placeholder: 'Olá, {nome}! Segue o resumo de {mes} dos seus processos com o escritório:\n\n{processos}\n\nQualquer dúvida, estamos à disposição.',
             onchange: (e) => setSetting('monthlySummaryTemplate', e.target.value.trim() || null).catch(errToast),
           }, state.settings.monthlySummaryTemplate || '')),
-        h('p', { class: 'muted small' }, 'Campos: {nome} {nome_completo} {mes} {processos}. Do dia 1 ao 10 o Hoje lista os clientes para enviar; também na ficha do cliente (menu ⋮).')),
+        h('p', { class: 'muted small' }, 'Campos: {nome} {nome_completo} {mes} {processos}. Do dia 1 ao 10 o Hoje lista os clientes para enviar; também na ficha do cliente (menu ⋮).'),
+        h('h4', null, 'Página de acompanhamento do cliente'),
+        h('label', { class: 'field' }, h('span', null, 'Link para avaliar o escritório no Google (opcional)'),
+          h('input', {
+            class: 'input', type: 'url', disabled: !state.can.admin, value: state.settings.googleReviewUrl || '', placeholder: 'https://g.page/r/…/review',
+            onchange: (e) => setSetting('googleReviewUrl', e.target.value.trim() || null).catch(errToast),
+          })),
+        h('p', { class: 'muted small' }, 'Quando o cliente dá 4 ou 5 estrelas no fim do processo, a página oferece este link. No Google Meu Negócio: “Pedir avaliações” → copiar o link.'),
+        h('button', { class: 'btn btn-sm', disabled: !state.can.admin, onclick: faqDialog }, 'Dúvidas comuns por etapa…')),
 
       state.can.configure && section('Funis e etapas',
         h('p', { class: 'muted small' }, 'Cada funil tem suas etapas (colunas do quadro). Ex.: Atendimento → Novo, Proposta, Fechado.'),
@@ -946,5 +954,33 @@ function quickEditor(r) {
         },
       },
     ],
+  });
+}
+
+/** Dúvidas comuns que a página do cliente mostra em cada etapa ("Pergunta | Resposta", uma por linha). */
+async function faqDialog() {
+  let list;
+  try { list = await api('portal:faq'); } catch (e) { errToast(e); return; }
+  const boxes = list.map((p) => ({
+    id: p.id,
+    ta: h('textarea', { class: 'input', rows: 3, placeholder: 'Pergunta | Resposta' }, p.items.map((i) => `${i.q} | ${i.a}`).join('\n')),
+    label: p.label,
+  }));
+  modal({
+    title: 'Dúvidas comuns por etapa',
+    wide: true,
+    body: h('div', { class: 'form' },
+      h('p', { class: 'muted small' }, 'Aparecem na página do cliente, embaixo da etapa atual. Uma por linha: Pergunta | Resposta. Deixe em branco para não mostrar nada naquela etapa.'),
+      boxes.map((b) => h('label', { class: 'field' }, h('span', null, b.label), b.ta))),
+    actions: [{ label: 'Cancelar' }, {
+      label: 'Salvar', primary: true,
+      onClick: async () => {
+        const faq = Object.fromEntries(boxes.map((b) => [b.id, b.ta.value.split('\n').map((l) => l.split('|')).filter((x) => x.length >= 2 && x[0].trim() && x.slice(1).join('|').trim())
+          .map((x) => [x[0].trim(), x.slice(1).join('|').trim()])]));
+        await setSetting('portalFaq', JSON.stringify(faq)).catch(errToast);
+        toast('Dúvidas salvas', 'success');
+        return true;
+      },
+    }],
   });
 }
