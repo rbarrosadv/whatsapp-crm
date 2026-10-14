@@ -1541,3 +1541,11 @@ mark.found { background: rgba(255, 196, 0, .55); color: inherit; border-radius: 
 }
 .lv-name .dup-pill { margin-left: 6px; font-size: 10px; vertical-align: 1px; }
 .lv-dup { margin: 10px 14px 0; }
+
+/* número que copia com um clique e foto que amplia */
+.phone-copy { cursor: copy; user-select: text; border-radius: 4px; display: inline-flex; align-items: center; gap: 4px; }
+.phone-copy:hover { background: var(--hover); }
+.phone-copy .copy-ico { opacity: 0; display: inline-flex; }
+.phone-copy:hover .copy-ico { opacity: .8; }
+.avatar-zoom { cursor: zoom-in; border-radius: 50%; flex: none; }
+.avatar-zoom:hover { filter: brightness(1.08); }

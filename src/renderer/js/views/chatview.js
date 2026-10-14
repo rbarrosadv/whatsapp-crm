@@ -11,7 +11,7 @@ import {
   mediaUrl, openMedia, saveMedia, pickFiles,
 } from '../util.js';
 import { state, on, emit, api, stageById, openChat, typeById, othersViewing, someoneTyping } from '../store.js';
-import { avatarEl, ticks, emptyState, typeMenu, classifyBar } from '../components.js';
+import { avatarEl, ticks, emptyState, typeMenu, classifyBar, openAvatar, phoneCopy } from '../components.js';
 import { openCase, newCaseDialog } from './casemodal.js';
 import { icon, named } from '../icons.js';
 import { newChatDialog } from './chatlist.js';
@@ -112,10 +112,10 @@ function renderHeader() {
   fill(current.classifyEl, classifyBar(chat));
   fill(current.headerEl, 
     h('button', { class: 'icon-btn mobile-back', title: 'Voltar para as conversas', onclick: () => openChat(null) }, icon('back', 22)),
-    avatarEl(chat, 40),
+    h('div', { class: 'avatar-zoom', title: 'Ver a foto grande', onclick: () => openAvatar(chat) }, avatarEl(chat, 40)),
     h('div', { class: 'chat-head-info', onclick: () => root._togglePanel?.(true) },
       h('div', { class: 'chat-head-name' }, chat.display_name),
-      h('div', { class: 'chat-head-sub' }, sub, chat.company ? ` · ${chat.company}` : ''),
+      h('div', { class: 'chat-head-sub' }, !chat.is_group && phone ? phoneCopy(sub) : sub, chat.company ? ` · ${chat.company}` : ''),
       teamPresence(chat.jid)),
     typeBtn,
     stageBtn,

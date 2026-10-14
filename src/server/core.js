@@ -1582,6 +1582,10 @@ export async function createCore({ dataDir, demo = false, version = '', safeStor
       const rel = await wa.avatar(jid);
       return rel ? mediaUrl(rel) : null;
     },
+    'chats:avatarFull': async (_c, jid) => {
+      const rel = await wa.avatarFull(chatOrThrow(jid));
+      return rel ? { rel, url: mediaUrl(rel) } : null;
+    },
     'chats:groupInfo': (_c, jid) => wa.groupInfo(jid),
     'chats:presence': (_c, jid, type) => wa.sendPresence(jid, type),
 

@@ -1062,6 +1062,33 @@ export class WhatsAppService extends EventEmitter {
     return p;
   }
 
+  /**
+   * Foto de perfil em tamanho grande (para ampliar), só quando a pessoa clica.
+   * Passa pela mesma fila das fotos (uma consulta por vez); guardada por 7 dias.
+   * Sem foto grande, devolve a pequena.
+   */
+  async avatarFull(jid) {
+    const rel = path.join('_avatars', `${safeName(jid)}-grande.jpg`);
+    const abs = path.join(this.mediaDir, rel);
+    if (fs.existsSync(abs) && Date.now() - fs.statSync(abs).mtimeMs < 7 * 24 * 3600e3) return rel;
+    if (!this.sock || this.state.state !== 'open') return this.avatar(jid);
+    const run = async () => {
+      try {
+        const url = await this.sock?.profilePictureUrl(jid, 'image', 10000);
+        const res = url ? await fetch(url) : null;
+        if (res?.ok) {
+          fs.mkdirSync(path.dirname(abs), { recursive: true });
+          fs.writeFileSync(abs, Buffer.from(await res.arrayBuffer()));
+          return rel;
+        }
+      } catch { /* sem foto ou sem permissão de ver */ }
+      return null;
+    };
+    const p = (this.avatarChain || Promise.resolve()).then(run, run);
+    this.avatarChain = p.then(() => new Promise((ok) => setTimeout(ok, 1500))).catch(() => null);
+    return (await p) || this.avatar(jid);
+  }
+
   async fetchAvatar(jid) {
     let url = null;
     try { url = await this.sock.profilePictureUrl(jid, 'preview', 8000); } catch { url = null; }

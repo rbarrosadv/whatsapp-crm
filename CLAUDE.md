@@ -721,6 +721,12 @@ Interface (`src/renderer`, JS puro em módulos ES, sem build):
   `mark.found` na palavra. Se há mais novas fora da tela, `current.detached`:
   rolar para baixo carrega (`loadNewer`), o botão "Ir para as mensagens mais
   recentes" volta ao fim (`reloadLatest`); ao enviar volta ao fim.
+- **Número e foto do contato**: o número no topo da conversa e na ficha
+  (`phoneCopy` em `components.js`) copia ao clicar; "Copiar número" no menu da
+  lista. Clicar na foto (`openAvatar`) → `chats:avatarFull` → `wa.avatarFull`
+  (foto grande `profilePictureUrl(jid,'image')`, guardada 7 dias em
+  `_avatars/<jid>-grande.jpg`, pela mesma fila `avatarChain` de 1,5 s) e abre no
+  `imageviewer` com Salvar.
 - **Editar mensagem**: só texto seu, até 15 min (`editableCheck`);
   `sendMessage(jid, { text, edit: key })`. No composer, `editing` mostra a
   faixa "Editando" (Esc cancela). Fotos abrem em `views/imageviewer.js`
