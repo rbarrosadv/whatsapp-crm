@@ -3,6 +3,9 @@
 // de horário feitas no Google (celular, site…).
 import * as db from './db.js';
 
+/** Cor das audiências no Google Agenda: "Banana" (colorId 5 da paleta de eventos do Google). */
+export const HEARING_COLOR = '5';
+
 const KIND = {
   prazo: { icon: '⚠️', label: 'Prazo', minutes: 30 },
   audiencia: { icon: '⚖️', label: 'Audiência', minutes: 120 },
@@ -18,7 +21,7 @@ export function taskToEvent(t) {
   const k = KIND[t.kind] || KIND.tarefa;
   const who = t.jid ? db.getChat(t.jid)?.display_name : null;
   const lines = [
-    `${k.label} — WhatsApp CRM`,
+    `${k.label} — Barros Associados`,
     who ? `Cliente: ${who}` : null,
     t.case_title ? `Caso: ${t.case_title}` : null,
     t.process_number ? `Processo: ${t.process_number}` : null,
@@ -31,6 +34,9 @@ export function taskToEvent(t) {
     end: t.due_at + taskDuration(t),
     allDay: false,
     taskId: t.id,
+    location: t.place || undefined,
+    // audiências sempre em amarelo-banana; os outros ficam na cor da agenda
+    colorId: t.kind === 'audiencia' ? HEARING_COLOR : undefined,
   };
 }
 

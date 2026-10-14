@@ -14,7 +14,7 @@ import * as auth from './auth.js';
 import { WhatsAppService } from '../main/whatsapp.js';
 import { DemoWhatsAppService, DemoGoogleService } from '../main/demo.js';
 import { GoogleService } from '../main/google.js';
-import { CalendarSync } from '../main/calendar-sync.js';
+import { CalendarSync, HEARING_COLOR } from '../main/calendar-sync.js';
 import { webmToOgg } from '../main/ogg.js';
 import { diagnoseConnection } from '../main/diag.js';
 import { DocsService, guessRoot, templateValues, PLACEHOLDERS, FOLDERS, safeRel } from '../main/docs.js';
@@ -482,6 +482,23 @@ export async function createCore({ dataDir, demo = false, version = '', safeStor
     safeStorage: safeStorage || fileSafeStorage(path.join(dataDir, 'google')),
   });
   const calSync = new CalendarSync({ google, getSettings: () => settings, onChange: () => send('tasks:changed', null) });
+  /**
+   * Audiências que já estavam no Google antes da cor padrão: reenvia uma vez (em
+   * fila, uma por vez) para ficarem em amarelo-banana. Guarda a cor aplicada.
+   */
+  async function recolorHearings() {
+    if (!calSync.enabled() || settings.gcalHearingColor === HEARING_COLOR) return 0;
+    const ids = db.all("SELECT id FROM tasks WHERE kind = 'audiencia' AND gcal_event_id IS NOT NULL AND COALESCE(end_at, due_at) > ?", Date.now() - DAY).map((r) => r.id);
+    let n = 0;
+    for (const id of ids) {
+      try { await calSync.syncTask(id); n++; } catch (e) { console.error('google: cor da audiência', id, e.message); }
+      await new Promise((r) => setTimeout(r, 300));
+    }
+    db.setSetting('gcalHearingColor', HEARING_COLOR);
+    settings.gcalHearingColor = HEARING_COLOR;
+    return n;
+  }
+  setTimeout(() => recolorHearings().catch(() => {}), 20000).unref?.();
   let warnedReconnect = false;
   google.on('status', (st) => {
     send('google:status', st);
@@ -3316,12 +3333,13 @@ export async function createCore({ dataDir, demo = false, version = '', safeStor
     /** Volta do login do Google (rota /google/callback). */
     async googleCallback(code, state) {
       await google.finish(code, state);
-      calSync.syncAll().catch(() => {});
+      calSync.syncAll().then(() => recolorHearings()).catch(() => {});
     },
     /** Roda agora a busca dos tribunais (DJEN + DataJud), como o relógio faria. */
     runCourts: () => Promise.all([checkIntimations(), datajudDaily()]),
     /** Roda agora os avisos periódicos (lembretes, audiências, financeiro…), como o relógio faria. */
     runChecks: () => check(),
+    recolorHearings,
     /** O computador voltou da suspensão (modo local): a conexão antiga morreu. */
     onResume() {
       if (!wa.hasSession()) return;

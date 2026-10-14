@@ -186,3 +186,29 @@ test('chave "Aplicativo da Web": login pelo servidor volta em /google/callback',
   assert.ok(sent.get('code_verifier'));
   await assert.rejects(g.finish('codigo', url.searchParams.get('state')), /demorou/, 'o mesmo login não vale duas vezes');
 });
+
+test('audiência vai para o Google em amarelo-banana (colorId 5) e com o local; os outros na cor da agenda', async () => {
+  const { fromEvent } = await import('../src/main/google.js');
+  const { HEARING_COLOR } = await import('../src/main/calendar-sync.js');
+  assert.equal(HEARING_COLOR, '5');
+  const aud = db.saveTask({ kind: 'audiencia', title: 'Audiência de instrução', due_at: Date.now() + 864e5, place: 'Fórum de Cuiabá, sala 3' });
+  const ev = taskToEvent(db.getTask(aud));
+  assert.equal(ev.colorId, '5');
+  assert.equal(ev.location, 'Fórum de Cuiabá, sala 3');
+  const body = fromEvent(ev);
+  assert.equal(body.colorId, '5');
+  assert.equal(body.location, 'Fórum de Cuiabá, sala 3');
+  const pz = db.saveTask({ kind: 'prazo', title: 'Prazo', due_at: Date.now() + 864e5 });
+  assert.equal('colorId' in fromEvent(taskToEvent(db.getTask(pz))), false, 'prazo não muda de cor');
+  // vai assim para o Google
+  const google = new DemoGoogleService();
+  const sync = new CalendarSync({ google, getSettings: () => ({ googleCalendarId: 'escritorio@demo' }) });
+  await sync.syncTask(aud);
+  assert.equal(google.items.find((e) => e.taskId === aud).colorId, '5');
+});
+
+test('evento colorido no Google aparece com a mesma cor na Agenda do sistema', () => {
+  const cal = { id: 'c', name: 'Escritório', color: '#123456', writable: true };
+  assert.equal(toEvent({ id: '1', colorId: '5', start: { dateTime: '2030-01-10T14:00:00-03:00' }, end: { dateTime: '2030-01-10T15:00:00-03:00' } }, cal).color, '#f6bf26');
+  assert.equal(toEvent({ id: '2', start: { dateTime: '2030-01-10T14:00:00-03:00' }, end: { dateTime: '2030-01-10T15:00:00-03:00' } }, cal).color, '#123456');
+});

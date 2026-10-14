@@ -307,6 +307,9 @@ export class GoogleService extends EventEmitter {
 }
 
 /** Evento do Google → formato usado pela interface. */
+/** Cores de evento do Google (colorId → cor), para a Agenda do sistema mostrar igual. */
+export const EVENT_COLORS = { 1: '#7986cb', 2: '#33b679', 3: '#8e24aa', 4: '#e67c73', 5: '#f6bf26', 6: '#f4511e', 7: '#039be5', 8: '#616161', 9: '#3f51b5', 10: '#0b8043', 11: '#d50000' };
+
 export function toEvent(e, cal) {
   const allDay = !!e.start?.date;
   const start = allDay ? new Date(`${e.start.date}T00:00:00`).getTime() : new Date(e.start?.dateTime).getTime();
@@ -317,7 +320,7 @@ export function toEvent(e, cal) {
     source: 'google',
     calendarId: cal.id,
     calendarName: cal.name,
-    color: cal.color,
+    color: EVENT_COLORS[e.colorId] || cal.color,
     writable: cal.writable,
     title: e.summary || '(sem título)',
     description: e.description || '',
@@ -348,6 +351,7 @@ export function fromEvent(ev) {
       body.end = { dateTime: new Date(ev.end || ev.start + 3600 * 1000).toISOString(), timeZone: tz };
     }
   }
+  if (ev.colorId !== undefined) body.colorId = ev.colorId;
   if (ev.taskId) body.extendedProperties = { private: { crmTaskId: String(ev.taskId) } };
   return body;
 }
