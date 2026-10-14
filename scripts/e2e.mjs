@@ -831,6 +831,17 @@ try {
   check(await page.locator('.modal .intim-dates:has-text("Vence")').count() === 1, 'janela do prazo mostra as quatro datas');
   await shot(page, '05k-prazo-sugerido');
   await page.click('.modal button:has-text("Cancelar")');
+  // intimação de audiência designada: botão próprio, vai para a agenda como audiência
+  const audCard = page.locator('.intim.intim-nova', { hasText: 'audiência' }).first();
+  await audCard.locator('button:has-text("Audiência na agenda")').click();
+  await page.waitForSelector('.modal:has-text("Audiência na agenda")');
+  const audWhen = page.locator('.modal .field:has-text("Data e hora") input');
+  if (!(await audWhen.inputValue())) await audWhen.fill(await page.evaluate(() => { const d = new Date(Date.now() + 12 * 864e5); d.setHours(14, 0, 0, 0); const p = (n) => String(n).padStart(2, '0'); return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}T14:00`; }));
+  await page.locator('.modal .field:has-text("Local") input').fill('Fórum de Cuiabá, sala 3');
+  await shot(page, '05k-audiencia-intimacao');
+  await page.click('.modal button:has-text("Pôr na agenda")');
+  await page.waitForSelector('.toast:has-text("Audiência posta na Agenda")');
+  check(await page.evaluate(() => window.api.call('intimations:list', { status: 'prazo' }).then((l) => l.some((i) => i.task_kind === 'audiencia'))), 'intimação de audiência designada vai para a agenda');
   await page.locator('.notify-who select').selectOption('all');
   await page.waitForFunction(() => document.querySelector('.notify-who select')?.value === 'all');
   check(await page.evaluate(() => window.api.call('settings:get').then((s) => s.courtsNotifyAll === true)), 'intimações: opção de avisar toda a equipe');

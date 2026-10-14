@@ -192,7 +192,12 @@ Motor (`src/main`, sem Electron apesar do nome da pasta):
   ato}` → `searchIntimations` em courts.js: palavras soltas todas presentes, "frase" exata,
   sem acento, também no nº sem pontos, partes, cliente, tribunal, vara e advogados; devolve
   `snippet` {before, match, after}; até 200) + `intimations:facets` (tribunais e atos);
-  tela `searchPanel` em intimations.js (período, tribunal, ato, atalhos; a situação é a da
+  **Audiência na agenda** (botão nas intimações que falam de audiência/sessão/pauta —
+  `HEARING_RE`): `intimations:hearingSuggest` (data/hora e tipo por `sessionFromText`/
+  `hearingFromText`, link da sala do texto, virtual) → `intimations:hearing` cria `tasks`
+  `kind='audiencia'` com `place` e duração (mesma audiência ±1 h no processo não duplica;
+  conclui a sugestão "Pôr na agenda" da mesma data), intimação `status='prazo'` com
+  `task_kind` (aba "Com prazo ou audiência"). Pesquisa: tela `searchPanel` em intimations.js (período, tribunal, ato, atalhos; a situação é a da
   aba; digitar redesenha só `.intim-results` e esconde `.intim-normal`). **Prazo sugerido** (`suggestDeadline`: "prazo de N (extenso) dias",
   horas, ou pelo ato — sentença 15 / trabalhista 8 / juizado 10 / criminal em
   dias corridos (`isCriminal`), citação 15, embargos 5, sem nada 5 (CPC 218 §3º);

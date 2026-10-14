@@ -2060,6 +2060,56 @@ export async function createCore({ dataDir, demo = false, version = '', safeStor
       return deadlineDates(it?.date || Date.now(), Math.min(365, Math.max(1, Number(days) || 15)), { corridos: !!corridos });
     },
     /** Cria o prazo na agenda a partir da intimação (a data é conferida pela pessoa). */
+    /**
+     * Audiência ou sessão de julgamento na intimação: data/hora, tipo e o link da
+     * sala virtual (se vier no texto), para pôr na agenda.
+     */
+    'intimations:hearingSuggest': (_c, id) => {
+      const it = db.getIntimation(id);
+      if (!it) throw new Error('Intimação não encontrada');
+      const text = stripCss(it.text);
+      const sess = sessionFromText(text);
+      const h = sess || hearingFromText(text);
+      const link = (text.match(/https?:\/\/[^\s<>"')]+/i) || [])[0] || null;
+      const virtual = !!(sess?.virtual || link || /videoconfer|virtual|telepresencial|teams|zoom|google meet/i.test(text));
+      return {
+        ts: h?.ts || null, hasTime: !!h?.hasTime,
+        title: h?.title || (/concilia/i.test(text) ? 'Audiência de conciliação' : /instru/i.test(text) ? 'Audiência de instrução' : /\bmedia[cç][aã]o/i.test(text) ? 'Audiência de mediação' : 'Audiência'),
+        place: link || null, virtual, session: !!sess,
+        found: !!h,
+      };
+    },
+    /** Audiência designada (ou sessão de julgamento) → compromisso na agenda do responsável. */
+    'intimations:hearing': (ctx, id, { due_at, title, place, assignee_id, case_id, minutes } = {}) => {
+      const it = db.getIntimation(id);
+      if (!it) throw new Error('Intimação não encontrada');
+      if (!due_at) throw new Error('Informe a data e a hora da audiência.');
+      const caseId = case_id || it.case_id;
+      const k = caseId ? db.getCase(caseId) : null;
+      // a mesma audiência já na agenda (por outra intimação ou sugestão): não duplica
+      const same = caseId ? db.get("SELECT id FROM tasks WHERE case_id = ? AND kind = 'audiencia' AND done = 0 AND ABS(due_at - ?) < 3600000", caseId, due_at) : null;
+      const taskId = same?.id || db.saveTask({
+        jid: k?.jid || null, case_id: caseId || null, kind: 'audiencia', due_at,
+        end_at: due_at + (Number(minutes) || 120) * 60000,
+        title: title || `Audiência — ${it.process_number}`, place: place || null,
+        assignee_id: assignee_id ?? k?.responsible_id ?? ctx.user.id, by: ctx.user.name,
+      });
+      if (same && place) db.saveTask({ id: same.id, place });
+      syncTaskLater(taskId);
+      db.setIntimation(id, { status: 'prazo', task_id: taskId, case_id: caseId || null, handled_by: ctx.user.name, handled_at: Date.now() });
+      if (k) {
+        // a sugestão "Pôr na agenda" do mesmo andamento já foi atendida
+        for (const h of db.all("SELECT id, text FROM case_hints WHERE case_id = ? AND kind = 'hearing' AND status = 'nova'", k.id)) {
+          const when = (sessionFromText(h.text) || hearingFromText(h.text))?.ts;
+          if (when && Math.abs(when - due_at) < 3600000) db.setHint(h.id, 'feita', ctx.user.name);
+        }
+        db.logActivity(k.jid, 'case', `${k.title}: audiência posta na agenda a partir de intimação`, ctx.user.name);
+        caseChanged(k);
+      }
+      send('tasks:changed', null);
+      send('intimations:changed', null);
+      return taskId;
+    },
     'intimations:deadline': (ctx, id, { due_at, title, assignee_id, case_id } = {}) => {
       const it = db.getIntimation(id);
       if (!it) throw new Error('Intimação não encontrada');

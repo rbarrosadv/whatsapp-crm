@@ -1287,6 +1287,38 @@ test('página do cliente: link próprio, 4 dígitos do CPF, etapas, novidades ap
   assert.ok(!auth.can('estagiario', 'portal:create') && auth.can('estagiario', 'portal:get'));
 });
 
+test('intimação de audiência designada vai para a agenda (data, hora e link lidos do texto, sem duplicar)', async () => {
+  const s = client();
+  await s.req('/auth/login', { body: { login: 'barros', password: 'segredo1' } });
+  const me = (await s.call('bootstrap')).me;
+  const cid = await s.call('clients:save', { name: 'Cliente Audiência Intim' });
+  const k = await s.call('cases:save', { client_id: cid, title: 'Ação trabalhista', responsible_id: me.id });
+  await s.call('cases:save', { id: k, process_number: '0000123-45.2026.5.23.0001' });
+  const y = new Date().getFullYear() + 1;
+  const iid = db.addIntimation({ ext_id: 'agenda-aud-1', date: Date.now(), tribunal: 'TRT23', kind: 'Intimação', doc_kind: 'Despacho', process_number: '0000123-45.2026.5.23.0001',
+    text: `Fica designada AUDIÊNCIA DE CONCILIAÇÃO para o dia 20/11/${y} às 14:30, por videoconferência no link https://trt23.jus.br/sala/123 .` }, null, 'nova');
+  const sug = await s.call('intimations:hearingSuggest', iid);
+  assert.equal(sug.found, true);
+  assert.equal(new Date(sug.ts).getHours(), 14);
+  assert.equal(new Date(sug.ts).getMinutes(), 30);
+  assert.equal(sug.title, 'Audiência de conciliação');
+  assert.equal(sug.place, 'https://trt23.jus.br/sala/123');
+  assert.equal(sug.virtual, true);
+  const tid = await s.call('intimations:hearing', iid, { due_at: sug.ts, title: sug.title, place: sug.place, minutes: 60 });
+  const t = db.getTask(tid);
+  assert.equal(t.kind, 'audiencia');
+  assert.equal(t.case_id, k);
+  assert.equal(t.place, 'https://trt23.jus.br/sala/123');
+  assert.equal(t.end_at - t.due_at, 3600000);
+  assert.equal(t.assignee_id, me.id, 'fica com o responsável do processo');
+  const it = (await s.call('intimations:list', { status: 'prazo' })).find((i) => i.id === iid);
+  assert.equal(it.task_kind, 'audiencia', 'sai de "para conferir" como audiência na agenda');
+  // a mesma audiência numa 2ª intimação não duplica a agenda
+  const iid2 = db.addIntimation({ ext_id: 'agenda-aud-2', date: Date.now(), tribunal: 'TRT23', kind: 'Intimação', process_number: '0000123-45.2026.5.23.0001', text: `Audiência designada para 20/11/${y} 14:30 (republicação).` }, null, 'nova');
+  assert.equal(await s.call('intimations:hearing', iid2, { due_at: sug.ts }), tid);
+  assert.equal(db.all("SELECT id FROM tasks WHERE case_id = ? AND kind = 'audiencia'", k).length, 1);
+});
+
 test('página do cliente mais fiel: andamentos traduzidos (sensíveis só aprovados), tempo na etapa, documentos, audiência com confirmação, dúvidas, dados do processo, avaliação e partes por cliente', async () => {
   const s = client();
   await s.req('/auth/login', { body: { login: 'barros', password: 'segredo1' } });

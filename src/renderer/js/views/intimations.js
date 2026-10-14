@@ -104,9 +104,11 @@ export async function renderIntimations(el, redraw) {
 function searchPanel(facets, inScope, normal, redraw) {
   const results = h('div', { class: 'intim-results' });
   let seq = 0;
+  const clear = h('button', { class: 'btn btn-sm', hidden: !searching(), onclick: () => { Object.assign(search, { q: '', tribunal: '', ato: '' }); redraw(); } }, 'Limpar');
   const run = async () => {
     const my = ++seq;
     normal.hidden = searching();
+    clear.hidden = !searching();
     if (!searching()) { fill(results); return; }
     const days = Number(search.period);
     let r;
@@ -134,8 +136,7 @@ function searchPanel(facets, inScope, normal, redraw) {
     h('select', { class: 'input select-sm', onchange: (e) => { search[key] = e.target.value; run(); } },
       opts.map(([v, l]) => h('option', { value: v, selected: search[key] === v }, l))));
   const panel = h('div', { class: 'panel intim-search' },
-    h('div', { class: 'row' }, icon('search', 18), input,
-      searching() ? h('button', { class: 'btn btn-sm', onclick: () => { Object.assign(search, { q: '', tribunal: '', ato: '' }); redraw(); } }, 'Limpar') : null),
+    h('div', { class: 'row' }, icon('search', 18), input, clear),
     h('div', { class: 'row wrap' },
       sel('period', [['7', 'Últimos 7 dias'], ['30', 'Últimos 30 dias'], ['90', 'Últimos 90 dias'], ['365', 'Último ano'], ['0', 'Tudo']], 'Período'),
       sel('tribunal', [['', 'Todos'], ...facets.tribunais.map((t) => [t, t])], 'Tribunal'),
@@ -344,7 +345,7 @@ function card(i, redraw) {
       h('b', null, `${i.kind}${i.doc_kind ? ` · ${i.doc_kind}` : ''}`),
       h('span', { class: 'muted small grow' }, i.orgao || ''),
       late ? h('span', { class: 'status-pill bad', title: 'O prazo já começou a correr e ainda não foi criado' }, 'prazo já correndo') : null,
-      i.status === 'prazo' ? h('span', { class: 'status-pill ok' }, `prazo ${day(i.task_due)}`)
+      i.status === 'prazo' ? h('span', { class: 'status-pill ok' }, `${i.task_kind === 'audiencia' ? 'audiência' : 'prazo'} ${day(i.task_due)}`)
         : i.status === 'lida' ? h('span', { class: 'status-pill muted' }, 'conferida')
           : i.status === 'descartada' ? h('span', { class: 'status-pill muted', title: i.handled_by ? `Excluída por ${i.handled_by}` : '' }, 'excluída')
             : h('span', { class: 'status-pill warn' }, 'para conferir')),
@@ -384,7 +385,50 @@ function card(i, redraw) {
           redraw();
         },
       }, i.found_by === 'nome' ? 'Não é minha — excluir' : 'Excluir') : null,
-      !['prazo', 'descartada'].includes(i.status) ? h('button', { class: 'btn btn-sm btn-primary', onclick: () => deadlineDialog(i, redraw) }, 'Criar prazo') : null));
+      !['prazo', 'descartada'].includes(i.status) && HEARING_RE.test(i.text) ? h('button', { class: 'btn btn-sm btn-primary', title: 'Põe a audiência (ou sessão de julgamento) na Agenda do responsável', onclick: () => hearingDialog(i, redraw) }, [icon('calendar', 15), 'Audiência na agenda']) : null,
+      !['prazo', 'descartada'].includes(i.status) ? h('button', { class: `btn btn-sm ${HEARING_RE.test(i.text) ? '' : 'btn-primary'}`, onclick: () => deadlineDialog(i, redraw) }, 'Criar prazo') : null));
+}
+
+/** Intimação que fala de audiência ou sessão de julgamento. */
+const HEARING_RE = /audi[eê]ncia|sess[aã]o (de julgamento|virtual|presencial|telepresencial)|inclu[ií]d[oa]s? (em|na) pauta|pauta de julgamento/i;
+
+/** Audiência designada → compromisso na Agenda (data/hora, tipo e link lidos do texto, para conferir). */
+async function hearingDialog(i, redraw) {
+  const team = await api('team:list').catch(() => []);
+  const sug = await api('intimations:hearingSuggest', i.id).catch(() => ({ title: 'Audiência', found: false }));
+  const when = h('input', { class: 'input', type: 'datetime-local', value: sug.ts ? toLocalInput(sug.ts) : '' });
+  const dur = h('select', { class: 'input' }, [[30, '30 min'], [60, '1 hora'], [120, '2 horas'], [180, '3 horas'], [240, '4 horas']].map(([v, l]) => h('option', { value: v, selected: v === 120 }, l)));
+  const title = h('input', { class: 'input', value: `${sug.title}${i.case_title ? ` — ${i.case_title}` : ` — ${i.process_number}`}` });
+  const place = h('input', { class: 'input', value: sug.place || '', placeholder: sug.virtual ? 'Link da sala virtual' : 'Endereço do fórum ou link da sala virtual' });
+  const who = h('select', { class: 'input' }, team.map((u) => h('option', { value: String(u.id), selected: u.id === (i.responsible_id || state.me?.id) }, u.name)));
+  modal({
+    title: sug.session ? 'Sessão de julgamento na agenda' : 'Audiência na agenda',
+    body: h('div', { class: 'form' },
+      h('div', { class: 'intim-text open small' }, i.text),
+      h('div', { class: `intim-suggest small ${sug.found ? '' : 'warn'}` }, icon('help', 14),
+        sug.found ? ` Data lida no texto${sug.hasTime ? '' : ' (sem horário: confira a hora)'}${sug.virtual ? ' · parece virtual' : ''}. Confira antes de salvar.` : ' Não achei a data no texto: preencha a data e a hora.'),
+      h('div', { class: 'grid2' },
+        h('label', { class: 'field' }, h('span', null, 'Data e hora'), when),
+        h('label', { class: 'field' }, h('span', null, 'Duração'), dur)),
+      h('label', { class: 'field' }, h('span', null, 'O que é'), title),
+      h('label', { class: 'field' }, h('span', null, 'Local (endereço ou link da sala)'), place),
+      h('label', { class: 'field' }, h('span', null, 'Responsável'), who),
+      h('p', { class: 'muted small' }, 'Vai para a Agenda (e para o Google, se ligado). Se o cliente tem a página de acompanhamento, ele vê a audiência e pode confirmar presença.')),
+    actions: [
+      { label: 'Cancelar' },
+      {
+        label: 'Pôr na agenda', primary: true,
+        onClick: async () => {
+          const due = fromLocalInput(when.value);
+          if (!due) { toast('Informe a data e a hora da audiência', 'error'); return false; }
+          await api('intimations:hearing', i.id, { due_at: due, minutes: Number(dur.value), title: title.value, place: place.value.trim(), assignee_id: Number(who.value) });
+          toast('Audiência posta na Agenda', 'success');
+          redraw();
+          return true;
+        },
+      },
+    ],
+  });
 }
 
 async function deadlineDialog(i, redraw) {

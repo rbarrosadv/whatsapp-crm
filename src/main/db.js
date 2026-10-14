@@ -2143,7 +2143,7 @@ export function listIntimations({ status, caseId, from, to, tribunal, limit = 30
   if (caseId) { where.push('i.case_id = ?'); args.push(caseId); }
   return all(`SELECT i.*, c.title AS case_title, COALESCE(c.client_id, i.client_id) AS client_id,
                 (SELECT name FROM clients WHERE id = COALESCE(c.client_id, i.client_id)) AS client_name,
-                c.responsible_id, c.area AS case_area, t.due_at AS task_due,
+                c.responsible_id, c.area AS case_area, t.due_at AS task_due, t.kind AS task_kind,
                 (SELECT COUNT(*) FROM intimations d WHERE d.dup_of = i.id) AS dups
               FROM intimations i LEFT JOIN cases c ON c.id = i.case_id LEFT JOIN tasks t ON t.id = i.task_id
               ${where.length ? `WHERE ${where.join(' AND ')}` : ''} ORDER BY i.date DESC, i.id DESC LIMIT ?`, ...args, limit).map(intimationRow);
