@@ -569,6 +569,7 @@ function migrate() {
       score INTEGER NOT NULL, comment TEXT, created_at INTEGER NOT NULL
     );
     CREATE INDEX IF NOT EXISTS portal_ratings_case ON portal_ratings(case_id);
+    CREATE INDEX IF NOT EXISTS intimations_task ON intimations(task_id);
   `);
 
   const version = Number(get('SELECT value FROM meta WHERE key = ?', 'schema')?.value || 0);
@@ -2167,7 +2168,12 @@ export function relinkIntimations(caseId) {
   const k = get('SELECT process_number FROM cases WHERE id = ?', caseId);
   const d = digitsOf(k?.process_number);
   if (d.length < 15) return 0;
-  return Number(run('UPDATE intimations SET case_id = ? WHERE process_digits = ? AND case_id IS NULL', caseId, d).changes || 0);
+  const n = Number(run('UPDATE intimations SET case_id = ? WHERE process_digits = ? AND case_id IS NULL', caseId, d).changes || 0);
+  // prazos criados dessas intimações antes de o processo existir passam a ser dele
+  const jid = get('SELECT jid FROM cases WHERE id = ?', caseId)?.jid || null;
+  run(`UPDATE tasks SET case_id = ?, jid = COALESCE(jid, ?) WHERE case_id IS NULL
+       AND id IN (SELECT task_id FROM intimations WHERE process_digits = ? AND task_id IS NOT NULL)`, caseId, jid, d);
+  return n;
 }
 /** Processos que aparecem nas intimações e ainda não estão cadastrados. */
 export function unknownProcesses() {
@@ -2355,7 +2361,12 @@ const TASK_SELECT = `SELECT k.*, c.title AS case_title, c.process_number, u.name
   FROM tasks k LEFT JOIN cases c ON c.id = k.case_id LEFT JOIN users u ON u.id = k.assignee_id
   LEFT JOIN clients cl ON cl.id = c.client_id
   LEFT JOIN clients ck ON c.id IS NULL AND (ck.jid = k.jid OR 'cliente:' || ck.id = k.jid)
-  LEFT JOIN leads ld ON k.jid LIKE 'lead:%' AND 'lead:' || ld.id = k.jid`;
+  LEFT JOIN leads ld ON k.jid LIKE 'lead:%' AND 'lead:' || ld.id = k.jid`
+  // prazo criado a partir de uma intimação: os dados dela (tribunal, vara, partes, trecho)
+  .replace(' FROM tasks k', `, it.id AS intim_id, it.tribunal AS intim_tribunal, it.orgao AS intim_orgao, it.kind AS intim_kind,
+    it.doc_kind AS intim_doc_kind, it.classe AS intim_classe, it.process_number AS intim_process, it.process_digits AS intim_digits,
+    it.parties AS intim_parties, substr(it.text, 1, 600) AS intim_text, it.link AS intim_link, it.date AS intim_date
+  FROM tasks k LEFT JOIN intimations it ON it.id = (SELECT MAX(x.id) FROM intimations x WHERE x.task_id = k.id)`);
 
 /** `assignee`: id de uma pessoa → as dela e as sem responsável. */
 export function listTasks({ jid, caseId, includeDone = false, assignee } = {}) {

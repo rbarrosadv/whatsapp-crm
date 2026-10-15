@@ -282,7 +282,7 @@ function watchPanel(list, redraw) {
       h('button', { class: 'btn btn-sm', title: 'Não acompanhar', onclick: async () => { await api('intimations:set', [i.id], 'ignorada').catch(errToast); redraw(); } }, 'Ignorar'))));
 }
 
-async function importDialog(p, redraw) {
+export async function importDialog(p, redraw) {
   const clients = await api('clients:list', {}).catch(() => []);
   let chosen = p.client_id ? { id: p.client_id } : null; // { id } ou { name }
   const box = h('div', { class: 'picker-list short' });
@@ -331,6 +331,29 @@ async function importDialog(p, redraw) {
 }
 
 // ------------------------------------------------------------ intimação
+
+/** Abre uma intimação (ex.: a de origem de um prazo da Agenda). */
+export async function viewIntimation(id) {
+  const i = await api('intimations:get', id);
+  const parties = (i.parties || []).map((p) => `${p.name}${p.polo === 'A' ? ' (autor)' : p.polo === 'P' ? ' (réu)' : ''}`).join(' · ');
+  const close = modal({
+    title: `${i.doc_kind || i.kind || 'Intimação'} — ${i.process_number}`,
+    wide: true,
+    body: h('div', { class: 'form' },
+      h('div', { class: 'muted small' }, [i.tribunal, i.orgao, i.classe, i.date ? `disponibilizada em ${fmtDateTime(i.date)}` : null].filter(Boolean).join(' · ')),
+      parties ? h('div', { class: 'small' }, h('b', null, 'Partes: '), parties) : null,
+      i.case_id ? null : h('p', { class: 'alert info' }, 'Este processo ainda não está cadastrado no sistema.'),
+      h('div', { class: 'intim-text open small' }, i.text)),
+    actions: [
+      i.link ? { label: 'Inteiro teor', onClick: () => { openExternal(i.link); return false; } } : null,
+      i.case_id
+        ? { label: 'Abrir o processo', onClick: () => { openCase(i.case_id, { tab: 'prazos' }); return true; } }
+        : { label: 'Cadastrar processo', onClick: () => { importDialog(i, () => {}); return true; } },
+      { label: 'Fechar', primary: true },
+    ].filter(Boolean),
+  });
+  return close;
+}
 
 function card(i, redraw) {
   const text = h('div', { class: 'intim-text' }, i.text);

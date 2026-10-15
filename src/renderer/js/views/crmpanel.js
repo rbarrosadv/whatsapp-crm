@@ -227,11 +227,37 @@ export function taskRow(t, { showChat = false } = {}) {
         t.kind === 'prazo' && t.internal_at && !t.done ? h('span', { class: `internal-pill ${t.internal_at < Date.now() ? 'late' : ''}`, title: 'Prazo interno: a peça deve estar pronta até aqui' }, ` · interno ${fmtDue(t.internal_at)}`) : null,
         t.kind === 'audiencia' && t.client_confirm && !t.done ? h('span', { class: `internal-pill ${t.client_confirm === 'falar' ? 'late' : 'ok'}`, title: 'Resposta do cliente pela página de acompanhamento' },
           t.client_confirm === 'presente' ? ' · cliente confirmou presença' : ' · cliente quer falar com o advogado') : null,
-        t.done && t.proof ? h('span', { class: 'muted', title: proofText(t.proof) }, ' · com comprovante') : null)),
+        t.done && t.proof ? h('span', { class: 'muted', title: proofText(t.proof) }, ' · com comprovante') : null),
+      t.intim_id ? intimInfo(t) : null),
     h('button', {
       class: 'icon-btn small', title: 'Excluir',
       onclick: async () => { await api('tasks:delete', t.id).catch(errToast); emitTasks(); },
     }, icon('trash', 16)));
+}
+
+/** Prazo criado de uma intimação: de onde veio (tribunal, vara, partes, trecho) e o que fazer. */
+function intimInfo(t) {
+  let parties = [];
+  try { parties = JSON.parse(t.intim_parties || '[]'); } catch { /* ignore */ }
+  const side = (polo) => parties.filter((p) => p.polo === polo).map((p) => p.name).slice(0, 2).join(', ');
+  const vs = [side('A'), side('P')].filter(Boolean).join(' × ');
+  // tira o CSS/HTML que alguns tribunais mandam junto com o texto
+  const text = String(t.intim_text || '').replace(/<[^>]*>/g, ' ').replace(/[^{}]*\{[^}]*:[^}]*\}/g, ' ').replace(/\s+/g, ' ').trim();
+  const intims = () => import('./intimations.js');
+  return h('div', { class: 'task-intim', onclick: (e) => e.stopPropagation() },
+    h('div', { class: 'task-intim-head' },
+      [t.intim_tribunal, t.intim_orgao, t.intim_doc_kind || t.intim_kind].filter(Boolean).join(' · '),
+      !t.case_id ? h('span', { class: 'pill pill-warn' }, 'Processo não cadastrado') : null),
+    vs ? h('div', { class: 'task-intim-parties' }, vs) : null,
+    text ? h('div', { class: 'task-intim-text' }, text.length > 180 ? `${text.slice(0, 180)}…` : text) : null,
+    h('div', { class: 'task-intim-actions' },
+      h('a', { class: 'link', onclick: () => intims().then((m) => m.viewIntimation(t.intim_id)).catch(errToast) }, 'Ver intimação'),
+      !t.case_id ? h('a', {
+        class: 'link',
+        onclick: () => intims().then((m) => m.importDialog({
+          process_number: t.intim_process, process_digits: t.intim_digits, classe: t.intim_classe, parties,
+        }, () => emitTasks())).catch(errToast),
+      }, 'Cadastrar processo') : null));
 }
 
 function emitTasks() {

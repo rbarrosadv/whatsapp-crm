@@ -4,6 +4,7 @@
 //
 // Uso:  node src/server/server.js [--demo] [--port 3210] [--host 127.0.0.1]
 // Pasta de dados: CRM_DATA_DIR (padrão: a mesma do app antigo).
+import './tz.js';
 import http from 'node:http';
 import path from 'node:path';
 import fs from 'node:fs';

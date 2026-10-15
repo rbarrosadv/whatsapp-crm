@@ -49,6 +49,10 @@ Servidor (`src/server`, ESM, Node ≥ 22.13 — usa `node:sqlite`):
   para criar o sócio num servidor público (`requireSetupCode`) — só para
   quem chega pelo proxy/rede; aberto no próprio computador do servidor
   (loopback sem `X-Forwarded-For`) não pede.
+- `tz.js` — importado primeiro pelo `server.js`: `TZ = America/Sao_Paulo` (ou
+  `CRM_TZ`). Na Oracle o relógio não era o de Brasília (vencimento 23:59 saía 19:59,
+  interno 18h saía 14h); `fixServerTimezoneOnce` acertou uma vez os prazos de
+  intimação já criados (`settings.tzFixedAt`).
 - `core.js` — `createCore()`: o antigo processo principal sem Electron.
   Tabela `api` (todo método recebe `ctx` = `{user, conn}` + argumentos),
   `call()` confere a permissão do perfil, lembretes/avisos periódicos,
@@ -271,7 +275,11 @@ Motor (`src/main`, sem Electron apesar do nome da pasta):
   completa tribunal/vara/distribuição vazios) e `datajudDaily` (processos
   abertos, 1 por vez com 1,5 s). Intimação → prazo (`intimations:deadline`,
   tarefa `kind='prazo'` do responsável do processo); processo só visto nas
-  intimações → `courts:import` (cria cliente/caso/partes, religa intimações).
+  intimações → `courts:import` (cria cliente/caso/partes, religa intimações **e os
+  prazos já criados delas** — `relinkIntimations`). O prazo traz a intimação de origem
+  (`TASK_SELECT` → `intim_*`: tribunal, vara, ato, partes, trecho; índice
+  `intimations_task`): `taskRow` mostra o quadro com "Ver intimação" (`viewIntimation`,
+  `intimations:get`) e, sem processo, "Processo não cadastrado" + "Cadastrar processo".
   **Avisos** (`notifyCase`): um por processo com andamento/intimação nova,
   `{user}` conforme a preferência `notifyCourts` (`mine` = responsável — ou,
   sem responsável, o dono da OAB/todos menos estagiário; `all`; `off`; o

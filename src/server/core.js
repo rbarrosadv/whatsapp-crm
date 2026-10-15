@@ -776,6 +776,34 @@ export async function createCore({ dataDir, demo = false, version = '', safeStor
   }
 
   /**
+   * Uma vez: prazos criados de intimações quando o servidor ainda calculava fora do
+   * horário de Brasília (o "vence às 23:59" saía 19:59 e o interno das 18h saía 14h).
+   * A data fica; só a hora volta para 23:59 e 18:00.
+   */
+  function fixServerTimezoneOnce() {
+    if (settings.tzFixedAt) return;
+    const rows = db.all(`SELECT id, due_at, internal_at FROM tasks WHERE kind = 'prazo' AND done = 0 AND due_at IS NOT NULL
+      AND id IN (SELECT task_id FROM intimations WHERE task_id IS NOT NULL)`);
+    for (const t of rows) {
+      const d = new Date(t.due_at);
+      if (d.getMinutes() === 59 && d.getHours() >= 12 && d.getHours() < 23) {
+        d.setHours(23, 59, 0, 0);
+        db.run('UPDATE tasks SET due_at = ? WHERE id = ?', d.getTime(), t.id);
+        syncTaskLater(t.id);
+      }
+      if (t.internal_at) {
+        const i = new Date(t.internal_at);
+        if (i.getMinutes() === 0 && i.getHours() >= 12 && i.getHours() !== 18) {
+          i.setHours(18, 0, 0, 0);
+          db.run('UPDATE tasks SET internal_at = ? WHERE id = ?', i.getTime(), t.id);
+        }
+      }
+    }
+    settings.tzFixedAt = Date.now();
+    db.setSetting('tzFixedAt', settings.tzFixedAt);
+  }
+
+  /**
    * Avisos escalonados dos prazos: 3 dias úteis antes · dia do prazo interno ·
    * véspera · no dia · vencido sem conclusão (este também para os sócios).
    * Cada nível avisa uma vez (`warn_level`); prazo remarcado recomeça.
@@ -2109,6 +2137,11 @@ export async function createCore({ dataDir, demo = false, version = '', safeStor
     },
     'relay:status': () => relayStatus(),
     'intimations:list': (_c, opts) => db.listIntimations(opts || {}).map(intimationView),
+    'intimations:get': (_c, id) => {
+      const i = db.getIntimation(id);
+      if (!i) throw new Error('Intimação não encontrada');
+      return intimationView(i);
+    },
     /**
      * Pesquisa nas intimações já guardadas (texto, nº, partes, cliente, tribunal,
      * advogados), com filtros de período, tribunal, ato e situação.
@@ -3384,6 +3417,7 @@ export async function createCore({ dataDir, demo = false, version = '', safeStor
   }
 
   applySettings();
+  try { fixServerTimezoneOnce(); } catch (e) { console.error('ajuste de fuso dos prazos:', e.message); }
   wa.useBridge(bridge, settings.waVia);
   wa.logger.warn({ versaoApp: version, dados: dataDir, node: process.versions.node }, 'sistema iniciado');
   wa.start().catch((e) => {
