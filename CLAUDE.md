@@ -496,10 +496,10 @@ Motor (`src/main`, sem Electron apesar do nome da pasta):
   para o CRM (`pullChanges`); `agenda()` junta eventos do Google + tarefas
   ainda não sincronizadas. Envio em fila por compromisso (`queue`) e um `syncAll` por
   vez (telas abertas juntas criavam cópias); `dropCopies` esconde e apaga do Google
-  eventos do CRM com o mesmo `crmTaskId` que não são o `gcal_event_id` guardado. **Audiências
-  em amarelo-banana** (`HEARING_COLOR` = colorId `5`; `taskToEvent` manda `colorId` só para
-  `kind='audiencia'` e `location` = `tasks.place`); `recolorHearings` no core reenvia uma vez as
-  que já estavam no Google (`settings.gcalHearingColor`); `toEvent` usa `EVENT_COLORS[colorId]`
+  eventos do CRM com o mesmo `crmTaskId` que não são o `gcal_event_id` guardado. **Cores fixas**
+  (`KIND_COLORS`: audiência Banana `5`, prazo Tomate `11`, reunião Sálvia `2`; tarefa na cor da
+  agenda; `taskToEvent` manda `colorId` e `location` = `tasks.place`); `recolorHearings` no core
+  reenvia uma vez os que já estavam no Google (`settings.gcalHearingColor` = `COLORS_VERSION`); `toEvent` usa `EVENT_COLORS[colorId]`
   para a Agenda do sistema mostrar a mesma cor. No demo, `DemoGoogleService` (em `demo.js`).
 
 App de desktop (`src/desktop`, Electron 44): `main.js` abre uma janela

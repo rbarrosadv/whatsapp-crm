@@ -187,7 +187,7 @@ test('chave "Aplicativo da Web": login pelo servidor volta em /google/callback',
   await assert.rejects(g.finish('codigo', url.searchParams.get('state')), /demorou/, 'o mesmo login não vale duas vezes');
 });
 
-test('audiência vai para o Google em amarelo-banana (colorId 5) e com o local; os outros na cor da agenda', async () => {
+test('cores fixas no Google: audiência banana (5), prazo tomate (11), reunião sálvia (2); tarefa na cor da agenda', async () => {
   const { fromEvent } = await import('../src/main/google.js');
   const { HEARING_COLOR } = await import('../src/main/calendar-sync.js');
   assert.equal(HEARING_COLOR, '5');
@@ -199,7 +199,11 @@ test('audiência vai para o Google em amarelo-banana (colorId 5) e com o local; 
   assert.equal(body.colorId, '5');
   assert.equal(body.location, 'Fórum de Cuiabá, sala 3');
   const pz = db.saveTask({ kind: 'prazo', title: 'Prazo', due_at: Date.now() + 864e5 });
-  assert.equal('colorId' in fromEvent(taskToEvent(db.getTask(pz))), false, 'prazo não muda de cor');
+  assert.equal(fromEvent(taskToEvent(db.getTask(pz))).colorId, '11', 'prazo em tomate');
+  const re = db.saveTask({ kind: 'reuniao', title: 'Reunião', due_at: Date.now() + 864e5 });
+  assert.equal(fromEvent(taskToEvent(db.getTask(re))).colorId, '2', 'reunião em sálvia');
+  const ta = db.saveTask({ kind: 'tarefa', title: 'Tarefa', due_at: Date.now() + 864e5 });
+  assert.equal('colorId' in fromEvent(taskToEvent(db.getTask(ta))), false, 'tarefa fica na cor da agenda');
   // vai assim para o Google
   const google = new DemoGoogleService();
   const sync = new CalendarSync({ google, getSettings: () => ({ googleCalendarId: 'escritorio@demo' }) });

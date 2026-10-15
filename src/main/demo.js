@@ -339,7 +339,7 @@ export class DemoGoogleService extends EventEmitter {
   async events(ids, from, to) {
     return this.items.filter((e) => (!ids || ids.includes(e.calendarId)) && e.end > from && e.start < to).map((e) => {
       const cal = this.cals.find((c) => c.id === e.calendarId);
-      return { description: '', location: '', allDay: false, taskId: null, ...e, source: 'google', calendarName: cal.name, color: e.colorId === '5' ? '#f6bf26' : cal.color, writable: cal.writable, htmlLink: null };
+      return { description: '', location: '', allDay: false, taskId: null, ...e, source: 'google', calendarName: cal.name, color: ({ 2: '#33b679', 5: '#f6bf26', 11: '#d50000' })[e.colorId] || cal.color, writable: cal.writable, htmlLink: null };
     });
   }
   async saveEvent(calendarId, ev, eventId) {

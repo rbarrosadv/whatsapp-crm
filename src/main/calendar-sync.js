@@ -3,8 +3,14 @@
 // de horário feitas no Google (celular, site…).
 import * as db from './db.js';
 
-/** Cor das audiências no Google Agenda: "Banana" (colorId 5 da paleta de eventos do Google). */
-export const HEARING_COLOR = '5';
+/**
+ * Cores fixas no Google Agenda (colorId da paleta de eventos do Google): audiência
+ * "Banana" (5), prazo "Tomate" (11), reunião "Sálvia" (2). Tarefa fica na cor da agenda.
+ */
+export const KIND_COLORS = { audiencia: '5', prazo: '11', reuniao: '2' };
+export const HEARING_COLOR = KIND_COLORS.audiencia;
+/** Muda quando as cores mudam: o servidor recolore uma vez os eventos que já estavam no Google. */
+export const COLORS_VERSION = 'audiencia5-prazo11-reuniao2';
 
 const KIND = {
   prazo: { icon: '⚠️', label: 'Prazo', minutes: 30 },
@@ -35,8 +41,8 @@ export function taskToEvent(t) {
     allDay: false,
     taskId: t.id,
     location: t.place || undefined,
-    // audiências sempre em amarelo-banana; os outros ficam na cor da agenda
-    colorId: t.kind === 'audiencia' ? HEARING_COLOR : undefined,
+    // audiência banana, prazo tomate, reunião sálvia; tarefa na cor da agenda
+    colorId: KIND_COLORS[t.kind],
   };
 }
 

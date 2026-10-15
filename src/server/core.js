@@ -14,7 +14,7 @@ import * as auth from './auth.js';
 import { WhatsAppService } from '../main/whatsapp.js';
 import { DemoWhatsAppService, DemoGoogleService } from '../main/demo.js';
 import { GoogleService } from '../main/google.js';
-import { CalendarSync, HEARING_COLOR } from '../main/calendar-sync.js';
+import { CalendarSync, KIND_COLORS, COLORS_VERSION } from '../main/calendar-sync.js';
 import { webmToOgg } from '../main/ogg.js';
 import { diagnoseConnection } from '../main/diag.js';
 import { DocsService, guessRoot, templateValues, PLACEHOLDERS, FOLDERS, safeRel } from '../main/docs.js';
@@ -483,19 +483,20 @@ export async function createCore({ dataDir, demo = false, version = '', safeStor
   });
   const calSync = new CalendarSync({ google, getSettings: () => settings, onChange: () => send('tasks:changed', null) });
   /**
-   * Audiências que já estavam no Google antes da cor padrão: reenvia uma vez (em
-   * fila, uma por vez) para ficarem em amarelo-banana. Guarda a cor aplicada.
+   * Audiências, prazos e reuniões que já estavam no Google antes das cores fixas:
+   * reenvia uma vez (em fila, uma por vez) para ganharem a cor. Guarda a versão.
    */
   async function recolorHearings() {
-    if (!calSync.enabled() || settings.gcalHearingColor === HEARING_COLOR) return 0;
-    const ids = db.all("SELECT id FROM tasks WHERE kind = 'audiencia' AND gcal_event_id IS NOT NULL AND COALESCE(end_at, due_at) > ?", Date.now() - DAY).map((r) => r.id);
+    if (!calSync.enabled() || settings.gcalHearingColor === COLORS_VERSION) return 0;
+    const kinds = Object.keys(KIND_COLORS).map((k) => `'${k}'`).join(', ');
+    const ids = db.all(`SELECT id FROM tasks WHERE kind IN (${kinds}) AND gcal_event_id IS NOT NULL AND COALESCE(end_at, due_at) > ?`, Date.now() - DAY).map((r) => r.id);
     let n = 0;
     for (const id of ids) {
       try { await calSync.syncTask(id); n++; } catch (e) { console.error('google: cor da audiência', id, e.message); }
       await new Promise((r) => setTimeout(r, 300));
     }
-    db.setSetting('gcalHearingColor', HEARING_COLOR);
-    settings.gcalHearingColor = HEARING_COLOR;
+    db.setSetting('gcalHearingColor', COLORS_VERSION);
+    settings.gcalHearingColor = COLORS_VERSION;
     return n;
   }
   setTimeout(() => recolorHearings().catch(() => {}), 20000).unref?.();
