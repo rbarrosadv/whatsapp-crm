@@ -82,6 +82,7 @@ export class DemoWhatsAppService extends WhatsAppService {
 
   async start() {
     this.stopped = false;
+    if (this.bridgeBlocked()) return;
     if (this.hasSession()) {
       this.setStatus({ state: 'connecting', registered: true, qr: null });
       this.later(() => this.connected(false), 600);

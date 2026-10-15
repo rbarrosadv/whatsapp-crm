@@ -51,9 +51,12 @@ export async function bootstrap() {
   state.dataDir = b.dataDir;
   state.version = b.version;
   state.canRestore = b.canRestore;
+  state.bridge = b.bridge || null;
   setChats(b.chats);
 
   window.api.on('wa:status', (s) => { state.status = s; emit('status', s); });
+  // computador do escritório por onde o WhatsApp sai (ponte)
+  window.api.on('wa:bridge', (b) => { state.bridge = b; emit('bridge', b); emit('status', state.status); });
   window.api.on('wa:history', (h) => { state.history = h; emit('history', h); });
   window.api.on('chats:changed', ({ chats, removed }) => {
     for (const c of chats) state.chats.set(c.jid, c);
@@ -111,6 +114,7 @@ export async function bootstrap() {
     try {
       const fresh = await api('bootstrap');
       state.status = fresh.status;
+      state.bridge = fresh.bridge || null;
       state.viewers = fresh.viewers || [];
       setChats(fresh.chats);
       emit('status', state.status);

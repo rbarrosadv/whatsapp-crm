@@ -612,6 +612,7 @@ test('fotos de perfil: uma consulta por vez ao WhatsApp, sem repetir a mesma', a
   let max = 0;
   let calls = 0;
   s.state = { state: 'open' };
+  s.autoAvatars = true; // opção do escritório "buscar as fotos sozinho"
   s.sock = { profilePictureUrl: async () => { calls++; active++; max = Math.max(max, active); await new Promise((r) => setTimeout(r, 5)); active--; return null; } };
   const orig = global.setTimeout;
   const jids = ['5511900000001@s.whatsapp.net', '5511900000002@s.whatsapp.net'];
@@ -637,4 +638,77 @@ test('busca: abrir a conversa no ponto da mensagem encontrada', () => {
   assert.equal(r.hasNewer, true, 'há mais novas para carregar ao rolar');
   assert.equal(db.messagesAround(J, 'AR100').hasNewer, false);
   assert.deepEqual(db.messagesAround(J, 'NAO'), { messages: [], hasNewer: false });
+});
+
+test('número suspenso (402): para de vez, sem tentar de novo sozinho', async () => {
+  const auth = path.join(dir, 'auth');
+  fs.mkdirSync(auth, { recursive: true });
+  fs.writeFileSync(path.join(auth, 'creds.json'), JSON.stringify({ me: { id: '5511@s.whatsapp.net' }, account: {} }));
+  const fake = { end() {} };
+  wa.sock = fake; wa.stopped = false;
+  clearTimeout(wa.reconnectTimer);
+  wa.reconnectTimer = null;
+  await wa.onConnectionUpdate(fake, { connection: 'close', lastDisconnect: { error: { message: 'suspended', output: { statusCode: 402 }, data: { expire: 7200 } } } });
+  assert.equal(wa.getStatus().state, 'suspended');
+  assert.match(wa.getStatus().error, /suspendeu este número \(por cerca de 2 h\)/);
+  assert.equal(wa.reconnectTimer, null, 'nenhuma reconexão agendada');
+  assert.ok(fs.existsSync(path.join(auth, 'creds.json')), 'sessão mantida');
+  await wa.stop();
+});
+
+test('QR code que ninguém lê: pausa depois de algumas rodadas', async () => {
+  fs.rmSync(path.join(dir, 'auth'), { recursive: true, force: true });
+  wa.qrRounds = 0;
+  const close = async () => {
+    const fake = { end() {} };
+    wa.sock = fake; wa.stopped = false;
+    await wa.onConnectionUpdate(fake, { connection: 'close', lastDisconnect: { error: { message: 'QR refs attempts ended', output: { statusCode: 408 } } } });
+  };
+  for (let i = 0; i < 3; i++) { await close(); assert.equal(wa.getStatus().state, 'starting'); }
+  clearTimeout(wa.reconnectTimer);
+  wa.reconnectTimer = null;
+  await close();
+  assert.equal(wa.getStatus().state, 'paused');
+  assert.equal(wa.reconnectTimer, null, 'não gera QR sozinho');
+  await wa.stop();
+});
+
+test('fotos de perfil automáticas desligadas: não consulta o WhatsApp', async () => {
+  const s = new WhatsAppService({ dataDir: dir, logFile: path.join(dir, 'logs', 'av2.log') });
+  let calls = 0;
+  s.state = { state: 'open' };
+  s.sock = { profilePictureUrl: async () => { calls++; return null; } };
+  const jid = '5511900000009@s.whatsapp.net';
+  db.upsertChat({ jid, name: jid });
+  assert.equal(await s.avatar(jid), null);
+  assert.equal(calls, 0);
+});
+
+test('pela ponte do escritório: sem o computador, espera em vez de conectar direto', async () => {
+  const { EventEmitter } = await import('node:events');
+  const s = new WhatsAppService({ dataDir: dir, logFile: path.join(dir, 'logs', 'ponte.log') });
+  const bridge = Object.assign(new EventEmitter(), { up: false, agent: () => ({}), dispatcher: () => ({}) });
+  let criados = 0;
+  s.pickVersion = async () => [2, 3000, 1];
+  s.createSocket = (cfg) => {
+    criados++;
+    assert.ok(cfg.agent, 'WebSocket pela ponte');
+    assert.ok(cfg.options?.dispatcher, 'mídia pela ponte');
+    assert.equal(cfg.syncFullHistory, false);
+    return { ev: new EventEmitter(), ws: new EventEmitter(), end() {} };
+  };
+  s.useBridge(bridge, 'escritorio');
+  await s.start();
+  assert.equal(s.getStatus().state, 'waiting_bridge');
+  assert.equal(criados, 0);
+  bridge.up = true;
+  s.onBridge(true);
+  await new Promise((r) => setTimeout(r, 20));
+  assert.equal(criados, 1);
+  bridge.up = false;
+  s.onBridge(false);
+  assert.equal(s.getStatus().state, 'waiting_bridge');
+  await s.stop();
+  clearTimeout(s.watchdog);
+  fs.rmSync(path.join(dir, 'auth', 'perfil.json'), { force: true });
 });

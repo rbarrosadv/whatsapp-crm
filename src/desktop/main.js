@@ -6,10 +6,13 @@
 // - local: liga o servidor neste mesmo computador (dados em
 //   %APPDATA%\BarrosAssociados\dados) e abre ele.
 import {
-  app, BrowserWindow, ipcMain, shell, Tray, Menu, nativeImage, powerMonitor, safeStorage, session, dialog, screen,
+  app, BrowserWindow, ipcMain, shell, Tray, Menu, nativeImage, powerMonitor, powerSaveBlocker, safeStorage, session, dialog, screen,
 } from 'electron';
 import path from 'node:path';
 import fs from 'node:fs';
+import os from 'node:os';
+import { WebSocket } from 'ws';
+import { runBridgeClient } from '../main/bridge.js';
 import { fileURLToPath } from 'node:url';
 import { listCerts, signCms } from './certificados.js';
 
@@ -226,11 +229,50 @@ async function openSystem() {
     // (senão o WhatsApp ficaria conectado em dois lugares com dados diferentes)
     if (local) { const srv = local; local = null; await srv.close().catch(() => {}); }
     baseUrl = config.url.replace(/\/+$/, '');
+    if (!bridgeClient) startBridge();
   } else {
     showSetup();
     return;
   }
   win.loadURL(`${baseUrl}/`);
+}
+
+// ------------------------------------------------------------ ponte do WhatsApp
+// Este computador pode ser o "caminho" do WhatsApp do escritório até a internet
+// (o servidor fica num data center, e o WhatsApp desconfia de conexões de lá).
+// Um sócio escolhe o computador em Ajustes; a chave fica cifrada em desktop.json.
+
+let bridgeClient = null;
+let bridgeState = { up: false, error: null };
+let sleepBlocker = null;
+
+function bridgeToken() {
+  const b = config.waBridge;
+  if (!b?.token) return null;
+  try {
+    return b.enc ? safeStorage.decryptString(Buffer.from(b.token, 'base64')) : b.token;
+  } catch { return null; }
+}
+
+function stopBridge() {
+  bridgeClient?.stop();
+  bridgeClient = null;
+  bridgeState = { up: false, error: null };
+  if (sleepBlocker != null) { powerSaveBlocker.stop(sleepBlocker); sleepBlocker = null; }
+}
+
+function startBridge() {
+  stopBridge();
+  if (config.mode !== 'remote' || !config.url || !config.waBridge) return;
+  const token = bridgeToken();
+  if (!token) return;
+  bridgeClient = runBridgeClient({
+    url: config.url, token, name: config.waBridge.name || os.hostname(), WebSocket,
+    onStatus: (st) => { bridgeState = st; tray?.setToolTip(st.up ? `${NAME} — WhatsApp do escritório por este computador` : NAME); },
+    log: (m) => console.warn(m),
+  });
+  // o computador não pode dormir: o WhatsApp do escritório passa por ele
+  sleepBlocker = powerSaveBlocker.start('prevent-app-suspension');
 }
 
 // ------------------------------------------------------------ abrir / salvar arquivos do servidor
@@ -346,9 +388,31 @@ ipcMain.handle('desktop', async (_e, action, ...args) => {
       }
       config.mode = mode === 'remote' ? 'remote' : 'local';
       saveConfig();
+      stopBridge();
       await openSystem();
       return null;
     }
+    // ponte do WhatsApp (só no modo servidor do escritório)
+    case 'bridge:get': return {
+      available: config.mode === 'remote', enabled: !!config.waBridge, name: config.waBridge?.name || os.hostname(), ...bridgeState,
+    };
+    case 'bridge:enable': {
+      const token = String(args[0] || '');
+      if (config.mode !== 'remote' || !token) throw new Error('Só no app ligado ao servidor do escritório.');
+      const enc = safeStorage.isEncryptionAvailable();
+      config.waBridge = {
+        token: enc ? safeStorage.encryptString(token).toString('base64') : token, enc,
+        name: String(args[1] || os.hostname()).slice(0, 60),
+      };
+      // precisa estar sempre aberto: abre com o Windows e fica perto do relógio ao fechar
+      config.openAtLogin = true;
+      config.minimizeToTray = true;
+      saveConfig();
+      applyLoginItem();
+      startBridge();
+      return true;
+    }
+    case 'bridge:disable': config.waBridge = null; saveConfig(); stopBridge(); return true;
     case 'setup:retry': await openSystem(); return null;
     case 'setup:change': showSetup(); return null;
     default: throw new Error(`ação desconhecida: ${action}`);
@@ -456,7 +520,7 @@ app.whenReady().then(async () => {
   await openSystem();
 });
 
-app.on('before-quit', () => { quitting = true; });
+app.on('before-quit', () => { quitting = true; stopBridge(); });
 app.on('window-all-closed', () => {
   if (process.platform !== 'darwin' || quitting) app.quit();
 });

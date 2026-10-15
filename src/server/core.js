@@ -12,6 +12,7 @@ import { fileURLToPath } from 'node:url';
 import * as db from '../main/db.js';
 import * as auth from './auth.js';
 import { WhatsAppService } from '../main/whatsapp.js';
+import { Bridge } from '../main/bridge.js';
 import { DemoWhatsAppService, DemoGoogleService } from '../main/demo.js';
 import { GoogleService } from '../main/google.js';
 import { CalendarSync, KIND_COLORS, COLORS_VERSION } from '../main/calendar-sync.js';
@@ -52,7 +53,7 @@ export const USER_KEYS = ['notifications', 'notificationPreview', 'theme', 'last
   'lastFilter', 'agendaHidden', 'agendaView', 'agendaHours', 'discreet', 'discreetMessages', 'spellcheck', 'wordSuggest', 'autocorrect', 'notifyCourts', 'pushKinds'];
 export const OFFICE_KEYS = ['sendReadReceipts', 'forgottenHours', 'chargeTemplate', 'pixKey', 'paymentNoticeDays',
   'staleCaseDays', 'googleSync', 'googleCalendarId', 'signMessages', 'docsRoot', 'docsRequestTemplate', 'datajudKey',
-  'officeName', 'officeDoc', 'officeAddress', 'officeCity', 'proposalTemplate', 'proposalValidDays', 'prescriptionYears', 'clientUpdateTemplate', 'idleCaseDays', 'waSaveContacts', 'docsMode',
+  'officeName', 'officeDoc', 'officeAddress', 'officeCity', 'proposalTemplate', 'proposalValidDays', 'prescriptionYears', 'clientUpdateTemplate', 'idleCaseDays', 'waSaveContacts', 'waPhotos', 'docsMode',
   'receiptSigner', 'receiptSignMode', 'courtsNotifyAll', 'docsOcr', 'phaseConfig', 'internalDays', 'secretCheckDays', 'monthlySummaryTemplate', 'portalFaq', 'googleReviewUrl'];
 
 export const DEFAULT_CHARGE_TEMPLATE = 'Olá, {nome}! Tudo bem? Passando para lembrar da {parcela} dos honorários referentes a {caso}, '
@@ -302,6 +303,42 @@ export async function createCore({ dataDir, demo = false, version = '', safeStor
 
   const Service = demo ? DemoWhatsAppService : WhatsAppService;
   const wa = new Service({ dataDir, logFile: path.join(dataDir, 'logs', 'whatsapp.log') });
+
+  // ---------------------------------------------------- ponte do escritório
+  // O WhatsApp sai pela internet de um computador do escritório (app de desktop),
+  // não pelo data center do servidor. Ver src/main/bridge.js.
+  const bridge = new Bridge();
+  const sha256 = (t) => crypto.createHash('sha256').update(String(t)).digest('hex');
+  const bridgeStatus = () => {
+    const b = bridge.status();
+    return {
+      via: wa.via, configured: !!settings.waBridgeHash, up: b.up,
+      name: b.name || settings.waBridgeName || null, ip: b.ip || null, since: b.up ? b.since : null, lastSeen: b.lastSeen || null,
+    };
+  };
+  bridge.on('up', () => {
+    wa.logger.warn({ ponte: bridge.status() }, 'computador do escritório ligado (ponte do WhatsApp)');
+    send('wa:bridge', bridgeStatus());
+    wa.onBridge(true);
+  });
+  bridge.on('down', (why) => {
+    wa.logger.warn({ motivo: why }, 'computador do escritório desligado (ponte do WhatsApp)');
+    send('wa:bridge', bridgeStatus());
+    wa.onBridge(false);
+  });
+  /** Rota /bridge: só o computador que um sócio escolheu (chave guardada só em hash). */
+  function bridgeTokenOk(token) {
+    if (!settings.waBridgeHash || !token) return false;
+    const a = Buffer.from(sha256(token));
+    const b = Buffer.from(String(settings.waBridgeHash));
+    return a.length === b.length && crypto.timingSafeEqual(a, b);
+  }
+  function bridgeAttach(ws, { token, name, ip } = {}) {
+    if (!bridgeTokenOk(token)) return false;
+    bridge.attach(ws, { name: name || settings.waBridgeName || 'Computador do escritório', ip: ip || null });
+    return true;
+  }
+  const setOffice = (key, value) => { settings[key] = value; db.setSetting(key, value); };
 
   // ---------------------------------------------------- quem está vendo o quê
   // Uma entrada por janela aberta: conversa aberta, se a janela está em foco.
@@ -1609,7 +1646,7 @@ export async function createCore({ dataDir, demo = false, version = '', safeStor
 
   /** Configurações vistas por uma pessoa: as do escritório + as preferências dela. */
   function settingsFor(user) {
-    const { windowBounds, windowMaximized, trayHintShown, ...office } = settings;
+    const { windowBounds, windowMaximized, trayHintShown, waBridgeHash, ...office } = settings;
     return { ...office, ...auth.userPrefs(user.id) };
   }
 
@@ -1623,7 +1660,10 @@ export async function createCore({ dataDir, demo = false, version = '', safeStor
   const forMoney = (ctx, v) => (auth.can(ctx.user.role, 'finance:list') ? v : auth.stripMoney(v));
   const who = (ctx) => ctx.user?.name || null;
 
-  const applySettings = () => { wa.sendReadReceipts = settings.sendReadReceipts !== false; };
+  const applySettings = () => {
+    wa.sendReadReceipts = settings.sendReadReceipts !== false;
+    wa.autoAvatars = settings.waPhotos === true;
+  };
 
   // ---------------------------------------------------- API
   // Todo método recebe `ctx` ({user, conn}) e depois os argumentos da interface.
@@ -1633,6 +1673,7 @@ export async function createCore({ dataDir, demo = false, version = '', safeStor
       me: auth.publicUser(ctx.user),
       can: auth.capabilities(ctx.user.role),
       status: wa.getStatus(),
+      bridge: bridgeStatus(),
       chats: db.listChats(),
       pipelines: db.listPipelines(),
       tags: db.listTags(),
@@ -1648,6 +1689,32 @@ export async function createCore({ dataDir, demo = false, version = '', safeStor
     'wa:logout': () => wa.logout(),
     'wa:reconnect': () => wa.reconnectNow(),
     'wa:status': () => wa.getStatus(),
+    'wa:bridge': () => bridgeStatus(),
+    // um sócio escolhe o computador do escritório por onde o WhatsApp sai; a chave
+    // vai só para o app de desktop daquele computador (aqui fica o hash)
+    'wa:bridgeEnable': async (ctx, name) => {
+      const token = crypto.randomBytes(32).toString('base64url');
+      setOffice('waBridgeHash', sha256(token));
+      setOffice('waBridgeName', String(name || 'Computador do escritório').slice(0, 60));
+      setOffice('waVia', 'escritorio');
+      bridge.close('trocada');
+      await wa.stop();
+      wa.useBridge(bridge, 'escritorio');
+      await wa.start();
+      wa.logger.warn({ quem: who(ctx), computador: settings.waBridgeName }, 'computador do escritório escolhido para o WhatsApp');
+      send('wa:bridge', bridgeStatus());
+      return { token, status: bridgeStatus() };
+    },
+    // volta a conectar direto do servidor (não recomendado: data center)
+    'wa:bridgeDisable': async () => {
+      setOffice('waVia', 'direto');
+      setOffice('waBridgeHash', null);
+      bridge.close('desligada');
+      wa.useBridge(bridge, 'direto');
+      send('wa:bridge', bridgeStatus());
+      await wa.reconnectNow();
+      return bridgeStatus();
+    },
     'wa:reset': () => wa.reset(),
     'wa:repair': () => wa.repair(),
     'wa:diagnose': async () => {
@@ -3317,6 +3384,7 @@ export async function createCore({ dataDir, demo = false, version = '', safeStor
   }
 
   applySettings();
+  wa.useBridge(bridge, settings.waVia);
   wa.logger.warn({ versaoApp: version, dados: dataDir, node: process.versions.node }, 'sistema iniciado');
   wa.start().catch((e) => {
     console.error(e);
@@ -3325,7 +3393,7 @@ export async function createCore({ dataDir, demo = false, version = '', safeStor
   });
 
   return {
-    events, api, call, dropConn, backupFile, resolveMedia, wa, google, docs, dataDir, demo, lookup, courts, onedrive, relay, courtsFetch, portalData, portalConfirm, portalRate,
+    events, api, call, dropConn, backupFile, resolveMedia, wa, bridge, bridgeAttach, bridgeTokenOk, google, docs, dataDir, demo, lookup, courts, onedrive, relay, courtsFetch, portalData, portalConfirm, portalRate,
     /** Volta do login da Microsoft (rota /onedrive/callback). */
     async onedriveCallback(code, state) {
       await onedrive.finish(code, state);

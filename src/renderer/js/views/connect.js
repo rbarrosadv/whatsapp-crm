@@ -22,7 +22,34 @@ export function mountConnect(overlay, banner) {
   render();
 }
 
+/** Avisos no lugar do QR: computador do escritório desligado, número suspenso, QR pausado. */
+function holdCard(s) {
+  const b = state.bridge || {};
+  if (s.state === 'waiting_bridge') {
+    return h('div', { class: 'connect-card hold' }, h('div', { class: 'connect-text' },
+      h('h1', null, [icon('monitor', 22), ' Aguardando o computador do escritório']),
+      h('p', null, `O WhatsApp do escritório se conecta pela internet do escritório, pelo computador ${b.name ? `“${b.name}”` : 'escolhido'}. Ligue esse computador e abra o Barros Associados nele.`),
+      h('p', { class: 'muted small' }, 'Enquanto isso, o resto do sistema funciona normalmente. As mensagens chegam no celular e entram aqui quando o computador voltar.')));
+  }
+  if (s.state === 'suspended') {
+    return h('div', { class: 'connect-card hold' }, h('div', { class: 'connect-text' },
+      h('h1', null, [icon('alert', 22), ' Número suspenso pelo WhatsApp']),
+      h('div', { class: 'alert' }, s.error || ''),
+      h('p', { class: 'muted small' }, 'No celular, abra o WhatsApp: se aparecer "Solicitar análise", explique que é o número de um escritório de advocacia que fala com os próprios clientes. Não reinstale o WhatsApp.'),
+      state.can.admin ? h('div', { class: 'row' }, h('button', { class: 'btn', onclick: () => api('wa:reconnect').catch(errToast) }, 'Tentar de novo')) : null));
+  }
+  if (s.state === 'paused') {
+    return h('div', { class: 'connect-card hold' }, h('div', { class: 'connect-text' },
+      h('h1', null, 'Conecte seu WhatsApp'),
+      h('p', null, s.notice || 'A conexão está pausada.'),
+      h('div', { class: 'row' }, h('button', { class: 'btn btn-primary', onclick: () => api('wa:reset').catch(errToast) }, 'Mostrar o QR code'))));
+  }
+  return null;
+}
+
 function renderOverlay(el, s) {
+  const hold = holdCard(s);
+  if (hold) { fill(el, hold); return; }
   // não redesenha enquanto a pessoa digita o número
   if (el.contains(document.activeElement) && document.activeElement.tagName === 'INPUT') {
     el.querySelector('.connect-error')?.replaceWith(errorBox(s));
@@ -125,6 +152,13 @@ function renderBanner(el, s) {
         },
       }, [icon('smartphone', 15), 'Conectar de novo (QR code)']) : null,
       h('button', { class: 'btn btn-sm', onclick: runDiagnosis }, [icon('activity', 15), 'Testar conexão']));
+  } else if (s.state === 'waiting_bridge') {
+    const b = state.bridge || {};
+    content = h('div', { class: 'banner warn' }, icon('monitor', 15, 'inline'),
+      `WhatsApp aguardando o computador do escritório${b.name ? ` (${b.name})` : ''}: ligue-o e abra o Barros Associados nele.`);
+  } else if (s.state === 'suspended') {
+    content = h('div', { class: 'banner warn' }, icon('alert', 15, 'inline'), s.error || statusLabel(s.state),
+      state.can.admin ? h('button', { class: 'btn btn-sm', onclick: () => api('wa:reconnect').catch(errToast) }, 'Tentar de novo') : null);
   } else if (s.state === 'replaced') {
     content = h('div', { class: 'banner warn' }, icon('alert', 15, 'inline'), s.error || statusLabel(s.state),
       h('button', { class: 'btn btn-sm', onclick: () => api('wa:reconnect') }, 'Usar aqui'));

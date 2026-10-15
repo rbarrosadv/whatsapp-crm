@@ -21,6 +21,12 @@ contextBridge.exposeInMainWorld('desktop', {
   openNotificationSettings: () => call('openNotificationSettings'),
   // busca nos tribunais por este computador (Plano B, só endereços do CNJ)
   courtFetch: (req) => call('courtFetch', req),
+  // ponte do WhatsApp: o WhatsApp do escritório sai pela internet deste computador
+  bridge: {
+    get: () => call('bridge:get'),
+    enable: (token, name) => call('bridge:enable', token, name),
+    disable: () => call('bridge:disable'),
+  },
   // certificado digital A3 (token/cartão) deste computador
   certs: {
     list: () => call('certs:list'),

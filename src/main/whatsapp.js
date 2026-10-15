@@ -79,6 +79,12 @@ export class WhatsAppService extends EventEmitter {
     // (o servidor troca por uma função que olha todas as janelas abertas)
     this.isViewing = () => false;
     this.sendReadReceipts = true;
+    // fotos de perfil buscadas sozinhas (lista de conversas); desligado = só ao clicar
+    this.autoAvatars = false;
+    // por onde a conexão sai: 'direto' (deste servidor) ou 'escritorio' (pela ponte
+    // do app de desktop de um computador do escritório — ver bridge.js)
+    this.via = 'direto';
+    this.bridge = null;
     this.changedChats = new Set();
     this.flushTimer = null;
     this.stopped = false;
@@ -99,6 +105,51 @@ export class WhatsAppService extends EventEmitter {
   }
 
   getStatus() { return this.state; }
+
+  // ------------------------------------------------- ponte do escritório
+
+  /** Liga/desliga a saída pelo computador do escritório (bridge.js). */
+  useBridge(bridge, via) {
+    this.bridge = bridge;
+    this.via = via === 'escritorio' && bridge ? 'escritorio' : 'direto';
+  }
+
+  /** Pela ponte e o computador do escritório está desligado: espera, sem tentar direto. */
+  bridgeBlocked() {
+    if (this.via !== 'escritorio' || this.bridge?.up) return false;
+    clearTimeout(this.watchdog);
+    clearTimeout(this.reconnectTimer);
+    this.setStatus({
+      state: 'waiting_bridge', registered: this.hasSession(), qr: null, pairingCode: null, error: null,
+    });
+    return true;
+  }
+
+  /** O computador do escritório ligou/desligou a ponte. */
+  onBridge(up) {
+    if (this.via !== 'escritorio') return;
+    if (up) {
+      if (this.state.state === 'waiting_bridge') this.start().catch((e) => this.setStatus({ state: 'reconnecting', error: e.message }));
+    } else if (!['suspended', 'paused'].includes(this.state.state)) {
+      // as conexões que passavam pela ponte caem sozinhas; aqui só para de tentar
+      this.startGen = (this.startGen || 0) + 1;
+      try { this.sock?.end(undefined); } catch { /* ignore */ }
+      this.sock = null;
+      this.bridgeBlocked();
+    }
+  }
+
+  /** Opções de rede do Baileys (WebSocket, envio de mídia, fetch). */
+  netConfig() {
+    if (this.via !== 'escritorio' || !this.bridge) return {};
+    const agent = this.bridge.agent();
+    return { agent, fetchAgent: agent, options: { dispatcher: this.bridge.dispatcher() } };
+  }
+
+  /** Para o fetch (fotos, versão do WhatsApp Web). */
+  fetchInit() {
+    return this.via === 'escritorio' && this.bridge ? { dispatcher: this.bridge.dispatcher() } : {};
+  }
 
   /** true só quando o celular já confirmou a conexão (não basta existir o arquivo). */
   hasSession() {
@@ -133,6 +184,7 @@ export class WhatsAppService extends EventEmitter {
   async start() {
     this.stopped = false;
     clearTimeout(this.reconnectTimer);
+    if (this.bridgeBlocked()) return;
     // cada start() tem um número; se outro começar no meio (ex.: o notebook acordou e
     // o timer de reconexão e o aviso de "voltou da suspensão" chegaram juntos), este
     // desiste — duas conexões com a mesma sessão se atrapalham e as mensagens param
@@ -141,7 +193,7 @@ export class WhatsAppService extends EventEmitter {
     const registered = this.hasSession();
     // sessão incompleta (QR nunca lido): começa do zero pra gerar QR novo
     if (!registered) this.clearAuth();
-    this.setStatus({ state: registered ? 'connecting' : 'starting', registered, qr: null, pairingCode: null, error: registered ? null : this.state.error });
+    this.setStatus({ state: registered ? 'connecting' : 'starting', registered, qr: null, pairingCode: null, paused: false, error: registered ? null : this.state.error });
 
     const { state, saveCreds } = await useMultiFileAuthState(this.authDir);
     if (superseded()) return;
@@ -180,8 +232,12 @@ export class WhatsAppService extends EventEmitter {
       auth: { creds: state.creds, keys: makeCacheableSignalKeyStore(state.keys, this.logger) },
       logger: this.logger,
       browser,
-      syncFullHistory: true,
+      // só o histórico recente, como um WhatsApp Web comum (o completo, de uma vez,
+      // é a maior carga que se pode pedir ao WhatsApp); o resto vem por conversa
+      // ("carregar mais antigas")
+      syncFullHistory: false,
       markOnlineOnConnect: false,
+      ...this.netConfig(),
       generateHighQualityLinkPreview: false,
       getMessage: async (key) => this.lookupRaw(key)?.message || undefined,
       shouldSyncHistoryMessage: () => true,
@@ -302,6 +358,7 @@ export class WhatsAppService extends EventEmitter {
       this.failedPairing = 0;
       this.profileShift = 0;
       this.deadSession = 0;
+      this.qrRounds = 0;
       // o perfil que funcionou é o da sessão; reconexões precisam usar o mesmo
       this.saveBrowserIndex(this.lastBrowser ?? 0);
       // arquivos de clientes que chegaram enquanto o app estava fechado
@@ -318,6 +375,8 @@ export class WhatsAppService extends EventEmitter {
       }, 'conexão fechada');
       this.sock = null;
       if (this.stopped) return;
+      // caiu porque o computador do escritório desligou: espera ele voltar
+      if (this.bridgeBlocked()) return;
       if (code === DisconnectReason.loggedOut) {
         // desconectado pelo celular: apaga a sessão e pede QR de novo
         this.clearAuth();
@@ -348,23 +407,38 @@ export class WhatsAppService extends EventEmitter {
               + 'foi reinstalado ou trocado de aparelho, quando o aparelho foi removido em "Dispositivos conectados" ou quando o '
               + 'número foi restrito. Confira se o WhatsApp abre normalmente no celular e leia o QR code de novo — as conversas '
               + 'já salvas continuam aqui.',
+            paused: true,
           });
-          this.scheduleReconnect(500);
+          // não gera QR sozinho: tentar de novo logo depois de uma recusa é o que o
+          // WhatsApp vê como insistência; um sócio clica em "Mostrar o QR code".
         }
       } else if (code === 402) {
-        // suspensão temporária do número: não fica batendo na porta
+        // número suspenso: para de vez. Insistir durante a suspensão pesa contra o
+        // número; um sócio tenta de novo pelo botão quando o celular voltar ao normal
         const until = Number(lastDisconnect?.error?.data?.expire) || 0;
         this.setStatus({
-          state: 'reconnecting',
-          error: `O WhatsApp suspendeu este número temporariamente${until ? ` (por cerca de ${Math.ceil(until / 3600)} h)` : ''}. `
-            + 'Abra o WhatsApp no celular para ver o aviso. O sistema tenta de novo em 30 minutos.',
-          retryIn: 1800e3,
+          state: 'suspended',
+          error: `O WhatsApp suspendeu este número${until ? ` (por cerca de ${Math.ceil(until / 3600)} h)` : ''}. `
+            + 'Abra o WhatsApp no celular para ver o aviso e pedir a análise. O sistema não tenta mais sozinho: '
+            + 'quando o celular voltar ao normal, espere alguns dias e use "Tentar de novo".',
+          retryIn: null,
         });
-        this.scheduleReconnect(1800e3);
       } else if (!this.hasSession()) {
         // ainda não conectou nenhuma vez: descarta a tentativa e gera QR novo
         this.failedPairing++;
+        this.qrRounds = (this.qrRounds || 0) + 1;
         this.clearAuth();
+        // ninguém leu o QR em alguns minutos: para de gerar (cada QR é uma conexão
+        // nova com o WhatsApp); "Mostrar o QR code" recomeça
+        if (this.qrRounds >= 4) {
+          this.qrRounds = 0;
+          this.setStatus({
+            state: 'paused', qr: null, pairingCode: null, registered: false,
+            notice: 'O QR code foi pausado porque ninguém o leu nos últimos minutos.',
+            error: null,
+          });
+          return;
+        }
         const delay = Math.min(15000, 1500 * this.failedPairing);
         this.setStatus({
           state: 'starting',
@@ -429,7 +503,7 @@ export class WhatsAppService extends EventEmitter {
       if (Array.isArray(v) && v.length === 3 && v.every(Number.isFinite) && !list.some((x) => x.join('.') === v.join('.'))) list.push(v);
     };
     try {
-      const r = await fetchLatestWaWebVersion({ signal: AbortSignal.timeout(6000) });
+      const r = await fetchLatestWaWebVersion({ signal: AbortSignal.timeout(6000), ...this.fetchInit() });
       if (!r?.error) add(r?.version);
     } catch { /* sem acesso ao site */ }
     try { add((await fetchLatestBaileysVersion({ signal: AbortSignal.timeout(6000) }))?.version); } catch { /* ignore */ }
@@ -477,6 +551,7 @@ export class WhatsAppService extends EventEmitter {
     this.failedPairing = 0;
     this.profileShift = 0;
     this.versionIndex = 0;
+    this.qrRounds = 0;
     this.setStatus({ state: 'starting', registered: false, me: null, error: null, suggestRepair: false });
     await this.start();
   }
@@ -489,7 +564,8 @@ export class WhatsAppService extends EventEmitter {
     try { this.sock?.end(undefined); } catch { /* ignore */ }
     this.sock = null;
     this.retry = 0;
-    this.setStatus({ error: null });
+    this.qrRounds = 0;
+    this.setStatus({ error: null, notice: null });
     await this.start();
   }
 
@@ -998,7 +1074,7 @@ export class WhatsAppService extends EventEmitter {
     let msg = rawToMessage(m.raw);
     let buf;
     try {
-      buf = await downloadMediaMessage(msg, 'buffer', {}, { logger: this.logger, reuploadRequest: (x) => sock.updateMediaMessage(x) });
+      buf = await downloadMediaMessage(msg, 'buffer', this.mediaOpts(), { logger: this.logger, reuploadRequest: (x) => sock.updateMediaMessage(x) });
     } catch (e) {
       // link vencido: o Baileys só pede o reenvio quando o erro tem .status, mas o
       // erro dele vem com output.statusCode — então pedimos aqui ao celular um link novo
@@ -1016,7 +1092,7 @@ export class WhatsAppService extends EventEmitter {
       } catch {
         throw new Error('O arquivo não está mais disponível no WhatsApp (nem no celular).');
       }
-      buf = await downloadMediaMessage(msg, 'buffer', {});
+      buf = await downloadMediaMessage(msg, 'buffer', this.mediaOpts());
       db.updateMessage(chatJid, id, { raw: JSON.stringify(msg, BufferJSON.replacer) });
     }
     const rel = path.join(safeName(chatJid), `${safeName(id)}.${extFor(m.media_mime, m.media_name)}`);
@@ -1027,9 +1103,16 @@ export class WhatsAppService extends EventEmitter {
     return rel;
   }
 
+  mediaOpts() {
+    const init = this.fetchInit();
+    return init.dispatcher ? { options: init } : {};
+  }
+
   async avatar(jid) {
     const c = db.getChat(jid);
     if (!c) return null;
+    // fotos automáticas desligadas: só a que já foi guardada (a grande, ao clicar, continua)
+    if (!this.autoAvatars) return c.avatar_file && fs.existsSync(path.join(this.mediaDir, c.avatar_file)) ? c.avatar_file : null;
     const dayMs = 24 * 3600 * 1000;
     if (c.avatar_file && fs.existsSync(path.join(this.mediaDir, c.avatar_file)) && Date.now() - c.avatar_checked_at < 7 * dayMs) {
       return c.avatar_file;
@@ -1075,7 +1158,7 @@ export class WhatsAppService extends EventEmitter {
     const run = async () => {
       try {
         const url = await this.sock?.profilePictureUrl(jid, 'image', 10000);
-        const res = url ? await fetch(url) : null;
+        const res = url ? await fetch(url, this.fetchInit()) : null;
         if (res?.ok) {
           fs.mkdirSync(path.dirname(abs), { recursive: true });
           fs.writeFileSync(abs, Buffer.from(await res.arrayBuffer()));
@@ -1095,7 +1178,7 @@ export class WhatsAppService extends EventEmitter {
     let rel = null;
     if (url) {
       try {
-        const res = await fetch(url);
+        const res = await fetch(url, this.fetchInit());
         if (res.ok) {
           const buf = Buffer.from(await res.arrayBuffer());
           rel = path.join('_avatars', `${safeName(jid)}.jpg`);

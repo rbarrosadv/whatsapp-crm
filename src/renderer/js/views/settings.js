@@ -23,6 +23,7 @@ export function mountSettings(el) {
     if (state.view === 'settings') render();
   });
   on('settings', () => state.view === 'settings' && render());
+  on('bridge', () => state.view === 'settings' && !root.contains(document.activeElement?.closest?.('input, textarea')) && render());
   on('me', () => state.view === 'settings' && render());
   on('users', () => state.view === 'settings' && render());
 }
@@ -30,7 +31,7 @@ export function mountSettings(el) {
 // configurações que valem para o escritório todo (só sócio muda)
 const OFFICE_KEYS = ['courtsNotifyAll', 'sendReadReceipts', 'forgottenHours', 'chargeTemplate', 'pixKey', 'paymentNoticeDays',
   'staleCaseDays', 'googleSync', 'googleCalendarId', 'signMessages', 'docsRequestTemplate', 'datajudKey',
-  'officeName', 'officeDoc', 'officeAddress', 'officeCity', 'idleCaseDays', 'prescriptionYears', 'clientUpdateTemplate', 'waSaveContacts', 'docsOcr', 'phaseConfig', 'internalDays', 'secretCheckDays', 'monthlySummaryTemplate', 'portalFaq', 'googleReviewUrl'];
+  'officeName', 'officeDoc', 'officeAddress', 'officeCity', 'idleCaseDays', 'prescriptionYears', 'clientUpdateTemplate', 'waSaveContacts', 'waPhotos', 'docsOcr', 'phaseConfig', 'internalDays', 'secretCheckDays', 'monthlySummaryTemplate', 'portalFaq', 'googleReviewUrl'];
 
 function toggle(key, label, hint, def = true) {
   const val = state.settings[key] ?? def;
@@ -331,6 +332,64 @@ function phasesSection() {
   return box;
 }
 
+/**
+ * Por onde o WhatsApp se conecta: pelo computador do escritório (ponte) ou
+ * direto do servidor. Um sócio escolhe, no app de desktop do computador que fica ligado.
+ */
+function bridgeBox() {
+  const b = state.bridge || {};
+  const box = h('div', { class: 'bridge-box' });
+  const draw = (local) => {
+    const mine = !!local?.enabled;
+    const via = b.via === 'escritorio';
+    const line = via
+      ? h('div', { class: 'conn-info' },
+        h('span', { class: `status-dot ${b.up ? 'ok' : 'warn'}` }),
+        h('div', null,
+          h('b', null, `Pelo computador do escritório: ${b.name || '—'}`),
+          h('div', { class: 'muted small' }, b.up
+            ? `Ligado${b.ip ? ` · internet ${b.ip}` : ''}${b.since ? ` · desde ${fmtDateTime(b.since)}` : ''}`
+            : `Desligado${b.lastSeen ? ` desde ${fmtDateTime(b.lastSeen)}` : ''} — o WhatsApp espera ele voltar (não conecta pelo servidor).`)))
+      : h('div', { class: 'conn-info' },
+        h('span', { class: 'status-dot warn' }),
+        h('div', null, h('b', null, 'Direto pelo servidor (data center)'),
+          h('div', { class: 'muted small' }, 'Não recomendado: o WhatsApp desconfia de conexões que saem de data center e pode suspender o número.')));
+    const canHere = state.can.admin && local?.available;
+    fill(box,
+      h('h4', null, 'Por onde o WhatsApp se conecta'),
+      line,
+      mine ? h('p', { class: 'muted small' }, icon('check', 13, 'inline'), ' Este é o computador do WhatsApp. Deixe-o ligado com o Barros Associados aberto (ele abre com o Windows e não deixa o computador dormir).') : null,
+      h('div', { class: 'row wrap' },
+        canHere && !mine ? h('button', {
+          class: 'btn btn-primary',
+          onclick: async () => {
+            if (!await confirmDialog(`Usar este computador (${local.name}) para o WhatsApp do escritório? Ele precisa ficar ligado, com o Barros Associados aberto, na internet do escritório. ${via ? 'O computador escolhido antes deixa de ser usado.' : ''}`, { okLabel: 'Usar este computador' })) return;
+            try {
+              const r = await api('wa:bridgeEnable', local.name);
+              await window.desktop.bridge.enable(r.token, local.name);
+              toast('Pronto: o WhatsApp passa a sair por este computador.');
+            } catch (e) { errToast(e); }
+          },
+        }, [icon('monitor', 15), 'Usar este computador para o WhatsApp']) : null,
+        state.can.admin && via ? h('button', {
+          class: 'btn',
+          onclick: async () => {
+            if (!await confirmDialog('Parar de usar o computador do escritório? O WhatsApp volta a conectar direto do servidor (data center), o que não é recomendado.', { okLabel: 'Conectar pelo servidor', danger: true })) return;
+            try {
+              await api('wa:bridgeDisable');
+              if (mine) await window.desktop.bridge.disable();
+            } catch (e) { errToast(e); }
+          },
+        }, 'Conectar direto pelo servidor') : null),
+      state.can.admin && !local?.available && !via
+        ? h('p', { class: 'muted small' }, 'Para escolher o computador, abra estes Ajustes no app de desktop (Barros Associados) do computador que vai ficar ligado no escritório.')
+        : null);
+  };
+  draw(null);
+  window.desktop?.bridge?.get().then(draw).catch(() => {});
+  return box;
+}
+
 function section(title, ...children) {
   return h('div', { class: 'panel' }, h('div', { class: 'panel-head' }, h('h3', null, title)), ...children);
 }
@@ -351,6 +410,7 @@ function render() {
           connected ? h('div', null, h('b', null, 'Conectado'), me ? h('div', { class: 'muted' }, `${me.name || ''} ${formatPhone(phoneOf(me.jid))}`) : null)
             : h('div', null, h('b', null, statusLabel(st.state)), st.error ? h('div', { class: 'muted small' }, st.error) : null)),
         h('p', { class: 'muted small' }, 'A sessão fica salva no servidor do escritório: ninguém precisa ler o QR code de novo. Para trocar de número, um sócio desconecta aqui.'),
+        bridgeBox(),
         h('div', { class: 'row' },
           !connected ? h('button', { class: 'btn', onclick: () => api('wa:reconnect').catch(errToast) }, '⟳ Tentar reconectar') : null,
           !st.registered ? h('button', { class: 'btn btn-primary', onclick: () => api('wa:reset').catch(errToast) }, 'Mostrar QR code') : null,
@@ -375,6 +435,7 @@ function render() {
         desktopToggle('minimizeToTray', 'Continuar rodando ao fechar a janela', 'O app fica perto do relógio e segue avisando de mensagens e lembretes.', true),
         desktopToggle('openAtLogin', 'Abrir junto com o Windows', 'Vale só para este computador.', false),
         toggle('sendReadReceipts', 'Marcar como lida no celular ao abrir a conversa', 'Envia a confirmação de leitura (tique azul), se ela estiver ativa no seu WhatsApp.'),
+        toggle('waPhotos', 'Buscar as fotos de perfil sozinho', 'Desligado (recomendado): a foto só é buscada quando alguém clica nela. Muitas consultas seguidas pesam contra o número no WhatsApp.', false),
         toggle('waSaveContacts', 'Salvar o contato no WhatsApp ao ligar o cliente à conversa', 'Grava o nome do cadastro na lista de contatos do WhatsApp do escritório (um de cada vez, nunca em lote). Pode não aparecer na agenda de todo celular.', false),
         toggle('enterToSend', 'Enter envia a mensagem', 'Desligado: use Ctrl+Enter para enviar e Enter para pular linha.'),
         toggle('spellcheck', 'Corretor ortográfico', 'Sublinha palavras erradas; clique com o botão direito na palavra para ver as correções.'),
@@ -573,7 +634,8 @@ export function statusLabel(s) {
   return {
     idle: 'Iniciando…', starting: 'Iniciando…', connecting: 'Conectando…', qr: 'Aguardando leitura do QR code',
     open: 'Conectado', reconnecting: 'Sem conexão — tentando reconectar…', logged_out: 'Desconectado',
-    replaced: 'Sessão aberta em outro lugar',
+    replaced: 'Sessão aberta em outro lugar', waiting_bridge: 'Aguardando o computador do escritório',
+    suspended: 'Número suspenso pelo WhatsApp', paused: 'QR code pausado',
   }[s] || s;
 }
 

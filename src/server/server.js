@@ -477,6 +477,23 @@ export async function startServer({
 
   server.on('upgrade', (req, socket, head) => {
     const url = new URL(req.url, 'http://x');
+    // ponte do WhatsApp: o app de desktop do computador do escritório (chave própria)
+    if (url.pathname === '/bridge') {
+      const token = String(req.headers.authorization || '').replace(/^Bearer\s+/i, '');
+      const loopback = /^(::1|127\.|::ffff:127\.)/.test(req.socket.remoteAddress || '');
+      const ip = (loopback && String(req.headers['x-forwarded-for'] || '').split(',')[0].trim()) || req.socket.remoteAddress;
+      let name = '';
+      try { name = decodeURIComponent(String(req.headers['x-bridge-name'] || '')).slice(0, 60); } catch { /* ignore */ }
+      if (!core.bridgeTokenOk(token)) {
+        socket.write('HTTP/1.1 401 Unauthorized\r\n\r\n');
+        socket.destroy();
+        return;
+      }
+      wss.handleUpgrade(req, socket, head, (ws) => {
+        if (!core.bridgeAttach(ws, { token, name, ip })) ws.close(4001, 'chave recusada');
+      });
+      return;
+    }
     const origin = req.headers.origin;
     const user = url.pathname === '/events' ? userOf(req) : null;
     // só janelas do próprio sistema (mesmo endereço) podem abrir o canal de eventos

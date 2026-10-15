@@ -71,6 +71,27 @@ Motor (`src/main`, sem Electron apesar do nome da pasta):
   voz), download de mídia, fotos de perfil, grupos, histórico sob demanda.
   Emite `status`, `chats-changed` (debounced: 250 ms, ou 2 s em rajada — sincronização do histórico, que também grava em lotes de 300 dando a vez às requisições; a lista de conversas só redesenha com o Atendimento aberto), lista de jids), `message`,
   `history`, `chat-merged`.
+- `bridge.js` — **ponte do WhatsApp pelo computador do escritório** (v5.15): o número
+  foi suspenso quando o WhatsApp passou a conectar do data center da Oracle (número
+  novo + cliente não oficial + IP de data center). O sistema todo continua no servidor;
+  só a saída de rede do WhatsApp passa pelo app de desktop de um computador do
+  escritório. `Bridge` (servidor): WebSocket `/bridge` (chave própria `Authorization:
+  Bearer`, hash em `settings.waBridgeHash` — fora do `settingsFor` —, 401 antes do
+  upgrade), quadros binários OPEN/OK/DATA/END/CLOSE multiplexados, `agent()` (https.Agent
+  → `ws` do Baileys e envio de mídia) e `dispatcher()` (undici `Agent`, dependência
+  direta → fetch: download de mídia, fotos, versão do WhatsApp Web); TLS de ponta a
+  ponta (o computador só repassa bytes); só `*.whatsapp.net|com:443` (`bridgeAllowed`,
+  conferido dos dois lados). `serveBridge`/`runBridgeClient` (computador: reconecta
+  2 s→60 s, 401 → 10 min, sem ping há 70 s derruba). `WhatsAppService.useBridge(bridge,
+  via)`, `netConfig()`/`fetchInit()`/`mediaOpts()`; com `settings.waVia = 'escritorio'`
+  e o computador desligado → `state: 'waiting_bridge'` (**nunca** conecta direto),
+  `onBridge(up)` liga/para. APIs `wa:bridge`, `wa:bridgeEnable(nome)` → `{token}` (só
+  sócio; troca invalida a chave antiga), `wa:bridgeDisable`; evento `wa:bridge`.
+  Desktop (`main.js`): `config.waBridge` (chave cifrada com `safeStorage`), liga com o
+  Windows, fica na bandeja, `powerSaveBlocker('prevent-app-suspension')`;
+  `window.desktop.bridge.get/enable/disable`. Ajustes → Conexão com o WhatsApp →
+  "Por onde o WhatsApp se conecta" (`bridgeBox`). Testes: `test/bridge.test.js`
+  ("WhatsApp" local com TLS próprio) e `test/bridge-server.test.js`.
 - `demo.js` — `DemoWhatsAppService` (subclasse) que simula tudo; os
   métodos de envio geram mensagens no formato do Baileys e passam pelo
   mesmo `onMessages`, então o caminho de parse/gravação é o real. Timers
@@ -715,7 +736,14 @@ Interface (`src/renderer`, JS puro em módulos ES, sem build):
   novo ao celular (`updateMediaMessage`) — o reenvio automático do Baileys
   não dispara porque o erro dele não tem `.status`.
 - **Evitar "atividade suspeita"** (o número do escritório já foi posto em
-  análise uma vez): nada de rajadas ao WhatsApp. Fotos de perfil em fila única
+  análise e depois **suspenso**, logo após conectar um número novo pelo servidor da
+  Oracle): o WhatsApp sai pela internet do escritório (`bridge.js`); `syncFullHistory:
+  false`; 402 (suspenso) → `state: 'suspended'`, **não tenta mais sozinho** ("Tentar de
+  novo" de um sócio); 403/406 repetido → volta ao QR **pausado** (`paused`, sem gerar QR
+  sozinho); QR que ninguém lê pausa após 4 rodadas (`qrRounds`, `state: 'paused'`,
+  "Mostrar o QR code"); fotos de perfil automáticas só com a opção `waPhotos` (padrão
+  desligado; a grande, ao clicar, continua). Número novo: "aquecer" 2–4 semanas só no
+  celular antes de ligar ao sistema. nada de rajadas ao WhatsApp. Fotos de perfil em fila única
   (`avatarLookup`, 1,5 s entre consultas, ≤150/dia); downloads automáticos com
   1,5 s de intervalo e **sem** pedir reenvio ao celular (`downloadMedia(…, {auto})`
   — só o clique em Baixar pede). Qualquer recurso novo que consulte o WhatsApp
