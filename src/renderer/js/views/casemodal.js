@@ -128,6 +128,8 @@ export async function openCase(id, { tab = 'geral' } = {}) {
 
   let full = null;
   let team = [];
+  // andamento sendo digitado: sobrevive quando a ficha se atualiza sozinha (outra pessoa mexeu no processo)
+  const moveDraft = { text: '', date: '' };
   const reload = async () => {
     try { full = await api('cases:full', id); } catch { m.close(); return; }
     // não redesenha no meio da digitação de um campo do resumo (perderia o foco)
@@ -412,8 +414,15 @@ export async function openCase(id, { tab = 'geral' } = {}) {
 
   // ----------------------------------------------------------- andamentos
   function renderMoves(el) {
-    const date = h('input', { class: 'input input-sm', type: 'date', value: new Date().toISOString().slice(0, 10) });
-    const text = h('textarea', { class: 'input', rows: 2, placeholder: 'Ex.: Juntada de contestação; audiência designada para 10/11 às 14h.' });
+    const date = h('input', {
+      class: 'input input-sm', type: 'date', value: moveDraft.date || new Date().toISOString().slice(0, 10),
+      oninput: (e) => { moveDraft.date = e.target.value; },
+    });
+    const text = h('textarea', {
+      class: 'input', rows: 2, placeholder: 'Ex.: Juntada de contestação; audiência designada para 10/11 às 14h.',
+      oninput: (e) => { moveDraft.text = e.target.value; },
+    });
+    text.value = moveDraft.text;
     fill(el,
       h('div', { class: 'panel' },
         h('div', { class: 'row' }, h('label', { class: 'field' }, h('span', null, 'Data'), date)),
@@ -423,7 +432,11 @@ export async function openCase(id, { tab = 'geral' } = {}) {
           onclick: async () => {
             if (!text.value.trim()) return;
             const ts = date.value ? new Date(`${date.value}T12:00:00`).getTime() : Date.now();
-            try { await api('moves:add', { case_id: id, text: text.value, ts }); } catch (e) { errToast(e); }
+            try {
+              await api('moves:add', { case_id: id, text: text.value, ts });
+              moveDraft.text = ''; moveDraft.date = '';
+              text.value = '';
+            } catch (e) { errToast(e); }
           },
         }, [icon('plus', 15), 'Registrar andamento'])),
         h('div', { class: 'row wrap datajud-row' },
