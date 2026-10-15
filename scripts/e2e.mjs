@@ -725,6 +725,7 @@ try {
   await page.click('.lv-c2 .lv-card:has-text("Revisional de aluguel")');
   await page.waitForSelector('.lv-c3 .cp-step.cur:has-text("Sentença")');
   check(true, 'fase deduzida dos andamentos (sentença) na régua');
+  await page.waitForSelector('.lv-c3 .cp-routine', { timeout: 10000 }).catch(() => {});
   check(await page.locator('.lv-c3 .cp-routine').count() === 1, 'movimentos de rotina ficam recolhidos');
   await page.locator('.lv-c3 .cp-item.big', { hasText: 'Sentença' }).locator('button:has-text("Explicar ao cliente")').click();
   await page.waitForSelector('.lv-c3 .cp-explain textarea');
